@@ -70,17 +70,17 @@ extension FNOSDirectClient {
     }
 }
 
-// MARK: - 液态玻璃辅助（tvOS26，选中才挂；.clear 更透明，底部压暗保证可读）
+// MARK: - 液态玻璃辅助（自绘材质版：实时模糊+高光描边，不经系统 glassEffect，聚焦无系统高亮板）
 
 extension View {
     @ViewBuilder
     func fnosGlass(_ active: Bool, in shape: some Shape) -> some View {
         if active {
             self
-                .background(Color.black.opacity(0.3), in: shape)
-                .glassEffect(.clear, in: shape)
-                // 关键：玻璃视图聚焦时系统会强加白色高亮卡，必须直接禁用在玻璃视图自身
-                .focusEffectDisabled()
+                .background(.ultraThinMaterial, in: shape)
+                .overlay(Color.white.opacity(0.14).clipShape(shape))
+                .overlay(shape.stroke(.white.opacity(0.5), lineWidth: 1.5))
+                .shadow(color: .black.opacity(0.4), radius: 12, y: 2)
         } else {
             self
         }
@@ -273,8 +273,7 @@ struct FNOSPlayerContainerView: View {
     // MARK: 自绘控制条
 
     private var controlBar: some View {
-        GlassEffectContainer(spacing: 30) {
-            VStack(spacing: 20) {
+        VStack(spacing: 20) {
                 // 顶部行：关闭 + 片名（ATV+ 式左上角）
                 HStack(spacing: 18) {
                     controlButton(.close, icon: "xmark") {
@@ -339,7 +338,6 @@ struct FNOSPlayerContainerView: View {
                         .foregroundColor(.white)
                 }
             }
-        }
         .padding(.horizontal, 90)
         .padding(.bottom, 48)
         .padding(.top, 24)
@@ -649,7 +647,7 @@ struct FNOSDanmuSettingsSheet: View {
                     .frame(width: 260, height: 56)
             }
             .buttonStyle(.plain)
-            .glassEffect(.regular, in: Capsule())
+            .fnosGlass(true, in: Capsule())
         }
         .padding(60)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -672,7 +670,7 @@ struct FNOSDanmuSettingsSheet: View {
                     .frame(width: 72, height: 48)
             }
             .buttonStyle(.plain)
-            .glassEffect(.regular, in: Capsule())
+            .fnosGlass(true, in: Capsule())
             Text(text)
                 .font(.title3.monospacedDigit())
                 .frame(width: 140)
@@ -681,7 +679,7 @@ struct FNOSDanmuSettingsSheet: View {
                     .frame(width: 72, height: 48)
             }
             .buttonStyle(.plain)
-            .glassEffect(.regular, in: Capsule())
+            .fnosGlass(true, in: Capsule())
         }
     }
 }
@@ -723,7 +721,7 @@ struct FNOSAudioTracksSheet: View {
                                 .padding(.vertical, 16)
                             }
                             .buttonStyle(.plain)
-                            .glassEffect(.regular, in: Capsule())
+                            .fnosGlass(true, in: Capsule())
                         }
                     }
                     .padding(.horizontal, 60)
@@ -737,7 +735,7 @@ struct FNOSAudioTracksSheet: View {
                     .frame(width: 260, height: 56)
             }
             .buttonStyle(.plain)
-            .glassEffect(.regular, in: Capsule())
+            .fnosGlass(true, in: Capsule())
         }
         .padding(60)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

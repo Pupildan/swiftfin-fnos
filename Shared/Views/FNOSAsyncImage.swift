@@ -39,23 +39,6 @@ extension FNOSDirectClient {
         }
     }
 
-    /// 通用图片 URL（Primary/Backdrop/Thumb 等），fnOS 必须带 tag
-    func imageURL(itemID: String, imageType: String, tag: String?, maxWidth: Int = 1200) -> URL? {
-        var query = [
-            "maxWidth": String(maxWidth),
-            "quality": "85",
-        ]
-        if let tag, !tag.isEmpty {
-            query["tag"] = tag
-        }
-        do {
-            return try url(path: "Items/\(itemID)/Images/\(imageType)", query: query)
-        } catch {
-            print("FNOS❗️图片 URL 构造失败 \(itemID)/\(imageType): \(error.localizedDescription)")
-            return nil
-        }
-    }
-
     /// 播放直链 —— 实测 static=true 返回原始媒体流
     func streamURL(itemID: String) -> URL? {
         do {

@@ -18,5 +18,5 @@ enum FNOSAdapterBuild {
     static let version = "v17"
 
     /// 本版主要变更摘要
-    static let changes = "ATV+ 复刻：全新详情页（背景大图/元信息/播放·选集）+ 剧集 16:9 网格 + 播放器玻璃焦点修复"
+    static let changes = "回滚详情页；选中玻璃改自绘材质（彻底去系统高亮板）"
 }

@@ -85,9 +85,19 @@ struct FNOSPlayerContainerView: View {
     var body: some View {
         ZStack(alignment: .top) {
             if let streamURL {
-                // KSPlayer 自带 tvOS 焦点命令（播放/暂停/退出/左右快进退）
-                KSVideoPlayerView(url: streamURL, options: makeOptions(), title: item.Name ?? "播放")
-                    .ignoresSafeArea()
+                // 必须显式传入自建 coordinator：
+                // KSVideoPlayerView(url:...) 便捷构造器会内部 new 一个 Coordinator，
+                // 外部 @StateObject 永远收不到 onPlay/onStateChanged（弹幕失联的直接原因）
+                KSVideoPlayerView(
+                    coordinator: coordinator,
+                    url: streamURL,
+                    options: makeOptions(),
+                    title: item.Name ?? "播放"
+                )
+                .ignoresSafeArea()
+                // 覆盖 KSPlayer tvOS 控制条按钮的默认白胶囊样式（重点修复莫名白色圆点）
+                .buttonStyle(.plain)
+                .tint(.white)
             } else {
                 VStack(spacing: 12) {
                     ProgressView()

@@ -34,8 +34,9 @@ jobs:
         working-directory: .
         run: |
           set -o pipefail
-          # 清掉可能过期的包解析缓存（新加 SPM 包时防止旧图状态被复用）
-          rm -rf build/clonedSourcePackages build/Build/Intermediates.noindex/XCBuildData
+          # 只清过期构建计划，保留 clonedSourcePackages（省去每次全量重新下载 SPM 依赖；
+          # 依赖变更时 cache key 随 Package.resolved 变化，自然拿到全新缓存）
+          rm -rf build/XCBuildData
           xcodebuild -resolvePackageDependencies \
             -project Swiftfin.xcodeproj \
             -scheme "Swiftfin tvOS" \

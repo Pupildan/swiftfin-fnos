@@ -20,7 +20,7 @@ jobs:
         run: defaults write com.apple.dt.Xcode IDESkipMacroFingerprintValidation -bool YES
 
       - name: Resolve dependencies
-        working-directory: swiftfin-fnos
+        working-directory: .
         run: |
           xcodebuild -resolvePackageDependencies \
             -project Swiftfin.xcodeproj \
@@ -29,7 +29,7 @@ jobs:
       # 未签名编译：CODE_SIGNING_ALLOWED=NO 跳过证书/描述文件
       # 出包后可由付费开发者账号重签名，或供 Xcode 免费签名真机调试流程使用
       - name: Build (unsigned)
-        working-directory: swiftfin-fnos
+        working-directory: .
         run: |
           xcodebuild \
             -project Swiftfin.xcodeproj \
@@ -43,7 +43,7 @@ jobs:
             build | tail -40
 
       - name: Package unsigned ipa
-        working-directory: swiftfin-fnos
+        working-directory: .
         run: |
           APP=$(find build/Build/Products/Release-appletvos -maxdepth 1 -name "*.app" | head -1)
           echo "Found app bundle: $APP"

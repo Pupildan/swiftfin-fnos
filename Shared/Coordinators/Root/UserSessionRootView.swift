@@ -30,10 +30,10 @@ struct UserSessionRootView: View {
                 }
 
             case .signedIn:
-                PosterPreferencesEnvironment {
-                    MainTabView()
-                }
-                .id(userSessionManager.currentSession.map(ObjectIdentifier.init))
+                // FNOS 直连版：停用全部原有 BaseItemDto 相关界面（MainTabView 等），
+                // 登录成功后直接进入独立实现的 FNOSMainView（原始 URLSession 直连 fnOS）。
+                FNOSMainView()
+                    .id(userSessionManager.currentSession.map(ObjectIdentifier.init))
             }
         }
         .animation(.linear(duration: 0.1), value: userSessionManager.state)

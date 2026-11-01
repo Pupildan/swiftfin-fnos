@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v9"
+    static let version = "v10"
 
     /// 本版主要变更摘要
-    static let changes = "FNOSMainView 直连版：原始 URLSession，绕开全部 SDK 适配层"
+    static let changes = "Liquid Glass 界面 + 原生播放器(鉴权注入) + 真实弹幕引擎"
 }

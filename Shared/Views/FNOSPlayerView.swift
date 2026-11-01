@@ -4,15 +4,18 @@
 //
 // 设计要点：
 // - 裸 KSVideoPlayer(UIViewRepresentable) + 完全自绘控制层；
-// - 控制条按钮右对齐，选中时 tvOS26 液态玻璃(.glassEffect)背景，无选中时无背景；
-// - 弹幕开关/弹幕设置/音轨选择都在控制条上；
-// - 进度条可聚焦：选中后左右键步进预览，长按/连续滑动自动加速（5s→180s），停手 1 秒提交 seek；
-// - 3 秒无操作自动隐藏控制条；隐藏状态任意方向键/触摸唤出；MENU 退出播放。
+// - 快进/快退/播放暂停三个主按钮相对进度条居中；倍速/弹幕/设置/音轨靠右；
+// - 选中背景 = tvOS26 液态玻璃 .clear（圆形，比按钮略大，底部压暗保证可读）；
+// - 进度条可聚焦：左右键步进预览（连按加速 10s→180s），停手 1 秒提交；
+// - 遥控器转盘/触摸滑动 = UIPanGestureRecognizer 桥接，直接连续拖动进度；
+// - 倍速 0.5/1.0/1.5/2.0 循环，弹幕时钟跟随倍速；
+// - 3 秒无操作自动隐藏控制条；MENU 退出播放。
 //
 
 import AVFoundation
 import KSPlayer
 import SwiftUI
+import UIKit
 
 /// AVURLAsset 请求头 Key（ObjC 常量未暴露给 Swift，按官方字符串手动声明）
 private let fnosAVHTTPHeaderFieldsKey = "AVURLAssetHTTPHeaderFieldsKey"
@@ -67,16 +70,29 @@ extension FNOSDirectClient {
     }
 }
 
-// MARK: - 液态玻璃辅助（tvOS26 Liquid Glass，选中才挂玻璃）
+// MARK: - 液态玻璃辅助（tvOS26，选中才挂；.clear 更透明，底部压暗保证可读）
 
 extension View {
     @ViewBuilder
-    func fnosGlass(_ active: Bool) -> some View {
+    func fnosGlass(_ active: Bool, in shape: some Shape) -> some View {
         if active {
-            self.glassEffect(.regular, in: Capsule())
+            self
+                .background(Color.black.opacity(0.3), in: shape)
+                .glassEffect(.clear, in: shape)
         } else {
             self
         }
+    }
+}
+
+// MARK: - 转盘/触摸滑动桥接（SwiftUI 无公开 scroll wheel API，走 UIKit 手势）
+
+final class FNOSPanBridge: NSObject {
+    static let shared = FNOSPanBridge()
+    var onPan: ((UIPanGestureRecognizer) -> Void)?
+
+    @objc func handle(_ gesture: UIPanGestureRecognizer) {
+        onPan?(gesture)
     }
 }
 
@@ -106,15 +122,17 @@ struct FNOSPlayerContainerView: View {
     @State private var scrubCommitTask: Task<Void, Never>?
     @State private var scrubActive = false
     @State private var scrubValue: Double = 0
-    @State private var scrubStep: Double = 5
+    @State private var scrubStep: Double = 10
     @State private var lastScrubMove: Date?
     @State private var isSheetPresented = false
     @State private var audioSheetPresented = false
     @FocusState private var focus: Control?
 
     private enum Control: Hashable {
-        case rewind, playPause, forward, danmu, danmuSettings, audio, scrubber
+        case rewind, playPause, forward, rate, danmu, danmuSettings, audio, scrubber
     }
+
+    private let rateOptions: [Float] = [0.5, 1.0, 1.5, 2.0]
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -178,7 +196,7 @@ struct FNOSPlayerContainerView: View {
         }
     }
 
-    // MARK: 裸播放视图（无 KSPlayer 内置控制）
+    // MARK: 裸播放视图（无 KSPlayer 内置控制）+ 转盘滑动桥接
 
     private func playerView(url: URL) -> some View {
         KSVideoPlayer(coordinator: coordinator, url: url, options: makeOptions())
@@ -190,7 +208,7 @@ struct FNOSPlayerContainerView: View {
                 case .paused, .playedToTheEnd, .error:
                     danmuEngine.setRate(0)
                 default:
-                    danmuEngine.setRate(1)
+                    danmuEngine.setRate(Double(coordinator.playbackRate))
                 }
             }
             .ignoresSafeArea()
@@ -202,6 +220,45 @@ struct FNOSPlayerContainerView: View {
             .onTapGesture {
                 revealControls()
             }
+            .onAppear {
+                attachPanRecognizer()
+            }
+    }
+
+    /// 在 KSPlayer 的 UIView 上挂 UIPanGestureRecognizer：遥控器转盘/触摸滑动 → 连续拖动进度
+    private func attachPanRecognizer() {
+        guard FNOSPanBridge.shared.onPan == nil else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            guard let videoView = coordinator.playerLayer?.player.view else {
+                print("FNOS❗️挂滑动手势失败: 找不到播放器视图")
+                return
+            }
+            let recognizer = UIPanGestureRecognizer(target: FNOSPanBridge.shared, action: #selector(FNOSPanBridge.handle(_:)))
+            recognizer.cancelsTouchesInView = false
+            videoView.addGestureRecognizer(recognizer)
+            print("FNOSℹ️滑动手势已挂载")
+
+            FNOSPanBridge.shared.onPan = { gesture in
+                switch gesture.state {
+                case .began:
+                    revealControls()
+                case .changed:
+                    let translation = gesture.translation(in: gesture.view)
+                    gesture.setTranslation(.zero, in: gesture.view)
+                    // 滑动灵敏度：1px ≈ 0.2s（转盘快速滚动可快速拖动）
+                    let delta = Double(translation.x) * 0.2
+                    let total = Double(max(coordinator.timemodel.totalTime, 1))
+                    let base = scrubActive ? scrubValue : Double(coordinator.timemodel.currentTime)
+                    scrubActive = true
+                    scrubValue = min(max(base + delta, 0), total)
+                    scheduleScrubCommit()
+                case .ended, .cancelled:
+                    commitScrubIfNeeded()
+                default:
+                    break
+                }
+            }
+        }
     }
 
     // MARK: 自绘控制条
@@ -223,9 +280,8 @@ struct FNOSPlayerContainerView: View {
                 Spacer()
             }
 
-            // 按钮行（右对齐，与进度条右端对齐）
-            HStack(spacing: 30) {
-                Spacer()
+            // 主按钮（快进/快退/播放暂停）相对进度条居中；功能按钮靠右
+            HStack(spacing: 44) {
                 controlButton(.rewind, icon: "gobackward.15") {
                     coordinator.skip(interval: -15)
                 }
@@ -235,22 +291,28 @@ struct FNOSPlayerContainerView: View {
                 controlButton(.forward, icon: "goforward.15") {
                     coordinator.skip(interval: 15)
                 }
-                controlButton(.danmu, icon: "text.bubble") {
-                    showDanmu.toggle()
-                }
-                .opacity(showDanmu ? 1 : 0.35)
-                controlButton(.danmuSettings, icon: "slider.horizontal.3") {
-                    audioSheetPresented = false
-                    isSheetPresented = true
-                }
-                if !audioTracks.isEmpty {
-                    controlButton(.audio, icon: "waveform") {
-                        audioSheetPresented = true
+            }
+            .frame(maxWidth: .infinity)
+            .overlay(alignment: .trailing) {
+                HStack(spacing: 24) {
+                    rateButton
+                    controlButton(.danmu, icon: "text.bubble") {
+                        showDanmu.toggle()
+                    }
+                    .opacity(showDanmu ? 1 : 0.35)
+                    controlButton(.danmuSettings, icon: "slider.horizontal.3") {
+                        audioSheetPresented = false
                         isSheetPresented = true
+                    }
+                    if !audioTracks.isEmpty {
+                        controlButton(.audio, icon: "waveform") {
+                            audioSheetPresented = true
+                            isSheetPresented = true
+                        }
                     }
                 }
             }
-            .font(.system(size: 32, weight: .medium))
+            .font(.system(size: 26, weight: .medium))
             .foregroundStyle(.white)
 
             // 进度条（可聚焦拖动/快滑）+ 时间
@@ -271,7 +333,7 @@ struct FNOSPlayerContainerView: View {
             LinearGradient(
                 stops: [
                     .init(color: .black.opacity(0), location: 0),
-                    .init(color: .black.opacity(0.65), location: 1),
+                    .init(color: .black.opacity(0.55), location: 1),
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -286,7 +348,7 @@ struct FNOSPlayerContainerView: View {
         }
     }
 
-    /// 可聚焦进度条：选中后左右键预览拖动，长按/连续滑动自动加速
+    /// 可聚焦进度条：选中后左右键步进预览，连按自动加速
     private var scrubber: some View {
         GeometryReader { geo in
             ZStack(alignment: .leading) {
@@ -297,7 +359,6 @@ struct FNOSPlayerContainerView: View {
                     .frame(width: max(0, geo.size.width * displayFraction))
             }
             .frame(height: focus == .scrubber ? 14 : 6)
-            .fnosGlass(focus == .scrubber)
             .animation(.easeOut(duration: 0.15), value: focus == .scrubber)
             .contentShape(Rectangle())
         }
@@ -316,15 +377,38 @@ struct FNOSPlayerContainerView: View {
         }
     }
 
+    /// 圆形玻璃选中背景（比图标略大）
     private func controlButton(_ control: Control, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .padding(.horizontal, 22)
-                .padding(.vertical, 14)
-                .fnosGlass(focus == control)
+                .frame(width: 76, height: 76)
+                .fnosGlass(focus == control, in: Circle())
         }
         .buttonStyle(.plain)
         .focused($focus, equals: control)
+    }
+
+    /// 倍速按钮：0.5 → 1.0 → 1.5 → 2.0 循环
+    private var rateButton: some View {
+        Button {
+            cycleRate()
+        } label: {
+            Text(String(format: "%.1fx", coordinator.playbackRate))
+                .font(.system(size: 22, weight: .semibold).monospacedDigit())
+                .frame(width: 92, height: 76)
+                .fnosGlass(focus == .rate, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .focused($focus, equals: .rate)
+    }
+
+    private func cycleRate() {
+        let index = rateOptions.firstIndex(of: coordinator.playbackRate) ?? 1
+        let next = rateOptions[(index + 1) % rateOptions.count]
+        coordinator.playbackRate = next
+        danmuEngine.setRate(Double(next))
+        print("FNOSℹ️倍速: \(next)")
+        revealControls()
     }
 
     // MARK: 快滑/拖动逻辑
@@ -337,18 +421,13 @@ struct FNOSPlayerContainerView: View {
         return Double(coordinator.timemodel.currentTime)
     }
 
-    private var displayFraction: Double {
-        let total = Double(max(coordinator.timemodel.totalTime, 1))
-        return min(max(displayTime / total, 0), 1)
-    }
-
-    /// 方向键步进：0.45 秒内连续触发视为"长按/转盘滚动"，步长逐级加速（5s→180s）
+    /// 方向键步进：0.45 秒内连续触发视为"长按/转盘滚动"，步长逐级加速（10s→180s）
     private func scrub(by direction: Double) {
         let now = Date()
         if let last = lastScrubMove, now.timeIntervalSince(last) < 0.45 {
             scrubStep = min(scrubStep * 1.6, 180)
         } else {
-            scrubStep = 5
+            scrubStep = 10
         }
         lastScrubMove = now
 
@@ -356,8 +435,10 @@ struct FNOSPlayerContainerView: View {
         let base = scrubActive ? scrubValue : Double(coordinator.timemodel.currentTime)
         scrubActive = true
         scrubValue = min(max(base + direction * scrubStep, 0), total)
+        scheduleScrubCommit()
+    }
 
-        // 停手 1 秒提交
+    private func scheduleScrubCommit() {
         scrubCommitTask?.cancel()
         scrubCommitTask = Task {
             try? await Task.sleep(nanoseconds: 1_000_000_000)

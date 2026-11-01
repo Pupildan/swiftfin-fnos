@@ -1,6 +1,7 @@
 import Foundation
 import QuartzCore
 import UIKit
+import AVFoundation
 
 // MARK: - 时间源协议
 
@@ -214,24 +215,23 @@ public final class DanmakuEngine {
     }
 
     /// 把 CADisplayLink 的 preferredFrameRateRange 对齐到策略目标：
-    /// 上限永远取显示设备硬件最大值（maximumPreferredFramesPerSecond），
-    /// preferred 按策略选择——设备不支持时系统自动钳制，无需人工干预。
+    /// 系统会把超出硬件上限的请求自动钳制到显示设备最大刷新率，
+    /// 因此无需查询设备上限，直接请求策略目标值即可。
     private func applyFrameRate(to link: CADisplayLink) {
-        let displayMax = Int(link.maximumPreferredFramesPerSecond)
-        let preferred: Int
+        guard #available(tvOS 15.0, iOS 15.0, *) else { return }
+        let target: Float
         switch refreshRatePolicy {
         case .displayMaximum:
-            preferred = displayMax
+            // 请求 120，系统在 60Hz 设备上自动钳制为 60
+            target = 120
         case .matchVideo(let fps):
-            preferred = max(24, min(fps, displayMax))
+            target = Float(max(24, fps))
         }
-        if #available(tvOS 15.0, iOS 15.0, *) {
-            link.preferredFrameRateRange = CAFrameRateRange(
-                minimum: min(60, preferred),
-                maximum: displayMax,
-                preferred: preferred
-            )
-        }
+        link.preferredFrameRateRange = CAFrameRateRange(
+            minimum: min(24, target),
+            maximum: target,
+            preferred: target
+        )
     }
 
     fileprivate func tick() {
@@ -293,7 +293,7 @@ public final class DanmakuEngine {
         scrollLaneReadyAt[lane] = t + TimeInterval((width + style.laneMargin) / speed)
 
         let layer = makeTextLayer(for: item)
-        layer.bounds.size = CGSize(width: width, height: laneHeight())
+        layer.bounds.size = CGSize(width: width, height: laneHeight)
         let x = screenWidth + width / 2 - speed * CGFloat(t - item.time)   // 迟到的弹幕从中间出现
         layer.position = CGPoint(x: x, y: laneCenterY(lane))
         container.addSublayer(layer)
@@ -318,7 +318,7 @@ public final class DanmakuEngine {
 
         let width = measureWidth(of: item)
         let layer = makeTextLayer(for: item)
-        layer.bounds.size = CGSize(width: width, height: laneHeight())
+        layer.bounds.size = CGSize(width: width, height: laneHeight)
         layer.position = CGPoint(
             x: container.bounds.width / 2,
             y: fixedLaneCenterY(item.kind, index: lane)

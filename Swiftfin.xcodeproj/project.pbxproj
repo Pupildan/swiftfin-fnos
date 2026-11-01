@@ -1318,7 +1318,7 @@
 		};
 		E164308A2E3AA9710028D4E8 /* XCRemoteSwiftPackageReference "Transmission" */ = {
 			isa = XCRemoteSwiftPackageReference;
-			repositoryURL = "https://github.com/nathantannar4/Transmission";
+			repositoryURL = "https://github.com/Pupildan/Transmission";
 			requirement = {
 				kind = upToNextMajorVersion;
 				minimumVersion = 2.13.4;

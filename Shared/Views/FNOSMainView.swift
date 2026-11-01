@@ -6,7 +6,6 @@
 // Copyright (c) 2026 Jellyfin & Jellyfin Contributors
 //
 
-import FactoryKit
 import SwiftUI
 
 /// 播放目标（把 client/userID 与条目一起带进播放器）
@@ -33,8 +32,8 @@ struct FNOSLibrarySection: Identifiable {
 /// - 焦点表现全部交给原生 .buttonStyle(.card)。
 struct FNOSMainView: View {
 
-    @InjectedObject(\.userSessionManager)
-    private var userSessionManager: UserSessionManager
+    @ObservedObject var auth: FNOSAuthStore
+    let credentials: FNOSCredentials
 
     @State private var client: FNOSDirectClient?
     @State private var userID = ""
@@ -97,6 +96,11 @@ struct FNOSMainView: View {
                 Task { await bootstrapIfNeeded() }
             } label: {
                 Label("刷新", systemImage: "arrow.clockwise")
+            }
+            Button {
+                auth.logout()
+            } label: {
+                Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
             }
         }
         .padding(.horizontal, 48)
@@ -218,15 +222,9 @@ struct FNOSMainView: View {
     private func bootstrap() async {
         log("启动 FNOS v\(FNOSAdapterBuild.version)")
 
-        guard let session = userSessionManager.currentSession else {
-            log("❗️未登录：无当前会话")
-            print("FNOS❗️bootstrap: userSessionManager.currentSession 为 nil")
-            return
-        }
-
-        let baseURL = session.server.effectiveServerURL
-        let token = session.user.accessToken
-        userID = session.user.id
+        let baseURL = credentials.serverURL
+        let token = credentials.token
+        userID = credentials.userID
         serverDescription = baseURL.absoluteString
 
         log("服务器 \(serverDescription) · 令牌 \(token.count) 字符")

@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v11"
+    static let version = "v12"
 
     /// 本版主要变更摘要
-    static let changes = "KSPlayer 双引擎播放 + TV+ 式横向海报墙（移除模糊背景）"
+    static let changes = "弹幕时钟修复（真接线 Coordinator）+ 项目大瘦身（732→10 个源文件）+ 原生登录"
 }

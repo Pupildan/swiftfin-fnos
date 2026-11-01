@@ -1,9 +1,6 @@
 //
-// Swiftfin is subject to the terms of the Mozilla Public
-// License, v2.0. If a copy of the MPL was not distributed with this
-// file, you can obtain one at https://mozilla.org/MPL/2.0/.
-//
-// Copyright (c) 2026 Jellyfin & Jellyfin Contributors
+// SwiftfinApp.swift
+// 飞牛影视（fnOS）tvOS 客户端 —— 极简入口。
 //
 
 import SwiftUI
@@ -11,19 +8,9 @@ import SwiftUI
 @main
 struct SwiftfinApp: App {
 
-    init() {
-        Self.configure()
-
-        UINavigationBar.appearance().titleTextAttributes = [.foregroundColor: UIColor.label]
-    }
-
     var body: some Scene {
         WindowGroup {
-            OverlayToastView {
-                WithLocalUserAuthentication {
-                    RootView()
-                }
-            }
+            FNOSRootView()
         }
     }
 }

@@ -166,8 +166,8 @@ final class DanmakuModel {
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
         let baseURL: URL?
-        if let configuredURL, !configuredURL.isEmpty {
-            baseURL = URL(string: configuredURL)
+        if !configuredURL.isEmpty, let parsed = URL(string: configuredURL) {
+            baseURL = parsed
         } else if let host = mediaSession?.userSession.server.effectiveServerURL.host {
             // 默认与媒体服务器同主机，端口 9321（danmu_api 默认）
             baseURL = URL(string: "http://\(host):9321")

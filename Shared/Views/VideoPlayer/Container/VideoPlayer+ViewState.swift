@@ -137,7 +137,7 @@ extension VideoPlayer {
                         title: "弹幕设置",
                         systemImage: "slider.horizontal.3"
                     ) {
-                        presentGuestSupplement(DanmakuSettingsSupplement(model: model))
+                        self.presentGuestSupplement(DanmakuSettingsSupplement(model: model))
                     }
                 ),
             ]

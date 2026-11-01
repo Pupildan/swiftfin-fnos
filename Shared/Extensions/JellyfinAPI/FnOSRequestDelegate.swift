@@ -52,7 +52,7 @@ final class FnOSRequestDelegate: APIClientDelegate, @unchecked Sendable {
     // MARK: - 媒体库 ID 缓存（全局查询合并用）
 
     private static let viewCacheLock = NSLock()
-    private static var viewIDsByHost: [String: [String]] = [:]
+    private static var viewIDsByHost: [String: Set<String>] = [:]
 
     // MARK: - APIClientDelegate
 
@@ -378,7 +378,7 @@ final class FnOSRequestDelegate: APIClientDelegate, @unchecked Sendable {
         viewCacheLock.lock()
         let cached = viewIDsByHost[host]
         viewCacheLock.unlock()
-        if let cached, !cached.isEmpty { return cached }
+        if let cached, !cached.isEmpty { return Array(cached).sorted() }
 
         guard let uid = userID(fromAPIPath: url) else { return [] }
         var components = URLComponents(url: url, resolvingAgainstBaseURL: false)

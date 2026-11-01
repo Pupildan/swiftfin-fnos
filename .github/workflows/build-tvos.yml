@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-tvos:
-    runs-on: macos-26
+    runs-on: macos-15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,7 +41,6 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            SWIFT_VERSION=5.0 \
             build | tail -60
 
       - name: Package unsigned ipa

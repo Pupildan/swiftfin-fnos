@@ -40,7 +40,7 @@ jobs:
             -derivedDataPath build
 
       # 未签名编译：CODE_SIGNING_ALLOWED=NO 跳过证书/描述文件
-      # -enable-batch-mode：批量化 Swift 编译，缩短全量编译时间
+      # 批量化 Swift 编译在 Xcode 27 已是默认行为（旧参数 -enable-batch-mode 已被移除）
       - name: Build (unsigned)
         working-directory: .
         run: |
@@ -52,7 +52,6 @@ jobs:
             -sdk appletvos \
             -derivedDataPath build \
             -disableAutomaticPackageResolution \
-            -enable-batch-mode \
             SWIFT_VERSION=5.0 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \

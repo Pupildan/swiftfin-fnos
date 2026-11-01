@@ -25,7 +25,13 @@ import Foundation
 ///    转回纯数组（SDK 期望 `[BaseItemDto]`）；
 /// 7. `/Users/{uid}/Items/Resume` 未实现 → 返回空信封；
 /// 8. `PlaybackInfo` 仅支持 GET（POST 未路由）→ POST 转为 GET；
-/// 9. `/Genres`、`/Similar` 未实现（返回网页）→ 返回空信封。
+/// 9. `/Genres`、`/Similar`、`/LocalTrailers`、`/Intros`、`/SpecialFeatures`、
+///    `/ThemeMedia` 未实现（返回 200 + 网页 HTML）→ 合成与 SDK 期望形状
+///    一致的空响应；其余漏网端点由 passthrough 的 text/html 检测兜底；
+/// 10. `/Users/{uid}/Views` 不返回 `CollectionType`，而 Swiftfin 首页按
+///     collectionType ∈ {movies, tvshows, homevideos, musicvideos} 过滤媒体库
+///     → 逐库探测内容类型后合成（tvshows/movies/musicvideos/homevideos），
+///     并在响应头 `X-FnOS-Shim: collection-type-synthesized` 标注。
 ///
 /// 通过 `URLSessionConfiguration.swiftfin` 注册，同时覆盖
 /// jellyfin-sdk 的 API 请求与 Nuke 的图片请求。
@@ -168,12 +174,16 @@ final class FnOSCompatURLProtocol: URLProtocol {
         }
 
         if Self.isUnimplementedPath(originalPath) {
-            let envelope = Data(#"{"Items":[],"TotalRecordCount":0,"StartIndex":0}"#.utf8)
+            let envelope = Self.synthesizedBody(forUnimplementedPath: originalPath)
             let response = HTTPURLResponse(
                 url: rewrittenURL,
                 statusCode: 200,
                 httpVersion: "HTTP/1.1",
-                headerFields: ["Content-Type": "application/json"]
+                headerFields: [
+                    "Content-Type": "application/json",
+                    "X-FnOS-Shim": "unimplemented-endpoint",
+                    "X-FnOS-Original-Path": originalPath,
+                ]
             )
             if let response {
                 client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
@@ -196,6 +206,8 @@ final class FnOSCompatURLProtocol: URLProtocol {
         dataTask?.cancel()
         dataTask = nil
         mergeRequests.removeAll()
+        probeRemaining.removeAll()
+        probeCurrentID = nil
         forwardingSession?.invalidateAndCancel()
         forwardingSession = nil
     }
@@ -207,13 +219,15 @@ final class FnOSCompatURLProtocol: URLProtocol {
         case latestArray
         case viewsCollect
         case multiView
+        /// fnOS 对未实现端点返回 200 + text/html 网页 → 缓冲后合成空响应
+        case htmlBlocked
     }
 
     private var responseMode: ResponseMode = .passthrough
     private var dataTask: URLSessionDataTask?
     private var forwardingSession: URLSession?
 
-    // 缓冲（latestArray / viewsCollect / multiView 共用）
+    // 缓冲（latestArray / viewsCollect / multiView / htmlBlocked 共用）
     private var bufferedData = Data()
     private var bufferedResponse: HTTPURLResponse?
 
@@ -223,6 +237,15 @@ final class FnOSCompatURLProtocol: URLProtocol {
     private var mergeStartIndex = 0
     private var mergeLimit = 100
     private var mergedItems: [[String: Any]] = []
+
+    // /Views CollectionType 探测链状态
+    // fnOS 不返回库类型，而 Swiftfin 首页/媒体库按 collectionType 过滤 → 缺失全被丢弃。
+    // 这里逐库请求一次内容，按内容类型合成 CollectionType。
+    private var probeRemaining: [(id: String, item: [String: Any])] = []
+    private var probeTypes: [String: Set<String>] = [:]
+    private var probeCurrentID: String?
+    private var probeHost: String?
+    private var viewsObject: [String: Any] = [:]
 }
 
 // MARK: - 转发代理
@@ -235,6 +258,17 @@ extension FnOSCompatURLProtocol: URLSessionDataDelegate {
         didReceive response: URLResponse,
         completionHandler: @escaping (URLSession.ResponseDisposition) -> Void
     ) {
+        // passthrough 模式下检测 fnOS「未实现端点返回网页」：200 + text/html
+        // → 切入 htmlBlocked 模式缓冲，结束时合成空响应（App 的日志页可凭
+        //   X-FnOS-Shim 响应头确认拦截发生）。
+        if responseMode == .passthrough,
+           let http = response as? HTTPURLResponse,
+           (200..<300).contains(http.statusCode),
+           http.value(forHTTPHeaderField: "Content-Type")?.lowercased().contains("text/html") == true
+        {
+            responseMode = .htmlBlocked
+        }
+
         if responseMode == .passthrough {
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         } else {
@@ -256,6 +290,16 @@ extension FnOSCompatURLProtocol: URLSessionDataDelegate {
         let completedSession = forwardingSession
 
         if let error {
+            // 探测链中的请求失败不算致命：记录空结果后继续下一库
+            if responseMode == .viewsCollect, probeCurrentID != nil {
+                probeTypes[probeCurrentID ?? ""] = []
+                probeCurrentID = nil
+                bufferedData.removeAll()
+                bufferedResponse = nil
+                continueViewProbes()
+                cleanup(session: completedSession)
+                return
+            }
             client?.urlProtocol(self, didFailWithError: error)
             cleanup(session: completedSession)
             return
@@ -267,9 +311,15 @@ extension FnOSCompatURLProtocol: URLSessionDataDelegate {
         case .latestArray:
             deliverLatestAsArray()
         case .viewsCollect:
-            collectViewsAndDeliver()
+            if probeCurrentID != nil {
+                handleViewProbeCompletion()
+            } else {
+                collectViewsAndDeliver()
+            }
         case .multiView:
             handleMergeStepCompletion()
+        case .htmlBlocked:
+            deliverSynthesizedEmptyForHTML()
         }
 
         cleanup(session: completedSession)
@@ -324,17 +374,175 @@ extension FnOSCompatURLProtocol: URLSessionDataDelegate {
         client?.urlProtocolDidFinishLoading(self)
     }
 
-    // MARK: viewsCollect：透传 /Views 响应并注册媒体库 ID
+    // MARK: viewsCollect：透传 /Views 响应、注册媒体库 ID 并合成 CollectionType
 
     private func collectViewsAndDeliver() {
-        if let object = try? JSONSerialization.jsonObject(with: bufferedData) as? [String: Any],
-           let items = object["Items"] as? [[String: Any]] {
-            let ids = items.compactMap { $0["Id"] as? String }
-            if let host = request.url?.host, !ids.isEmpty {
-                Self.registerViewIDs(host: host, ids: ids)
-            }
+        guard let object = try? JSONSerialization.jsonObject(with: bufferedData) as? [String: Any],
+              let items = object["Items"] as? [[String: Any]]
+        else {
+            deliverBufferedAsIs()
+            return
         }
 
+        // 注册媒体库 ID（multiView 合并依赖）
+        let ids = items.compactMap { $0["Id"] as? String }
+        if let host = request.url?.host, !ids.isEmpty {
+            Self.registerViewIDs(host: host, ids: ids)
+        }
+
+        // fnOS 不返回 CollectionType（实测 detail 里是空串），
+        // 而 Swiftfin 首页按 collectionType ∈ {movies, tvshows, homevideos, musicvideos}
+        // 过滤媒体库 → 缺失时全部被丢弃（空库根因）。逐库探测内容类型后合成。
+        guard let host = request.url?.host else {
+            deliverBufferedAsIs()
+            return
+        }
+
+        probeRemaining = items.compactMap { dict -> (id: String, item: [String: Any])? in
+            guard dict["CollectionType"] == nil, let id = dict["Id"] as? String else { return nil }
+            return (id, dict)
+        }
+
+        guard !probeRemaining.isEmpty else {
+            deliverBufferedAsIs()
+            return
+        }
+
+        probeHost = host
+        probeTypes = [:]
+        viewsObject = object
+        continueViewProbes()
+    }
+
+    private func continueViewProbes() {
+        guard let next = probeRemaining.first else {
+            finishViewProbes()
+            return
+        }
+        probeRemaining.removeFirst()
+        probeCurrentID = next.id
+
+        guard let originalURL = request.url,
+              let uid = Self.viewUserID(fromViewsURL: originalURL),
+              let base = URLComponents(url: originalURL, resolvingAgainstBaseURL: false)
+        else {
+            finishViewProbes()
+            return
+        }
+
+        // /Users/{uid}/Items 必须带 Fields + Limit（兼容层硬性要求）
+        var components = base
+        components.path = "/Users/\(uid)/Items"
+        components.queryItems = [
+            URLQueryItem(name: "ParentId", value: next.id),
+            URLQueryItem(name: "Recursive", value: "true"),
+            URLQueryItem(name: "Limit", value: "30"),
+            URLQueryItem(name: "Fields", value: "PrimaryImageAspectRatio"),
+        ]
+
+        guard let probeURL = components.url else {
+            finishViewProbes()
+            return
+        }
+
+        var probeRequest = URLRequest(url: probeURL)
+        probeRequest.httpMethod = "GET"
+        probeRequest.timeoutInterval = 15
+        for (key, value) in request.allHTTPHeaderFields ?? [:] {
+            guard key.caseInsensitiveCompare("Host") != .orderedSame else { continue }
+            probeRequest.setValue(value, forHTTPHeaderField: key)
+        }
+        if let token = Self.token(for: probeHost ?? "") {
+            probeRequest.setValue(token, forHTTPHeaderField: "X-Emby-Token")
+        }
+        if probeRequest.value(forHTTPHeaderField: "X-Emby-Authorization") == nil {
+            let authorization = probeRequest.value(forHTTPHeaderField: "Authorization")
+                ?? "MediaBrowser Client=\"Swiftfin\", Device=\"AppleTV\", DeviceId=\"swiftfin-fnos\", Version=\"1.0\""
+            probeRequest.setValue(Self.quoted(authorization), forHTTPHeaderField: "X-Emby-Authorization")
+        }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 15
+        let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+        forwardingSession = session
+        dataTask = session.dataTask(with: probeRequest)
+        dataTask?.resume()
+    }
+
+    private func handleViewProbeCompletion() {
+        if let id = probeCurrentID,
+           let object = try? JSONSerialization.jsonObject(with: bufferedData) as? [String: Any],
+           let items = object["Items"] as? [[String: Any]]
+        {
+            probeTypes[id] = Set(items.compactMap { $0["Type"] as? String })
+        }
+        probeCurrentID = nil
+        bufferedData.removeAll()
+        bufferedResponse = nil
+
+        continueViewProbes()
+    }
+
+    private func finishViewProbes() {
+        probeCurrentID = nil
+
+        guard var items = viewsObject["Items"] as? [[String: Any]] else {
+            deliverBufferedAsIs()
+            return
+        }
+
+        items = items.map { dict in
+            guard let id = dict["Id"] as? String, dict["CollectionType"] == nil else { return dict }
+            var patched = dict
+            patched["CollectionType"] = Self.collectionType(forItemTypes: probeTypes[id] ?? [])
+            return patched
+        }
+        viewsObject["Items"] = items
+
+        let payload = (try? JSONSerialization.data(withJSONObject: viewsObject)) ?? bufferedData
+
+        let response = HTTPURLResponse(
+            url: bufferedResponse?.url ?? request.url ?? URL(fileURLWithPath: "/"),
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: [
+                "Content-Type": "application/json",
+                "X-FnOS-Shim": "collection-type-synthesized",
+            ]
+        )
+        if let response {
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: payload)
+        }
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    // MARK: htmlBlocked：fnOS 未实现端点返回网页 → 合成正确形状的空响应
+
+    private func deliverSynthesizedEmptyForHTML() {
+        let path = Self.normalizedPath(of: request.url ?? URL(fileURLWithPath: "/"))
+        let payload = Self.emptyBody(forHTMLPath: path)
+
+        let response = HTTPURLResponse(
+            url: bufferedResponse?.url ?? request.url ?? URL(fileURLWithPath: "/"),
+            statusCode: 200,
+            httpVersion: "HTTP/1.1",
+            headerFields: [
+                "Content-Type": "application/json",
+                "X-FnOS-Shim": "html-blocked",
+                "X-FnOS-Original-Path": path,
+            ]
+        )
+        if let response {
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: payload)
+        }
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    // MARK: 透传缓冲
+
+    private func deliverBufferedAsIs() {
         if let bufferedResponse {
             client?.urlProtocol(self, didReceive: bufferedResponse, cacheStoragePolicy: .notAllowed)
         }
@@ -486,7 +694,7 @@ extension FnOSCompatURLProtocol {
         return !has("parentid") && !has("searchterm")
     }
 
-    /// 未实现、需要合成空信封的路径
+    /// 未实现、需要合成空响应的路径
     private static func isUnimplementedPath(_ path: String) -> Bool {
         // /Users/{uid}/Items/Resume（GET/POST 均未实现）
         if path.hasSuffix("/Items/Resume") { return true }
@@ -494,7 +702,69 @@ extension FnOSCompatURLProtocol {
         if path == "/Genres" || path.hasSuffix("/Genres") { return true }
         // 相似推荐（返回网页）
         if path.contains("/Similar") { return true }
+        // 本地预告片/映前广告/特别收录（返回网页，SDK 期望 [BaseItemDto]）
+        if path.contains("/LocalTrailers") || path.contains("/Intros") || path.contains("/SpecialFeatures") {
+            return true
+        }
+        // 主题音乐/视频（返回网页，SDK 期望 ThemeMediaResult 对象）
+        if path.contains("/ThemeMedia") { return true }
         return false
+    }
+
+    /// isUnimplementedPath 命中时应合成的响应体（形状必须与 SDK 期望一致）
+    private static func synthesizedBody(forUnimplementedPath path: String) -> Data {
+        if path.contains("/ThemeMedia") {
+            return Data(#"""
+                {"ThemeSongsResult":{"Items":[],"TotalRecordCount":0,"StartIndex":0},"ThemeVideosResult":{"Items":[],"TotalRecordCount":0,"StartIndex":0}}
+                """#.utf8)
+        }
+        if path.contains("/LocalTrailers") || path.contains("/Intros") || path.contains("/SpecialFeatures") {
+            return Data("[]".utf8)
+        }
+        return Data(#"{"Items":[],"TotalRecordCount":0,"StartIndex":0}"#.utf8)
+    }
+
+    /// htmlBlocked 兜底：按路径猜测 SDK 期望的空响应形状
+    private static func emptyBody(forHTMLPath path: String) -> Data {
+        // 纯数组端点
+        if path.hasSuffix("/Latest") { return Data("[]".utf8) }
+        if path.contains("/LocalTrailers") || path.contains("/Intros") || path.contains("/SpecialFeatures") {
+            return Data("[]".utf8)
+        }
+        if path.contains("/ThemeMedia") {
+            return Data(#"""
+                {"ThemeSongsResult":{"Items":[],"TotalRecordCount":0,"StartIndex":0},"ThemeVideosResult":{"Items":[],"TotalRecordCount":0,"StartIndex":0}}
+                """#.utf8)
+        }
+        // 其余一律给查询结果信封（Items/Genres/Similar/... 兼容）
+        return Data(#"{"Items":[],"TotalRecordCount":0,"StartIndex":0}"#.utf8)
+    }
+
+    /// 从 /Users/{uid}/Views 请求 URL 提取用户 ID
+    private static func viewUserID(fromViewsURL url: URL?) -> String? {
+        guard let url else { return nil }
+        let path = normalizedPath(of: url)
+        guard path.hasSuffix("/Views") else { return nil }
+
+        let parts = path.split(separator: "/").map(String.init)
+        guard let usersIndex = parts.firstIndex(of: "Users"),
+              usersIndex + 1 < parts.count
+        else { return nil }
+        return parts[usersIndex + 1]
+    }
+
+    /// 按库内容类型合成 CollectionType（保证落在 Swiftfin 支持且首页不过滤的集合内）
+    private static func collectionType(forItemTypes types: Set<String>) -> String {
+        let hasSeries = types.contains("Series") || types.contains("Episode") || types.contains("Season")
+        let hasMovie = types.contains("Movie")
+        let hasMusicVideo = types.contains("MusicVideo")
+
+        if hasSeries && hasMovie { return "homevideos" }
+        if hasSeries { return "tvshows" }
+        if hasMovie { return "movies" }
+        if hasMusicVideo { return "musicvideos" }
+        // 空库/未知内容：homevideos 不会被首页与媒体库页过滤
+        return "homevideos"
     }
 
     /// 主改写入口：返回替换后的 URL（仅改 URL，不动 header/method）

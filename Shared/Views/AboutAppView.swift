@@ -39,16 +39,26 @@ struct AboutAppView: View {
             }
 
             Section {
+                LabeledContent(
+                    L10n.version,
+                    value: "\(UIApplication.appVersion ?? .emptyDash) (\(UIApplication.bundleVersion ?? .emptyDash))"
+                )
+
+                LabeledContent(
+                    "飞牛适配版",
+                    value: "FNOS \(FNOSAdapterBuild.version)"
+                )
+
+                LabeledContent(
+                    "适配内容",
+                    value: FNOSAdapterBuild.changes
+                )
+
                 #if DEBUG
                 // swiftlint:disable:next hard_coded_display_string
                 LabeledContent(
                     "Branch",
                     value: UIApplication.gitBranch ?? .emptyDash
-                )
-                #else
-                LabeledContent(
-                    L10n.version,
-                    value: "\(UIApplication.appVersion ?? .emptyDash) (\(UIApplication.bundleVersion ?? .emptyDash))"
                 )
                 #endif
 

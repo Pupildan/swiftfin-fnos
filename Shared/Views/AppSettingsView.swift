@@ -60,6 +60,11 @@ struct AppSettingsView: View {
         Form(image: .jellyfinBlobBlue) {
 
             Section(L10n.swiftfin) {
+                LabeledContent(
+                    "版本",
+                    value: "FNOS \(FNOSAdapterBuild.version) · \(UIApplication.appVersion ?? "-")"
+                )
+
                 ChevronButton(L10n.aboutApp) {
                     router.route(to: .aboutApp)
                 }

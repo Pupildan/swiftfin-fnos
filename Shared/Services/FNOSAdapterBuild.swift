@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v13"
+    static let version = "v14"
 
     /// 本版主要变更摘要
-    static let changes = "自绘播放控制条（无背景图标/去音量画中画/弹幕开关入条/3秒自动隐藏），删除顶部圆角区"
+    static let changes = "液态玻璃控制条（右对齐/弹幕设置/音轨选择/进度条拖动+长按加速快滑）"
 }

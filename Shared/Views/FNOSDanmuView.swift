@@ -64,8 +64,8 @@ final class FNOSDanmuEngine: ObservableObject {
     static let defaultBaseURL = "http://192.168.10.120:9321/199780jjj"
 
     private let laneCount = 5
-    /// 滚动弹幕全程耗时（秒）
-    private let travelDuration: Double = 12
+    /// 滚动弹幕全程耗时上限（秒）——按最慢速度 0.5x 估算，快速时绘制端会跳过出屏弹幕
+    private let travelDuration: Double = 30
     /// 同轨道两次弹幕的最小间隔（秒）——防重叠核心
     private let laneGap: Double = 3.5
     /// 底部/顶部固定弹幕停留时间（秒）
@@ -320,8 +320,10 @@ struct FNOSDanmuView: View {
 
     @ObservedObject var engine: FNOSDanmuEngine
 
-    private let fontSize: CGFloat = 26
-    private let laneHeight: CGFloat = 36
+    @AppStorage("fnos.danmu.fontSize") private var fontSize: Double = 26
+    @AppStorage("fnos.danmu.opacity") private var opacity: Double = 1
+    @AppStorage("fnos.danmu.speed") private var speed: Double = 1
+    private var laneHeight: CGFloat { CGFloat(fontSize) * 1.4 }
     private let laneTopInset: CGFloat = 110
 
     var body: some View {
@@ -330,6 +332,7 @@ struct FNOSDanmuView: View {
                 draw(in: &context, size: size, at: timeline.date)
             }
         }
+        .opacity(opacity)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
@@ -354,10 +357,10 @@ struct FNOSDanmuView: View {
                 continue
             }
 
-            // 滚动弹幕：右侧进入、匀速向左
+            // 滚动弹幕：右侧进入、匀速向左（speed 为用户设置倍率）
             let textWidth = estimatedWidth(of: comment.text)
-            let speed = (size.width + textWidth) / 12
-            let distance = CGFloat(mediaNow - comment.time) * speed
+            let velocity = (size.width + textWidth) / (12 / max(speed, 0.1))
+            let distance = CGFloat(mediaNow - comment.time) * velocity
             let trailingX = size.width - distance
             let centerX = trailingX + textWidth / 2
 
@@ -394,6 +397,6 @@ struct FNOSDanmuView: View {
 
     /// CJK 全角估算：每字符 ≈ 1.0 倍字号
     private func estimatedWidth(of text: String) -> CGFloat {
-        CGFloat(text.count) * fontSize
+        CGFloat(text.count) * CGFloat(fontSize)
     }
 }

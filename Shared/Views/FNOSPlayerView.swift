@@ -3,14 +3,14 @@
 // 飞牛影视播放器 —— KSPlayer 裸播放视图 + 自绘 Apple TV+ 式控制条。
 //
 // 设计要点：
-// - 不用 KSVideoPlayerView（其内置 tvOS 控制条按钮样式无法定制），
-//   改用裸 KSVideoPlayer(UIViewRepresentable) + 完全自绘控制层；
-// - 控制条按钮一律 .plain 无背景（按用户要求删除音量/画中画）；
-// - 弹幕开关移入控制条；顶部区域彻底删除；
-// - 3 秒无操作自动隐藏控制条；隐藏状态下任意方向键/触摸唤出；
-// - MENU(onExitCommand) 退出播放。
+// - 裸 KSVideoPlayer(UIViewRepresentable) + 完全自绘控制层；
+// - 控制条按钮右对齐，选中时 tvOS26 液态玻璃(.glassEffect)背景，无选中时无背景；
+// - 弹幕开关/弹幕设置/音轨选择都在控制条上；
+// - 进度条可聚焦：选中后左右键步进预览，长按/连续滑动自动加速（5s→180s），停手 1 秒提交 seek；
+// - 3 秒无操作自动隐藏控制条；隐藏状态任意方向键/触摸唤出；MENU 退出播放。
 //
 
+import AVFoundation
 import KSPlayer
 import SwiftUI
 
@@ -67,6 +67,19 @@ extension FNOSDirectClient {
     }
 }
 
+// MARK: - 液态玻璃辅助（tvOS26 Liquid Glass，选中才挂玻璃）
+
+extension View {
+    @ViewBuilder
+    func fnosGlass(_ active: Bool) -> some View {
+        if active {
+            self.glassEffect(.regular, in: Capsule())
+        } else {
+            self
+        }
+    }
+}
+
 // MARK: - 播放容器
 
 struct FNOSPlayerContainerView: View {
@@ -90,10 +103,17 @@ struct FNOSPlayerContainerView: View {
     // 控制条状态
     @State private var controlsVisible = true
     @State private var hideTask: Task<Void, Never>?
+    @State private var scrubCommitTask: Task<Void, Never>?
+    @State private var scrubActive = false
+    @State private var scrubValue: Double = 0
+    @State private var scrubStep: Double = 5
+    @State private var lastScrubMove: Date?
+    @State private var isSheetPresented = false
+    @State private var audioSheetPresented = false
     @FocusState private var focus: Control?
 
     private enum Control: Hashable {
-        case rewind, playPause, danmu, forward
+        case rewind, playPause, forward, danmu, danmuSettings, audio, scrubber
     }
 
     var body: some View {
@@ -135,7 +155,26 @@ struct FNOSPlayerContainerView: View {
         }
         .onDisappear {
             hideTask?.cancel()
+            scrubCommitTask?.cancel()
             danmuEngine.setRate(0)
+        }
+        .sheet(isPresented: $isSheetPresented, onDismiss: {
+            audioSheetPresented = false
+            DispatchQueue.main.async {
+                focus = .playPause
+            }
+            revealControls()
+        }) {
+            if audioSheetPresented {
+                FNOSAudioTracksSheet(
+                    tracks: audioTracks,
+                    currentID: audioTracks.first { $0.isEnabled }?.trackID
+                ) { track in
+                    coordinator.playerLayer?.player.select(track: track)
+                }
+            } else {
+                FNOSDanmuSettingsSheet()
+            }
         }
     }
 
@@ -155,7 +194,7 @@ struct FNOSPlayerContainerView: View {
                 }
             }
             .ignoresSafeArea()
-            .focusable(!controlsVisible)
+            .focusable(!controlsVisible && !isSheetPresented)
             .onMoveCommand { _ in
                 // 控制条隐藏时：任意方向键唤出控制条
                 revealControls()
@@ -165,11 +204,12 @@ struct FNOSPlayerContainerView: View {
             }
     }
 
-    // MARK: 自绘控制条（无背景图标 + 进度 + 时间）
+    // MARK: 自绘控制条
 
     private var controlBar: some View {
-        VStack(spacing: 18) {
-            HStack(alignment: .center, spacing: 16) {
+        VStack(spacing: 20) {
+            // 片名 + 状态（左）
+            HStack(alignment: .center) {
                 VStack(alignment: .leading, spacing: 4) {
                     Text(item.Name ?? "播放")
                         .font(.headline)
@@ -183,27 +223,49 @@ struct FNOSPlayerContainerView: View {
                 Spacer()
             }
 
-            HStack(spacing: 64) {
+            // 按钮行（右对齐，与进度条右端对齐）
+            HStack(spacing: 30) {
+                Spacer()
                 controlButton(.rewind, icon: "gobackward.15") {
                     coordinator.skip(interval: -15)
                 }
                 controlButton(.playPause, icon: isPlaying ? "pause.fill" : "play.fill") {
                     togglePlayPause()
                 }
-                controlButton(.danmu, icon: showDanmu ? "text.bubble" : "text.bubble.slash") {
-                    showDanmu.toggle()
-                }
                 controlButton(.forward, icon: "goforward.15") {
                     coordinator.skip(interval: 15)
                 }
+                controlButton(.danmu, icon: "text.bubble") {
+                    showDanmu.toggle()
+                }
+                .opacity(showDanmu ? 1 : 0.35)
+                controlButton(.danmuSettings, icon: "slider.horizontal.3") {
+                    audioSheetPresented = false
+                    isSheetPresented = true
+                }
+                if !audioTracks.isEmpty {
+                    controlButton(.audio, icon: "waveform") {
+                        audioSheetPresented = true
+                        isSheetPresented = true
+                    }
+                }
             }
-            .font(.system(size: 34, weight: .medium))
+            .font(.system(size: 32, weight: .medium))
             .foregroundStyle(.white)
 
-            FNOSPlayerTimeBar(timemodel: coordinator.timemodel)
+            // 进度条（可聚焦拖动/快滑）+ 时间
+            HStack(spacing: 14) {
+                Text(timeString(displayTime))
+                    .font(.caption.monospacedDigit())
+                    .foregroundColor(.white)
+                scrubber
+                Text(timeString(Double(coordinator.timemodel.totalTime)))
+                    .font(.caption.monospacedDigit())
+                    .foregroundColor(.white)
+            }
         }
         .padding(.horizontal, 90)
-        .padding(.bottom, 56)
+        .padding(.bottom, 48)
         .padding(.top, 24)
         .background(
             LinearGradient(
@@ -216,25 +278,118 @@ struct FNOSPlayerContainerView: View {
             )
             .ignoresSafeArea()
         )
-        .onChange(of: focus) { _ in
+        .onChange(of: focus) { newValue in
+            if newValue != .scrubber {
+                commitScrubIfNeeded()
+            }
             scheduleHide()
+        }
+    }
+
+    /// 可聚焦进度条：选中后左右键预览拖动，长按/连续滑动自动加速
+    private var scrubber: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(.white.opacity(0.25))
+                Capsule()
+                    .fill(.white)
+                    .frame(width: max(0, geo.size.width * displayFraction))
+            }
+            .frame(height: focus == .scrubber ? 14 : 6)
+            .fnosGlass(focus == .scrubber)
+            .animation(.easeOut(duration: 0.15), value: focus == .scrubber)
+            .contentShape(Rectangle())
+        }
+        .frame(height: 28)
+        .focusable(true)
+        .focused($focus, equals: .scrubber)
+        .onMoveCommand { direction in
+            switch direction {
+            case .left:
+                scrub(by: -1)
+            case .right:
+                scrub(by: 1)
+            default:
+                break
+            }
         }
     }
 
     private func controlButton(_ control: Control, icon: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: icon)
-                .scaleEffect(focus == control ? 1.3 : 1.0)
-                .animation(.easeOut(duration: 0.15), value: focus == control)
+                .padding(.horizontal, 22)
+                .padding(.vertical, 14)
+                .fnosGlass(focus == control)
         }
         .buttonStyle(.plain)
         .focused($focus, equals: control)
+    }
+
+    // MARK: 快滑/拖动逻辑
+
+    /// 当前展示时间：拖动预览优先，否则真实时间
+    private var displayTime: Double {
+        if scrubActive {
+            return scrubValue
+        }
+        return Double(coordinator.timemodel.currentTime)
+    }
+
+    private var displayFraction: Double {
+        let total = Double(max(coordinator.timemodel.totalTime, 1))
+        return min(max(displayTime / total, 0), 1)
+    }
+
+    /// 方向键步进：0.45 秒内连续触发视为"长按/转盘滚动"，步长逐级加速（5s→180s）
+    private func scrub(by direction: Double) {
+        let now = Date()
+        if let last = lastScrubMove, now.timeIntervalSince(last) < 0.45 {
+            scrubStep = min(scrubStep * 1.6, 180)
+        } else {
+            scrubStep = 5
+        }
+        lastScrubMove = now
+
+        let total = Double(max(coordinator.timemodel.totalTime, 1))
+        let base = scrubActive ? scrubValue : Double(coordinator.timemodel.currentTime)
+        scrubActive = true
+        scrubValue = min(max(base + direction * scrubStep, 0), total)
+
+        // 停手 1 秒提交
+        scrubCommitTask?.cancel()
+        scrubCommitTask = Task {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            commitScrubIfNeeded()
+        }
+    }
+
+    private func commitScrubIfNeeded() {
+        guard scrubActive else { return }
+        scrubActive = false
+        coordinator.seek(time: scrubValue)
+        print("FNOSℹ️进度提交: \(Int(scrubValue))s")
     }
 
     // MARK: 状态助手
 
     private var isPlaying: Bool {
         coordinator.state.isPlaying
+    }
+
+    private var audioTracks: [MediaPlayerTrack] {
+        coordinator.playerLayer?.player.tracks(mediaType: .audio) ?? []
+    }
+
+    private func timeString(_ seconds: Double) -> String {
+        let s = Int(max(seconds, 0))
+        let h = s / 3600, m = (s % 3600) / 60, sec = s % 60
+        if h > 0 {
+            return String(format: "%d:%02d:%02d", h, m, sec)
+        }
+        return String(format: "%02d:%02d", m, sec)
     }
 
     private func togglePlayPause() {
@@ -261,6 +416,7 @@ struct FNOSPlayerContainerView: View {
     }
 
     private func scheduleHide() {
+        guard !isSheetPresented else { return }
         hideTask?.cancel()
         hideTask = Task {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
@@ -337,44 +493,137 @@ struct FNOSPlayerContainerView: View {
     }
 }
 
-// MARK: - 时间/进度条（单独观察 ControllerTimeModel，秒级刷新不重绘整个控制条）
+// MARK: - 弹幕设置面板
 
-struct FNOSPlayerTimeBar: View {
+struct FNOSDanmuSettingsSheet: View {
 
-    @ObservedObject var timemodel: ControllerTimeModel
+    @AppStorage("fnos.danmu.fontSize") private var fontSize: Double = 26
+    @AppStorage("fnos.danmu.opacity") private var opacity: Double = 1
+    @AppStorage("fnos.danmu.speed") private var speed: Double = 1
+
+    @Environment(\.dismiss)
+    private var dismiss
 
     var body: some View {
-        HStack(spacing: 14) {
-            Text(timeString(timemodel.currentTime))
-                .font(.caption.monospacedDigit())
-                .foregroundColor(.white)
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule()
-                        .fill(.white.opacity(0.25))
-                    Capsule()
-                        .fill(.white)
-                        .frame(width: geo.size.width * fraction)
+        VStack(spacing: 32) {
+            Text("弹幕设置")
+                .font(.title2.bold())
+
+            stepRow(title: "字号", text: "\(Int(fontSize)) px") {
+                fontSize = max(16, min(44, fontSize - 2))
+            } up: {
+                fontSize = min(44, fontSize + 2)
+            }
+            stepRow(title: "不透明度", text: "\(Int(opacity * 100)) %") {
+                opacity = max(0.2, opacity - 0.05)
+            } up: {
+                opacity = min(1, opacity + 0.05)
+            }
+            stepRow(title: "速度", text: String(format: "%.1fx", speed)) {
+                speed = max(0.5, speed - 0.1)
+            } up: {
+                speed = min(2.5, speed + 0.1)
+            }
+
+            Button {
+                dismiss()
+            } label: {
+                Text("完成")
+                    .frame(width: 260, height: 56)
+            }
+            .buttonStyle(.plain)
+            .glassEffect(.regular, in: Capsule())
+        }
+        .padding(60)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.opacity(0.85).ignoresSafeArea())
+    }
+
+    /// tvOS 稳妥步进行：[-] 值 [+]（SwiftUI Slider 在 tvOS 焦点行为不可靠）
+    private func stepRow(
+        title: String,
+        text: String,
+        down: @escaping () -> Void,
+        up: @escaping () -> Void
+    ) -> some View {
+        HStack(spacing: 28) {
+            Text(title)
+                .font(.headline)
+                .frame(width: 140, alignment: .leading)
+            Button(action: down) {
+                Image(systemName: "minus")
+                    .frame(width: 72, height: 48)
+            }
+            .buttonStyle(.plain)
+            .glassEffect(.regular, in: Capsule())
+            Text(text)
+                .font(.title3.monospacedDigit())
+                .frame(width: 140)
+            Button(action: up) {
+                Image(systemName: "plus")
+                    .frame(width: 72, height: 48)
+            }
+            .buttonStyle(.plain)
+            .glassEffect(.regular, in: Capsule())
+        }
+    }
+}
+
+// MARK: - 音轨选择面板
+
+struct FNOSAudioTracksSheet: View {
+
+    let tracks: [MediaPlayerTrack]
+    let currentID: Int32?
+    let onSelect: (MediaPlayerTrack) -> Void
+
+    @Environment(\.dismiss)
+    private var dismiss
+
+    var body: some View {
+        VStack(spacing: 24) {
+            Text("音轨")
+                .font(.title2.bold())
+
+            if tracks.isEmpty {
+                Text("没有可切换的音轨")
+                    .foregroundColor(.secondary)
+            } else {
+                ScrollView {
+                    VStack(spacing: 16) {
+                        ForEach(tracks, id: \.trackID) { track in
+                            Button {
+                                onSelect(track)
+                                dismiss()
+                            } label: {
+                                HStack {
+                                    Image(systemName: track.trackID == currentID ? "checkmark.circle.fill" : "circle")
+                                    Text(track.description)
+                                        .lineLimit(1)
+                                    Spacer()
+                                }
+                                .padding(.horizontal, 28)
+                                .padding(.vertical, 16)
+                            }
+                            .buttonStyle(.plain)
+                            .glassEffect(.regular, in: Capsule())
+                        }
+                    }
+                    .padding(.horizontal, 60)
                 }
             }
-            .frame(height: 6)
-            Text(timeString(timemodel.totalTime))
-                .font(.caption.monospacedDigit())
-                .foregroundColor(.white)
-        }
-    }
 
-    private var fraction: Double {
-        let total = Double(max(timemodel.totalTime, 1))
-        return min(max(Double(timemodel.currentTime) / total, 0), 1)
-    }
-
-    private func timeString(_ seconds: Int) -> String {
-        let s = max(seconds, 0)
-        let h = s / 3600, m = (s % 3600) / 60, sec = s % 60
-        if h > 0 {
-            return String(format: "%d:%02d:%02d", h, m, sec)
+            Button {
+                dismiss()
+            } label: {
+                Text("完成")
+                    .frame(width: 260, height: 56)
+            }
+            .buttonStyle(.plain)
+            .glassEffect(.regular, in: Capsule())
         }
-        return String(format: "%02d:%02d", m, sec)
+        .padding(60)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color.black.opacity(0.85).ignoresSafeArea())
     }
 }

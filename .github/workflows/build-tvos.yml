@@ -31,6 +31,7 @@ jobs:
       - name: Build (unsigned)
         working-directory: .
         run: |
+          set -o pipefail
           xcodebuild \
             -project Swiftfin.xcodeproj \
             -scheme "Swiftfin tvOS" \
@@ -40,13 +41,16 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            build | tail -40
+            SWIFT_VERSION=5.0 \
+            build | tail -60
 
       - name: Package unsigned ipa
         working-directory: .
         run: |
           APP=$(find build/Build/Products/Release-appletvos -maxdepth 1 -name "*.app" | head -1)
           echo "Found app bundle: $APP"
+          if [ -z "$APP" ]; then echo "::error::No .app produced - build failed"; exit 1; fi
+          if [ ! -d "$APP" ]; then echo "::error::$APP is not a directory"; exit 1; fi
           mkdir -p ipa/Payload
           cp -R "$APP" ipa/Payload/
           cd ipa
@@ -59,6 +63,7 @@ jobs:
         with:
           name: Swiftfin-FNOS-tvos-unsigned
           path: Swiftfin-FNOS-tvos-unsigned.ipa
+          if-no-files-found: error
           retention-days: 30
 
       # 如需在 CI 直接出「已签名 ipa」（需要付费开发者账号）：

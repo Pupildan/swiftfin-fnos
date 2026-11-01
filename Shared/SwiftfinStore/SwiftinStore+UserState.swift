@@ -129,6 +129,8 @@ extension UserState {
             sessionDelegate: URLSessionProxyDelegate(logger: NetworkLogger.swiftfin())
         )
 
+        FnOSCompatURLProtocol.registerToken(host: server.effectiveServerURL.host ?? "", token: accessToken)
+
         let request = Paths.getCurrentUser
         let response = try await client.send(request)
 

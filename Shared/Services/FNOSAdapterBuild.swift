@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v6"
+    static let version = "v7"
 
     /// 本版主要变更摘要
-    static let changes = "设置页版本号 + 实时适配诊断"
+    static let changes = "拦截链定位诊断 + token 预注册"
 }

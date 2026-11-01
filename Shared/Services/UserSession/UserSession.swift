@@ -45,6 +45,9 @@ final class UserSession {
             sessionDelegate: URLSessionProxyDelegate(logger: NetworkLogger.swiftfin())
         )
 
+        // 预注册 token：URLProtocol 的 canInit 无需等待首个请求即可命中该主机
+        FnOSCompatURLProtocol.registerToken(host: url.host ?? "", token: user.accessToken)
+
         cachedClient = client
 
         return client

@@ -70,9 +70,42 @@ final class FnOSCompatURLProtocol: URLProtocol {
         return Array(viewIDsByHost[host] ?? []).sorted()
     }
 
+    // MARK: 诊断计数器（设置页「飞牛适配诊断」显示，用于定位拦截链断点）
+
+    private static let statsLock = NSLock()
+    private static var _canInitCount = 0
+    private static var _startLoadingCount = 0
+    private static var _injectedCount = 0
+
+    static func stats() -> (canInit: Int, startLoading: Int, injected: Int) {
+        statsLock.lock()
+        defer { statsLock.unlock() }
+        return (_canInitCount, _startLoadingCount, _injectedCount)
+    }
+
+    private static func noteCanInit() {
+        statsLock.lock()
+        _canInitCount += 1
+        statsLock.unlock()
+    }
+
+    private static func noteStartLoading() {
+        statsLock.lock()
+        _startLoadingCount += 1
+        statsLock.unlock()
+    }
+
+    private static func noteInjected() {
+        statsLock.lock()
+        _injectedCount += 1
+        statsLock.unlock()
+    }
+
     // MARK: - URLProtocol
 
     override class func canInit(with request: URLRequest) -> Bool {
+        noteCanInit()
+
         guard let url = request.url,
               url.scheme == "http" || url.scheme == "https"
         else { return false }
@@ -92,6 +125,8 @@ final class FnOSCompatURLProtocol: URLProtocol {
     }
 
     override func startLoading() {
+        Self.noteStartLoading()
+
         guard let url = request.url, let host = url.host else {
             client?.urlProtocol(self, didFailWithError: URLError(.badURL))
             return
@@ -628,6 +663,7 @@ extension FnOSCompatURLProtocol: URLSessionDataDelegate {
             return patched
         }
         viewsObject["Items"] = items
+        Self.noteInjected()
 
         let payload = (try? JSONSerialization.data(withJSONObject: viewsObject)) ?? bufferedData
 

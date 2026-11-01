@@ -21,6 +21,9 @@ extension URLSessionConfiguration {
         protocolClasses.insert(FnOSCompatURLProtocol.self, at: 0)
         configuration.protocolClasses = protocolClasses
 
+        // 双保险：全局注册，保证任何基于默认协议栈的会话也能命中
+        URLProtocol.registerClass(FnOSCompatURLProtocol.self)
+
         return configuration
     }()
 }

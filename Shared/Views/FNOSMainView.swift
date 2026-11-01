@@ -281,7 +281,7 @@ private struct FNOSItemCell: View {
                     VStack(spacing: 6) {
                         Image(systemName: "film")
                             .font(.title)
-                        Text(item.Type ?? "无类型")
+                        Text(item.type ?? "无类型")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -365,7 +365,7 @@ private struct FNOSItemDetailSheet: View {
                     .bold()
 
                 HStack(spacing: 12) {
-                    Text(item.Type ?? "-")
+                    Text(item.type ?? "-")
                     if let year = item.ProductionYear {
                         Text(String(year))
                     }

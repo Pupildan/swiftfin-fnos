@@ -123,6 +123,10 @@ final class FNOSDirectClient {
 struct FNOSDirectError: LocalizedError {
     let message: String
     var errorDescription: String? { message }
+
+    init(_ message: String) {
+        self.message = message
+    }
 }
 
 // MARK: - fnOS JSON 模型（PascalCase，与响应键名一致）
@@ -134,6 +138,8 @@ struct FNOSViewsEnvelope: Decodable {
 struct FNOSLibrary: Decodable, Identifiable {
     let Id: String
     let Name: String?
+
+    var id: String { Id }
 }
 
 struct FNOSItemsEnvelope: Decodable {
@@ -143,8 +149,18 @@ struct FNOSItemsEnvelope: Decodable {
 struct FNOSItem: Decodable, Identifiable {
     let Id: String
     let Name: String?
-    let Type: String?
+    let ItemType: String?
     let ProductionYear: Int?
     let Overview: String?
     let ImageTags: [String: String]?
+
+    var id: String { Id }
+    var type: String? { ItemType }
+
+    /// fnOS 的内容类型键叫 "Type"（Swift 属性不能用 Type 命名，故改名映射）
+    enum CodingKeys: String, CodingKey {
+        case Id, Name
+        case ItemType = "Type"
+        case ProductionYear, Overview, ImageTags
+    }
 }

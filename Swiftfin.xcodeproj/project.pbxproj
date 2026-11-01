@@ -1413,7 +1413,7 @@
 			repositoryURL = "https://github.com/kingslay/KSPlayer.git";
 			requirement = {
 				kind = exactVersion;
-				minimumVersion = 2.3.4;
+				version = 2.3.4;
 			};
 		};
 		E1DC9812296DC06200982F06 /* XCRemoteSwiftPackageReference "PulseLogHandler" */ = {

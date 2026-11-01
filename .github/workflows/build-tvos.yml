@@ -34,6 +34,8 @@ jobs:
         working-directory: .
         run: |
           set -o pipefail
+          # 清掉可能过期的包解析缓存（新加 SPM 包时防止旧图状态被复用）
+          rm -rf build/clonedSourcePackages build/Build/Intermediates.noindex/XCBuildData
           xcodebuild -resolvePackageDependencies \
             -project Swiftfin.xcodeproj \
             -scheme "Swiftfin tvOS" \

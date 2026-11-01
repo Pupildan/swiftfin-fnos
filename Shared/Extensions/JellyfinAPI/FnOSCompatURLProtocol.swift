@@ -305,7 +305,7 @@ extension FnOSCompatURLProtocol: URLSessionDataDelegate {
 
         if let payload {
             let response = HTTPURLResponse(
-                url: bufferedResponse?.url ?? request.url,
+                url: bufferedResponse?.url ?? request.url ?? URL(fileURLWithPath: "/"),
                 statusCode: 200,
                 httpVersion: "HTTP/1.1",
                 headerFields: ["Content-Type": "application/json"]
@@ -445,7 +445,7 @@ extension FnOSCompatURLProtocol: URLSessionDataDelegate {
             ?? Data(#"{"Items":[],"TotalRecordCount":0,"StartIndex":0}"#.utf8)
 
         let response = HTTPURLResponse(
-            url: request.url,
+            url: request.url ?? URL(fileURLWithPath: "/"),
             statusCode: 200,
             httpVersion: "HTTP/1.1",
             headerFields: ["Content-Type": "application/json"]

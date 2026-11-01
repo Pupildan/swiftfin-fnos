@@ -29,6 +29,7 @@ extension SwiftfinStore.State {
         var client: JellyfinClient {
             JellyfinClient(
                 configuration: .swiftfinConfiguration(url: effectiveServerURL),
+                delegate: LegacyAuthHeaderInjector(),
                 sessionConfiguration: .swiftfin,
                 sessionDelegate: URLSessionProxyDelegate(logger: NetworkLogger.swiftfin())
             )

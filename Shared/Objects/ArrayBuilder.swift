@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import JellyfinAPI
 
 @resultBuilder
 public enum ArrayBuilder<Component> {
@@ -43,11 +44,11 @@ public enum ArrayBuilder<Component> {
         expression
     }
 
-    static func buildExpression<T: RawRepresentable>(_ expression: T) -> [Component] where T.RawValue == Component {
+    static func buildExpression<T: FNOSStringRawRepresentable>(_ expression: T) -> [Component] where T.RawValue == Component {
         [expression.rawValue]
     }
 
-    static func buildExpression<T: RawRepresentable>(_ expression: [T]) -> [Component] where T.RawValue == Component {
+    static func buildExpression<T: FNOSStringRawRepresentable>(_ expression: [T]) -> [Component] where T.RawValue == Component {
         expression.map(\.rawValue)
     }
 
@@ -55,3 +56,17 @@ public enum ArrayBuilder<Component> {
         []
     }
 }
+
+/// 标记协议：App 自己的 String 枚举组件。
+/// KSPlayer 给 Array 注入了 `RawRepresentable where Element: Codable`，
+/// 会让 RawRepresentable 重载对数组表达式产生二义性 —— 必须用标记收窄。
+public protocol FNOSStringRawRepresentable: RawRepresentable where RawValue == String {}
+
+extension VideoRangeType: FNOSStringRawRepresentable {}
+extension ItemSortBy: FNOSStringRawRepresentable {}
+extension BaseItemKind: FNOSStringRawRepresentable {}
+extension TranscodeReason: FNOSStringRawRepresentable {}
+extension AudioCodec: FNOSStringRawRepresentable {}
+extension VideoCodec: FNOSStringRawRepresentable {}
+extension SubtitleFormat: FNOSStringRawRepresentable {}
+extension MediaContainer: FNOSStringRawRepresentable {}

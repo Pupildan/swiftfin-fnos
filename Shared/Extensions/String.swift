@@ -18,12 +18,7 @@ extension String: Displayable {
     }
 }
 
-extension String: @retroactive Identifiable {
-
-    public var id: String {
-        self
-    }
-}
+// String: Identifiable 一致性已由 KSPlayer 全局提供（App 侧再声明会 redundant conformance）
 
 extension String: LibraryElement {
 

@@ -165,7 +165,7 @@ extension View {
     ///              Instead, use a native `if let` statement.
     @ViewBuilder
     @inlinable
-    func ifLet<Value>(
+    func ifLet_<Value>(
         _ value: Value?,
         @ViewBuilder transform: (Self, Value) -> some View
     ) -> some View {
@@ -180,7 +180,7 @@ extension View {
     ///              Instead, use a native `if let/else` statement.
     @ViewBuilder
     @inlinable
-    func ifLet<Value, Content: View>(
+    func ifLet_<Value, Content: View>(
         _ value: Value?,
         @ViewBuilder transformIf: (Self, Value) -> Content,
         @ViewBuilder transformElse: (Self) -> Content

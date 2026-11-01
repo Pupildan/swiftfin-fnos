@@ -42,7 +42,7 @@ struct PlaybackAdjustmentSlider: View {
         )
         .sliderContainerStyle(.capsule(neutralProgress: (resetValue - range.lowerBound) / (range.upperBound - range.lowerBound)))
         .frame(height: 24)
-        .ifLet(focusID) { view, id in
+        .ifLet_(focusID) { view, id in
             view.coordinatedFocus(id)
         }
         #else

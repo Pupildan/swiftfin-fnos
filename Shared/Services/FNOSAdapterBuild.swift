@@ -18,5 +18,5 @@ enum FNOSAdapterBuild {
     static let version = "v17"
 
     /// 本版主要变更摘要
-    static let changes = "回滚详情页；选中玻璃改自绘材质（彻底去系统高亮板）"
+    static let changes = "移除X按钮；恢复转盘直拉进度；进度条恒定粗细；自绘玻璃去白框"
 }

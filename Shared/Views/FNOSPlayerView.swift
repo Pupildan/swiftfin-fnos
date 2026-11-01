@@ -70,7 +70,7 @@ extension FNOSDirectClient {
     }
 }
 
-// MARK: - 液态玻璃辅助（自绘材质版：实时模糊+高光描边，不经系统 glassEffect，聚焦无系统高亮板）
+// MARK: - 液态玻璃辅助（tvOS26，选中才挂；.clear 更透明，底部压暗保证可读）
 
 extension View {
     @ViewBuilder
@@ -131,7 +131,7 @@ struct FNOSPlayerContainerView: View {
     @FocusState private var focus: Control?
 
     private enum Control: Hashable {
-        case close, rewind, playPause, forward, rate, danmu, danmuSettings, audio, scrubber
+        case rewind, playPause, forward, rate, danmu, danmuSettings, audio, scrubber
     }
 
     private let rateOptions: [Float] = [0.5, 1.0, 1.5, 2.0]
@@ -159,7 +159,7 @@ struct FNOSPlayerContainerView: View {
 
             if controlsVisible, streamURL != nil {
                 controlBar
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .transition(.opacity)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -241,28 +241,21 @@ struct FNOSPlayerContainerView: View {
             print("FNOSℹ️滑动手势已挂载")
 
             FNOSPanBridge.shared.onPan = { gesture in
-                // 门控：只有进度条聚焦时滑动才拖进度，否则转盘滑动用于移动焦点
                 switch gesture.state {
                 case .began:
-                    if focus == .scrubber {
-                        scrubActive = true
-                        scrubValue = Double(coordinator.timemodel.currentTime)
-                    } else if !controlsVisible {
-                        revealControls()
-                    }
+                    revealControls()
                 case .changed:
-                    guard focus == .scrubber, scrubActive else { return }
                     let translation = gesture.translation(in: gesture.view)
                     gesture.setTranslation(.zero, in: gesture.view)
                     // 滑动灵敏度：1px ≈ 0.2s（转盘快速滚动可快速拖动）
                     let delta = Double(translation.x) * 0.2
                     let total = Double(max(coordinator.timemodel.totalTime, 1))
-                    scrubValue = min(max(scrubValue + delta, 0), total)
+                    let base = scrubActive ? scrubValue : Double(coordinator.timemodel.currentTime)
+                    scrubActive = true
+                    scrubValue = min(max(base + delta, 0), total)
                     scheduleScrubCommit()
                 case .ended, .cancelled:
-                    if focus == .scrubber {
-                        commitScrubIfNeeded()
-                    }
+                    commitScrubIfNeeded()
                 default:
                     break
                 }
@@ -274,70 +267,67 @@ struct FNOSPlayerContainerView: View {
 
     private var controlBar: some View {
         VStack(spacing: 20) {
-                // 顶部行：关闭 + 片名（ATV+ 式左上角）
-                HStack(spacing: 18) {
-                    controlButton(.close, icon: "xmark") {
-                        dismiss()
+            // 片名 + 状态（左）
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.Name ?? "播放")
+                        .font(.headline)
+                        .lineLimit(1)
+                    if !notice.isEmpty {
+                        Text(notice)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
                     }
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(item.Name ?? "播放")
-                            .font(.headline)
-                            .lineLimit(1)
-                        if !notice.isEmpty {
-                            Text(notice)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }
-                    }
-                    Spacer()
                 }
+                Spacer()
+            }
 
-                // 主按钮（快进/快退/播放暂停）相对进度条居中；功能按钮靠右
-                HStack(spacing: 44) {
-                    controlButton(.rewind, icon: "gobackward.15") {
-                        coordinator.skip(interval: -15)
-                    }
-                    controlButton(.playPause, icon: isPlaying ? "pause.fill" : "play.fill") {
-                        togglePlayPause()
-                    }
-                    controlButton(.forward, icon: "goforward.15") {
-                        coordinator.skip(interval: 15)
-                    }
+            // 主按钮（快进/快退/播放暂停）相对进度条居中；功能按钮靠右
+            HStack(spacing: 44) {
+                controlButton(.rewind, icon: "gobackward.15") {
+                    coordinator.skip(interval: -15)
                 }
-                .frame(maxWidth: .infinity)
-                .overlay(alignment: .trailing) {
-                    HStack(spacing: 24) {
-                        rateButton
-                        controlButton(.danmu, icon: "text.bubble") {
-                            showDanmu.toggle()
-                        }
-                        .opacity(showDanmu ? 1 : 0.35)
-                        controlButton(.danmuSettings, icon: "slider.horizontal.3") {
-                            audioSheetPresented = false
-                            isSheetPresented = true
-                        }
-                        if !audioTracks.isEmpty {
-                            controlButton(.audio, icon: "waveform") {
-                                audioSheetPresented = true
-                                isSheetPresented = true
-                            }
-                        }
-                    }
+                controlButton(.playPause, icon: isPlaying ? "pause.fill" : "play.fill") {
+                    togglePlayPause()
                 }
-                .font(.system(size: 26, weight: .medium))
-                .foregroundStyle(.white)
-
-                // 进度条（可聚焦拖动/快滑）+ 时间（右侧 ATV+ 式负剩余时间）
-                HStack(spacing: 14) {
-                    Text(timeString(displayTime))
-                        .font(.caption.monospacedDigit())
-                        .foregroundColor(.white)
-                    scrubber
-                    Text("-" + timeString(remainingTime))
-                        .font(.caption.monospacedDigit())
-                        .foregroundColor(.white)
+                controlButton(.forward, icon: "goforward.15") {
+                    coordinator.skip(interval: 15)
                 }
             }
+            .frame(maxWidth: .infinity)
+            .overlay(alignment: .trailing) {
+                HStack(spacing: 24) {
+                    rateButton
+                    controlButton(.danmu, icon: "text.bubble") {
+                        showDanmu.toggle()
+                    }
+                    .opacity(showDanmu ? 1 : 0.35)
+                    controlButton(.danmuSettings, icon: "slider.horizontal.3") {
+                        audioSheetPresented = false
+                        isSheetPresented = true
+                    }
+                    if !audioTracks.isEmpty {
+                        controlButton(.audio, icon: "waveform") {
+                            audioSheetPresented = true
+                            isSheetPresented = true
+                        }
+                    }
+                }
+            }
+            .font(.system(size: 26, weight: .medium))
+            .foregroundStyle(.white)
+
+            // 进度条（可聚焦拖动/快滑）+ 时间
+            HStack(spacing: 14) {
+                Text(timeString(displayTime))
+                    .font(.caption.monospacedDigit())
+                    .foregroundColor(.white)
+                scrubber
+                Text(timeString(Double(coordinator.timemodel.totalTime)))
+                    .font(.caption.monospacedDigit())
+                    .foregroundColor(.white)
+            }
+        }
         .padding(.horizontal, 90)
         .padding(.bottom, 48)
         .padding(.top, 24)
@@ -369,19 +359,8 @@ struct FNOSPlayerContainerView: View {
                 Capsule()
                     .fill(.white)
                     .frame(width: max(0, geo.size.width * displayFraction))
-                // ATV+ 式时间气泡：聚焦进度条时浮在播放头上方
-                if focus == .scrubber {
-                    Text(timeString(displayTime))
-                        .font(.footnote.monospacedDigit().bold())
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 9)
-                        .background(Color.black.opacity(0.75), in: Capsule())
-                        .fixedSize()
-                        .offset(x: min(max(geo.size.width * displayFraction - 44, 0), geo.size.width - 88), y: -46)
-                }
             }
-            .frame(height: focus == .scrubber ? 14 : 6)
-            .animation(.easeOut(duration: 0.15), value: focus == .scrubber)
+            .frame(height: 6)
             .contentShape(Rectangle())
         }
         .frame(height: 28)
@@ -449,10 +428,6 @@ struct FNOSPlayerContainerView: View {
     private var displayFraction: Double {
         let total = Double(max(coordinator.timemodel.totalTime, 1))
         return min(max(displayTime / total, 0), 1)
-    }
-
-    private var remainingTime: Double {
-        max(Double(coordinator.timemodel.totalTime) - displayTime, 0)
     }
 
     /// 方向键步进：0.45 秒内连续触发视为"长按/转盘滚动"，步长逐级加速（10s→180s）

@@ -70,3 +70,5 @@ extension AudioCodec: FNOSStringRawRepresentable {}
 extension VideoCodec: FNOSStringRawRepresentable {}
 extension SubtitleFormat: FNOSStringRawRepresentable {}
 extension MediaContainer: FNOSStringRawRepresentable {}
+extension H264Profile: FNOSStringRawRepresentable {}
+extension HEVCProfile: FNOSStringRawRepresentable {}

@@ -397,7 +397,6 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 535870712669D21700D05A09 /* Build configuration list for PBXNativeTarget "Swiftfin tvOS" */;
 			buildPhases = (
-				6286F0A3271C0ABA00C40ED5 /* Generate Strings */,
 				BD83D7852B55EEB600652C24 /* Run SwiftFormat */,
 				E1A1B5C42F00000000000002 /* Run SwiftLint */,
 				5358705C2669D21600D05A09 /* Sources */,
@@ -427,7 +426,6 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 5377CC1B263B596B003A4E83 /* Build configuration list for PBXNativeTarget "Swiftfin iOS" */;
 			buildPhases = (
-				6286F09E271C093000C40ED5 /* Generate Strings */,
 				BD0BA2282AD64BB200306A8D /* Run SwiftFormat */,
 				E1A1B5C42F00000000000001 /* Run SwiftLint */,
 				5377CBED263B596A003A4E83 /* Sources */,
@@ -647,48 +645,6 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		6286F09E271C093000C40ED5 /* Generate Strings */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-				"$(SRCROOT)/Translations/en.lproj/Localizable.strings",
-				"$(SRCROOT)/Scripts/Translations/GenerateStrings.swift",
-			);
-			name = "Generate Strings";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "set -eu\ncd \"${SRCROOT}\"\nxcrun --sdk macosx swift \"${SRCROOT}/Scripts/Translations/GenerateStrings.swift\"\n";
-		};
-		6286F0A3271C0ABA00C40ED5 /* Generate Strings */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-				"$(SRCROOT)/Translations/en.lproj/Localizable.strings",
-				"$(SRCROOT)/Scripts/Translations/GenerateStrings.swift",
-			);
-			name = "Generate Strings";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "set -eu\ncd \"${SRCROOT}\"\nxcrun --sdk macosx swift \"${SRCROOT}/Scripts/Translations/GenerateStrings.swift\"\n";
-		};
 		BD0BA2282AD64BB200306A8D /* Run SwiftFormat */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;

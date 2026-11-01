@@ -53,7 +53,7 @@ extension View {
             let shape = RoundedRectangle(cornerRadius: radius, style: style)
 
             clipShape(shape)
-                .if(container) { $0.containerShape(shape) }
+                .if_(container) { $0.containerShape(shape) }
         } else {
             let shape = UnevenRoundedRectangle(
                 topLeadingRadius: corners.contains(.topLeft) ? radius : 0,
@@ -64,7 +64,7 @@ extension View {
             )
 
             clipShape(shape)
-                .if(container) { $0.containerShape(shape) }
+                .if_(container) { $0.containerShape(shape) }
         }
     }
 
@@ -137,7 +137,7 @@ extension View {
     ///              Instead, use a native `if` statement.
     @ViewBuilder
     @inlinable
-    func `if`(_ condition: Bool, @ViewBuilder transform: (Self) -> some View) -> some View {
+    func if_(_ condition: Bool, @ViewBuilder transform: (Self) -> some View) -> some View {
         if condition {
             transform(self)
         } else {
@@ -149,7 +149,7 @@ extension View {
     ///              Instead, use a native `if/else` statement.
     @ViewBuilder
     @inlinable
-    func `if`<Content: View>(
+    func if_<Content: View>(
         _ condition: Bool,
         @ViewBuilder transformIf: (Self) -> Content,
         @ViewBuilder transformElse: (Self) -> Content

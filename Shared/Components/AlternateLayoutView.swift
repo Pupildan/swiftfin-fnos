@@ -59,7 +59,7 @@ struct AlternateLayoutView<Content: View, Layout: View>: View {
     var body: some View {
         layout
             .hidden()
-            .if(passLayoutSize) { view in
+            .if_(passLayoutSize) { view in
                 view.onSizeChanged {
                     layoutSize = .init(
                         frame: .init(

@@ -74,7 +74,7 @@ extension SelectUserView {
                         .foregroundStyle(.secondary)
                         .font(.subheadline)
                 }
-                .if(viewLayout.isAccessibilitySize) { label in
+                .if_(viewLayout.isAccessibilitySize) { label in
                     label.labelStyle(.titleOnly)
                 }
                 .fontWeight(.semibold)

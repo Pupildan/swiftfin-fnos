@@ -19,7 +19,7 @@ struct PosterStyleModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .posterAspectRatio(type, contentMode: contentMode)
-            .if(!viewLayout.isLarge) { poster in
+            .if_(!viewLayout.isLarge) { poster in
                 poster
                     .posterBorder()
                     .posterCornerRadius(type)

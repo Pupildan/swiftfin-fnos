@@ -53,7 +53,7 @@ struct UserButton: View {
             }
         }
         .foregroundStyle(.primary, .secondary)
-        .if(viewLayout.isLarge) { content in
+        .if_(viewLayout.isLarge) { content in
             content
                 .buttonStyle(.borderless)
                 .buttonBorderShape(.circle)

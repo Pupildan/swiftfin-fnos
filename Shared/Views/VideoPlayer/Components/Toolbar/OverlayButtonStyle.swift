@@ -31,7 +31,7 @@ extension VideoPlayer.PlaybackControls {
                 .font(.system(size: viewLayout.isLarge ? 30 : 20, weight: .semibold))
                 .buttonStyle(OverlayButtonStyle(isInBar: true))
                 #if os(iOS)
-                .if(UIDevice.supportsLiquidGlass) { view in
+                .if_(UIDevice.supportsLiquidGlass) { view in
                     view
                         .backport
                         .glassEffect(.regular.interactive(true), in: .capsule)

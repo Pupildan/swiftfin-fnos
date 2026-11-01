@@ -87,7 +87,7 @@ struct EditServerUserAccessTagsView: View {
                         selectedTags.removeAll()
                     }
                     .foregroundStyle(.primary, .secondary)
-                    .if(true) { view in
+                    .if_(true) { view in
                         if #available(iOS 26.0, *) {
                             view
                         } else {
@@ -197,7 +197,7 @@ struct EditServerUserAccessTagsView: View {
             selectedTags = isAllSelected ? [] : Set(blockedTags + allowedTags)
         }
         .foregroundStyle(.primary, .secondary)
-        .if(true) { view in
+        .if_(true) { view in
             if #available(iOS 26.0, *) {
                 view
             } else {

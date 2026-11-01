@@ -64,7 +64,7 @@ extension ItemView {
                         size: .medium,
                         contentMode: .fit
                     )
-                    .if(viewLayout.isLarge) { poster in
+                    .if_(viewLayout.isLarge) { poster in
                         poster
                             .posterBorder()
                             .posterCornerRadius(posterDisplayType)
@@ -86,7 +86,7 @@ extension ItemView {
                             alignment: .leading
                         )
                         .frame(maxWidth: viewLayout.value(standard: 300, large: 450), alignment: .leading)
-                        .if(viewLayout.isLarge) { buttons in
+                        .if_(viewLayout.isLarge) { buttons in
                             buttons
                                 .padding(.vertical)
                         }

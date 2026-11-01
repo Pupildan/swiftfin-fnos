@@ -334,7 +334,7 @@ struct SelectUserView: View {
                             action: toggleAllUsersSelected
                         )
                         .foregroundStyle(.primary, .secondary)
-                        .if(true) { view in
+                        .if_(true) { view in
                             if #available(iOS 26.0, *) {
                                 view
                             } else {
@@ -353,7 +353,7 @@ struct SelectUserView: View {
                             isEditing = false
                         }
                         .foregroundStyle(.primary, .secondary)
-                        .if(true) { view in
+                        .if_(true) { view in
                             if #available(iOS 26.0, *) {
                                 view
                             } else {

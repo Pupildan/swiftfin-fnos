@@ -89,7 +89,7 @@ extension SelectUserView {
                     }
                     .isSelected(selectedUsers.contains(item.user))
                     #if os(tvOS)
-                    .if(item.user.id == users.first?.user.id) { view in
+                    .if_(item.user.id == users.first?.user.id) { view in
                         view
                             .coordinatedFocus(Focus.focusedUserButton.rawValue)
                     }

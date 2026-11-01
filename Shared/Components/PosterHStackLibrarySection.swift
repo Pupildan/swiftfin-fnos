@@ -92,7 +92,7 @@ struct PosterHStackLibrarySection<Library: PagingLibrary>: View
             }
             .foregroundStyle(.primary, .secondary)
             .accessibilityAction(named: Text(L10n.openLibrary), routeToLibrary)
-            .if(viewLayout.isLarge) { $0.buttonStyle(HeaderButtonStyle()) }
+            .if_(viewLayout.isLarge) { $0.buttonStyle(HeaderButtonStyle()) }
         } else {
             headerTitle
                 .foregroundStyle(.primary)

@@ -41,7 +41,7 @@ struct HourMinutePicker: View {
         ) {
             isPresented.toggle()
         }
-        .if(viewLayout.isLarge) { button in
+        .if_(viewLayout.isLarge) { button in
             button.sheet(isPresented: $isPresented) {
                 VStack(spacing: 8) {
                     Text(title.localizedCapitalized)

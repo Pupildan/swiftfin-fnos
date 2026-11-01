@@ -155,7 +155,7 @@ extension VideoPlayer.PlaybackControls {
                 }
                 .onEditingCancelled { viewState.cancelScrub() }
                 .sliderContainerStyle(GlassSliderStyle())
-                .if(chapterSlider) { view in
+                .if_(chapterSlider) { view in
                     view.ifLet(mediaSession.item.chapters) { view, chapters in
                         if chapters.isEmpty {
                             view

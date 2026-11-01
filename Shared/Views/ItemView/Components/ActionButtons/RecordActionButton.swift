@@ -113,7 +113,7 @@ extension ItemActionButtons.Record {
                             }
                         }
                     }
-                    .if(!isInMenu && viewLayout.isLarge) { menu in
+                    .if_(!isInMenu && viewLayout.isLarge) { menu in
                         menu.menuStyle(.button)
                     }
                 } else {

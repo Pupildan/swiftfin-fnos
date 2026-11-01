@@ -52,7 +52,7 @@ extension ItemSubtitleSearchView {
 
                     ListRowCheckbox()
                 }
-                .if(viewLayout.isLarge) { row in
+                .if_(viewLayout.isLarge) { row in
                     row
                         .padding(.vertical)
                 }

@@ -56,7 +56,7 @@ struct ListRow<Leading: View, Content: View>: View {
             }
             .foregroundStyle(.primary, .secondary)
             .contentShape(.contextMenuPreview, Rectangle())
-            .if(viewLayout.isLarge) { $0.buttonStyle(.card) }
+            .if_(viewLayout.isLarge) { $0.buttonStyle(.card) }
 
             if !viewLayout.isLarge, isListRowSeparatorVisible {
                 Color.secondarySystemFill

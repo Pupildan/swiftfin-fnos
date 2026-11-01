@@ -76,7 +76,7 @@ extension VideoPlayer.PlaybackControls.Toolbar.ActionButtons {
                     Text(isAutoPlayEnabled ? "On" : "Off")
                 }
             }
-            .if(isInMenu && !viewLayout.isLarge) { button in
+            .if_(isInMenu && !viewLayout.isLarge) { button in
                 button
                     .id(isAutoPlayEnabled)
             }

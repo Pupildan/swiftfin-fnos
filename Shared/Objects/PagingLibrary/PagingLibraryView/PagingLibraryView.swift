@@ -115,7 +115,7 @@ struct PagingLibraryView<Library: PagingLibrary>: View where Library.Element: Li
             ) { element in
                 element.makeBody(libraryStyle: libraryStyle)
                     #if os(tvOS)
-                        .if(element.id == viewModel.displayedElements.first?.id) { view in
+                        .if_(element.id == viewModel.displayedElements.first?.id) { view in
                             view
                                 .coordinatedFocus(Focus.firstElement.rawValue)
                                 .environmentObject(focusCoordinator)

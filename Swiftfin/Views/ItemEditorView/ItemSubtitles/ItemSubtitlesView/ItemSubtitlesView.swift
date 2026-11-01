@@ -60,7 +60,7 @@ struct ItemSubtitlesView: View {
         .navigationBarBackButtonHidden(isEditing)
         .toolbarTitleDisplayMode(.inline)
         .errorMessage($viewModel.error)
-        .if(!isEditing) { view in
+        .if_(!isEditing) { view in
             view
                 .navigationBarCloseButton {
                     router.dismiss()
@@ -73,7 +73,7 @@ struct ItemSubtitlesView: View {
                         toggleAllSelection()
                     }
                     .foregroundStyle(.primary, .secondary)
-                    .if(true) { view in
+                    .if_(true) { view in
                         if #available(iOS 26.0, *) {
                             view
                         } else {
@@ -93,7 +93,7 @@ struct ItemSubtitlesView: View {
                         selectedSubtitles.removeAll()
                     }
                     .foregroundStyle(.primary, .secondary)
-                    .if(true) { view in
+                    .if_(true) { view in
                         if #available(iOS 26.0, *) {
                             view
                         } else {

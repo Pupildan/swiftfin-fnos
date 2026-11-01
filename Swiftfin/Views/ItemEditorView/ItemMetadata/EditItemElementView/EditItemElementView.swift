@@ -44,7 +44,7 @@ struct EditItemElementView<Editor: ItemComponentEditor>: View {
             selectedElements = isAllSelected ? [] : Set(elements)
         }
         .foregroundStyle(.primary, .secondary)
-        .if(true) { view in
+        .if_(true) { view in
             if #available(iOS 26.0, *) {
                 view
             } else {
@@ -133,7 +133,7 @@ struct EditItemElementView<Editor: ItemComponentEditor>: View {
                             selectedElements.removeAll()
                         }
                         .foregroundStyle(.primary, .secondary)
-                        .if(true) { view in
+                        .if_(true) { view in
                             if #available(iOS 26.0, *) {
                                 view
                             } else {

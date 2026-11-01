@@ -206,7 +206,7 @@ struct AboutItemGroup: ContentGroup {
                 }
                 .scrollIndicators(.hidden)
                 .scrollClipDisabled()
-                .if(viewLayout.isLarge) { $0.withViewContext(.isOverComplexContent) }
+                .if_(viewLayout.isLarge) { $0.withViewContext(.isOverComplexContent) }
                 .frame(height: cardHeight)
                 .frame(maxWidth: .infinity)
             } header: {

@@ -98,7 +98,7 @@ extension SeriesEpisodeContentGroup {
                         }
                     }
                     .posterStyle(.landscape)
-                    .if(viewLayout.isLarge) { $0.posterCornerRadius(.landscape) }
+                    .if_(viewLayout.isLarge) { $0.posterCornerRadius(.landscape) }
                     .subtleShadow()
             }
         }
@@ -227,7 +227,7 @@ extension SeriesEpisodeContentGroup {
                     .accessibilityHint(contextMenuItem == nil ? "" : L10n.posterAccessibilityDetailsHint)
                 }
                 .foregroundStyle(.primary, .secondary)
-                .if(viewLayout.isLarge) { button in
+                .if_(viewLayout.isLarge) { button in
                     button.buttonStyle(
                         EpisodeContentButtonStyle(
                             showsMaterial: focusedElement != nil,

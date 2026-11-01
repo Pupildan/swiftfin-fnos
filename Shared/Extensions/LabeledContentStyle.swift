@@ -84,7 +84,7 @@ struct PlaybackInfoLabeledContentStyle: LabeledContentStyle {
                 .foregroundStyle(.primary)
         }
         .font(.subheadline)
-        .if(viewLayout.isLarge) { label in
+        .if_(viewLayout.isLarge) { label in
             label
                 .padding(.horizontal, 8)
                 .padding(.vertical, 8)

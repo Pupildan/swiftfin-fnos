@@ -169,7 +169,7 @@ struct DevicesView: View {
                 selectedDevices.removeAll()
             }
             .foregroundStyle(.primary, .secondary)
-            .if(true) { view in
+            .if_(true) { view in
                 if #available(iOS 26.0, *) {
                     view
                 } else {
@@ -204,7 +204,7 @@ struct DevicesView: View {
             }
         }
         .foregroundStyle(.primary, .secondary)
-        .if(true) { view in
+        .if_(true) { view in
             if #available(iOS 26.0, *) {
                 view
             } else {

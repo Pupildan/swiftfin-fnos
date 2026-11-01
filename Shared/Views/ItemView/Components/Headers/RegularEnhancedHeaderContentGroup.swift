@@ -148,7 +148,7 @@ extension ItemView {
                     .frame(maxWidth: .infinity)
                 }
                 .focusSection()
-                .if(!viewLayout.isLarge) { content in
+                .if_(!viewLayout.isLarge) { content in
                     content
                         .edgePadding(.bottom)
                         .background(

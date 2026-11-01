@@ -130,7 +130,7 @@ extension VideoPlayer.PlaybackControls {
                 }
             }
             .sliderContainerStyle(.capsule(showsProgressWhenUnfocused: false))
-            .if(chapterSlider) { view in
+            .if_(chapterSlider) { view in
                 if let chapters = mediaSession.item.chapters, chapters.isNotEmpty {
                     view.inverseMask { ChapterTrackMask(chapters: chapters, runtime: mediaSession.item.runtime ?? .zero) }
                 } else {

@@ -159,7 +159,7 @@ struct SettingsView: View {
                 Text(L10n.switchUser)
                     .frame(maxWidth: .infinity)
                     // Otherwise non-Liquid Glass only uses text height
-                    .if(!UIDevice.supportsLiquidGlass) { button in
+                    .if_(!UIDevice.supportsLiquidGlass) { button in
                         button
                             .frame(maxHeight: .infinity)
                     }

@@ -144,7 +144,7 @@ extension CustomDeviceProfilesView {
                 Text(title)
             }
             .labeledContentStyle(.deviceProfile)
-            .if(viewLayout.isLarge) { text in
+            .if_(viewLayout.isLarge) { text in
                 text
                     .padding(.vertical)
             }

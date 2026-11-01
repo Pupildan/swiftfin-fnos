@@ -178,7 +178,7 @@ struct CustomDeviceProfilesView: View {
             )
         }
         .labeledContentStyle(.deviceProfile)
-        .if(viewLayout.isLarge) { view in
+        .if_(viewLayout.isLarge) { view in
             view
                 .padding(.vertical)
         }

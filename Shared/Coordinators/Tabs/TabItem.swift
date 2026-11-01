@@ -96,7 +96,7 @@ extension TabItem {
                     staticFilters: filters
                 )
             )
-            .if(ViewLayout.platformDefault.isLarge) { view in
+            .if_(ViewLayout.platformDefault.isLarge) { view in
                 view.toolbar(.hidden, for: .navigationBar)
             }
         }
@@ -109,7 +109,7 @@ extension TabItem {
             systemImage: "rectangle.stack.fill"
         ) {
             PagingLibraryView(library: UserViewLibrary())
-                .if(ViewLayout.platformDefault.isLarge) { view in
+                .if_(ViewLayout.platformDefault.isLarge) { view in
                     view.toolbar(.hidden, for: .navigationBar)
                 }
         }
@@ -132,7 +132,7 @@ extension TabItem {
             systemImage: "magnifyingglass"
         ) {
             SearchView()
-                .if(ViewLayout.platformDefault.isLarge) { view in
+                .if_(ViewLayout.platformDefault.isLarge) { view in
                     view.toolbar(.hidden, for: .navigationBar)
                 }
         }

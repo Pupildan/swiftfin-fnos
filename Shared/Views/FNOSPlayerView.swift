@@ -88,7 +88,7 @@ struct FNOSPlayerContainerView: View {
     @State private var didSetup = false
 
     // 控制条状态
-    @State private var showControls = true
+    @State private var controlsVisible = true
     @State private var hideTask: Task<Void, Never>?
     @FocusState private var focus: Control?
 
@@ -117,7 +117,7 @@ struct FNOSPlayerContainerView: View {
                     .allowsHitTesting(false)
             }
 
-            if showControls, streamURL != nil {
+            if controlsVisible, streamURL != nil {
                 controlBar
                     .transition(.opacity)
             }
@@ -155,13 +155,13 @@ struct FNOSPlayerContainerView: View {
                 }
             }
             .ignoresSafeArea()
-            .focusable(!showControls)
+            .focusable(!controlsVisible)
             .onMoveCommand { _ in
                 // 控制条隐藏时：任意方向键唤出控制条
-                showControls()
+                revealControls()
             }
             .onTapGesture {
-                showControls()
+                revealControls()
             }
     }
 
@@ -200,24 +200,7 @@ struct FNOSPlayerContainerView: View {
             .font(.system(size: 34, weight: .medium))
             .foregroundStyle(.white)
 
-            HStack(spacing: 14) {
-                Text(timeString(coordinator.currentTime))
-                    .font(.caption.monospacedDigit())
-                    .foregroundColor(.white)
-                GeometryReader { geo in
-                    ZStack(alignment: .leading) {
-                        Capsule()
-                            .fill(.white.opacity(0.25))
-                        Capsule()
-                            .fill(.white)
-                            .frame(width: geo.size.width * progressFraction)
-                    }
-                }
-                .frame(height: 6)
-                Text(timeString(coordinator.totalTime))
-                    .font(.caption.monospacedDigit())
-                    .foregroundColor(.white)
-            }
+            FNOSPlayerTimeBar(timemodel: coordinator.timemodel)
         }
         .padding(.horizontal, 90)
         .padding(.bottom, 56)
@@ -254,35 +237,21 @@ struct FNOSPlayerContainerView: View {
         coordinator.state.isPlaying
     }
 
-    private var progressFraction: Double {
-        let total = Double(max(coordinator.totalTime, 1))
-        return min(max(Double(coordinator.currentTime) / total, 0), 1)
-    }
-
-    private func timeString(_ seconds: Int) -> String {
-        let s = max(seconds, 0)
-        let h = s / 3600, m = (s % 3600) / 60, sec = s % 60
-        if h > 0 {
-            return String(format: "%d:%02d:%02d", h, m, sec)
-        }
-        return String(format: "%02d:%02d", m, sec)
-    }
-
     private func togglePlayPause() {
         if isPlaying {
             coordinator.playerLayer?.pause()
         } else {
             coordinator.playerLayer?.play()
         }
-        showControls()
+        revealControls()
     }
 
     /// 任意操作 → 显示控制条并重置 3 秒隐藏计时
-    private func showControls() {
+    private func revealControls() {
         hideTask?.cancel()
-        if !showControls {
+        if !controlsVisible {
             withAnimation(.easeInOut(duration: 0.2)) {
-                showControls = true
+                controlsVisible = true
             }
             DispatchQueue.main.async {
                 focus = .playPause
@@ -297,7 +266,7 @@ struct FNOSPlayerContainerView: View {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             guard !Task.isCancelled else { return }
             withAnimation(.easeInOut(duration: 0.4)) {
-                showControls = false
+                controlsVisible = false
             }
             focus = nil
         }
@@ -341,7 +310,7 @@ struct FNOSPlayerContainerView: View {
         default:
             notice = ""
         }
-        showControls()
+        revealControls()
     }
 
     // MARK: 引擎分流（.mkv → FFmpeg；.mp4/.m3u8 → AVPlayer）
@@ -365,5 +334,47 @@ struct FNOSPlayerContainerView: View {
         options.formatContextOptions["headers"] = headerString
 
         return options
+    }
+}
+
+// MARK: - 时间/进度条（单独观察 ControllerTimeModel，秒级刷新不重绘整个控制条）
+
+struct FNOSPlayerTimeBar: View {
+
+    @ObservedObject var timemodel: ControllerTimeModel
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Text(timeString(timemodel.currentTime))
+                .font(.caption.monospacedDigit())
+                .foregroundColor(.white)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(.white.opacity(0.25))
+                    Capsule()
+                        .fill(.white)
+                        .frame(width: geo.size.width * fraction)
+                }
+            }
+            .frame(height: 6)
+            Text(timeString(timemodel.totalTime))
+                .font(.caption.monospacedDigit())
+                .foregroundColor(.white)
+        }
+    }
+
+    private var fraction: Double {
+        let total = Double(max(timemodel.totalTime, 1))
+        return min(max(Double(timemodel.currentTime) / total, 0), 1)
+    }
+
+    private func timeString(_ seconds: Int) -> String {
+        let s = max(seconds, 0)
+        let h = s / 3600, m = (s % 3600) / 60, sec = s % 60
+        if h > 0 {
+            return String(format: "%d:%02d:%02d", h, m, sec)
+        }
+        return String(format: "%02d:%02d", m, sec)
     }
 }

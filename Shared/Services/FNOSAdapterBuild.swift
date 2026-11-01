@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v16"
+    static let version = "v17"
 
     /// 本版主要变更摘要
-    static let changes = "修复选中白框与进度误动，弹幕渲染改位图缓存消除卡顿"
+    static let changes = "ATV+ 复刻：左上关闭+标题、聚焦玻璃修复、进度时间气泡、负剩余时间、底部滑入动画"
 }

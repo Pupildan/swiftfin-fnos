@@ -421,6 +421,11 @@ struct FNOSPlayerContainerView: View {
         return Double(coordinator.timemodel.currentTime)
     }
 
+    private var displayFraction: Double {
+        let total = Double(max(coordinator.timemodel.totalTime, 1))
+        return min(max(displayTime / total, 0), 1)
+    }
+
     /// 方向键步进：0.45 秒内连续触发视为"长按/转盘滚动"，步长逐级加速（10s→180s）
     private func scrub(by direction: Double) {
         let now = Date()

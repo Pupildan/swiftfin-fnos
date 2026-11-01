@@ -18,5 +18,5 @@ enum FNOSAdapterBuild {
     static let version = "v17"
 
     /// 本版主要变更摘要
-    static let changes = "ATV+ 复刻：左上关闭+标题、聚焦玻璃修复、进度时间气泡、负剩余时间、底部滑入动画"
+    static let changes = "修复选中按钮外的白色圆角矩形（玻璃视图自身禁用系统焦点高亮）"
 }

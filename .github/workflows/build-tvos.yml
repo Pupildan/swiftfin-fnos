@@ -7,7 +7,7 @@ on:
 
 jobs:
   build-tvos:
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -24,7 +24,32 @@ jobs:
         run: |
           xcodebuild -resolvePackageDependencies \
             -project Swiftfin.xcodeproj \
-            -scheme "Swiftfin tvOS"
+            -scheme "Swiftfin tvOS" \
+            -derivedDataPath build
+
+      # 上游两个包在 Xcode 26 (Swift 6.2) 下有未修复的编译错误，resolve 后就地打最小补丁
+      - name: Patch upstream packages
+        working-directory: .
+        run: |
+          SP=build/SourcePackages/checkouts
+          # Engine: Swift 6.2 要求 existential 元类型显式转换
+          ENGINE=$SP/Engine/Sources/EngineCore/Runtime.swift
+          if [ -f "$ENGINE" ]; then
+            sed -i '' 's/swift_getFieldValue(field.key, field.type, instance)/swift_getFieldValue(field.key, field.type as (any Any).Type, instance)/' "$ENGINE"
+            grep -q "any Any).Type" "$ENGINE" || { echo "::error::Engine patch failed"; exit 1; }
+            echo "Engine patched"
+          else
+            echo "Engine not in graph, skip"
+          fi
+          # MediaAccessibilityKit: region-isolation 误报，标注 nonisolated(unsafe)
+          MAK=$SP/MediaAccessibilityKit/Sources/MediaAccessibilityKit/PreferenceUpdates.swift
+          if [ -f "$MAK" ]; then
+            sed -i '' 's/^        let observation = Mutex/nonisolated(unsafe) let observation = Mutex/' "$MAK"
+            grep -q "nonisolated(unsafe) let observation" "$MAK" || { echo "::error::MAK patch failed"; exit 1; }
+            echo "MediaAccessibilityKit patched"
+          else
+            echo "MediaAccessibilityKit not in graph, skip"
+          fi
 
       # 未签名编译：CODE_SIGNING_ALLOWED=NO 跳过证书/描述文件
       # 出包后可由付费开发者账号重签名，或供 Xcode 免费签名真机调试流程使用
@@ -38,6 +63,7 @@ jobs:
             -configuration Release \
             -sdk appletvos \
             -derivedDataPath build \
+            -disableAutomaticPackageResolution \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \

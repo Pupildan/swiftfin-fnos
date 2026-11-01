@@ -17,10 +17,20 @@ struct FNOSPlaybackTarget: Identifiable {
     let userID: String
 }
 
-/// 飞牛影视（fnOS）Liquid Glass 沉浸式主界面。
+/// 单个媒体库的横向海报墙数据
+struct FNOSLibrarySection: Identifiable {
+    let library: FNOSLibrary
+    var items: [FNOSItem]
+
+    var id: String { library.Id }
+}
+
+/// 飞牛影视（fnOS）主界面 —— Apple TV+ 式横向海报墙布局。
 ///
-/// 网络层（FNOSDirectClient）不动：全部数据仍来自已跑通的裸 URLSession 直连。
-/// 本层只负责：毛玻璃顶栏、LazyVGrid、tvOS 焦点特效、播放器与弹幕的衔接。
+/// 性能要点（tvOS 焦点引擎最顺滑的组合）：
+/// - 纵向 LazyVStack 分行（每行一个媒体库），横向 ScrollView(.horizontal) + LazyHStack 海报墙；
+/// - 无任何 .blur / matchedGeometryEffect（大面积高斯模糊在 tvOS 必掉帧，已按用户要求彻底移除）；
+/// - 焦点表现全部交给原生 .buttonStyle(.card)。
 struct FNOSMainView: View {
 
     @InjectedObject(\.userSessionManager)
@@ -30,39 +40,25 @@ struct FNOSMainView: View {
     @State private var userID = ""
     @State private var serverDescription = ""
 
-    @State private var libraries: [FNOSLibrary] = []
-    @State private var selectedLibraryID: String?
-    @State private var items: [FNOSItem] = []
-
+    @State private var sections: [FNOSLibrarySection] = []
     @State private var logs: [String] = []
     @State private var isLoading = false
     @State private var didBootstrap = false
 
     @State private var playbackTarget: FNOSPlaybackTarget?
     @State private var seriesItem: FNOSItem?
-    @FocusState private var focusedItemID: String?
 
-    private let columns = [GridItem(.adaptive(minimum: 180), spacing: 18)]
+    private let cardWidth: CGFloat = 240
 
     // MARK: - Body
 
     var body: some View {
         ZStack {
-            // 聚焦海报的模糊背景（Liquid Glass 氛围光）
-            backdrop
+            Color.black.ignoresSafeArea()
 
-            LinearGradient(
-                colors: [Color(white: 0.13), Color.black],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .opacity(0.86)
-            .ignoresSafeArea()
-
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(spacing: 0) {
                 topBar
-                libraryRow
-                contentArea
+                shelves
                 logArea
             }
         }
@@ -84,28 +80,7 @@ struct FNOSMainView: View {
         }
     }
 
-    // MARK: - 聚焦海报模糊背景
-
-    @ViewBuilder
-    private var backdrop: some View {
-        if let focused = items.first(where: { $0.Id == focusedItemID }) {
-            FNOSAsyncImage(
-                url: client?.posterURL(
-                    itemID: focused.Id,
-                    tag: focused.ImageTags?["Primary"],
-                    maxWidth: 200
-                ),
-                headers: client?.mediaHeaders ?? [:]
-            )
-            .blur(radius: 40)
-            .opacity(0.30)
-            .scaleEffect(1.15)
-            .ignoresSafeArea()
-            .animation(.easeInOut(duration: 0.4), value: focusedItemID)
-        }
-    }
-
-    // MARK: - 毛玻璃顶栏（版本 + 服务器 + 刷新）
+    // MARK: - 毛玻璃顶栏（导航）
 
     private var topBar: some View {
         HStack(spacing: 16) {
@@ -124,41 +99,15 @@ struct FNOSMainView: View {
                 Label("刷新", systemImage: "arrow.clockwise")
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 48)
+        .padding(.vertical, 14)
         .background(.ultraThinMaterial)
-        .cornerRadius(16)
     }
 
-    // MARK: - 媒体库标签
-
-    private var libraryRow: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 12) {
-                ForEach(libraries) { library in
-                    Button {
-                        selectedLibraryID = library.Id
-                        Task { await loadItems(for: library) }
-                    } label: {
-                        Text(library.Name ?? "未命名")
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 10)
-                    }
-                    .background(
-                        selectedLibraryID == library.Id
-                            ? Color.accentColor
-                            : Color.white.opacity(0.12)
-                    )
-                    .cornerRadius(10)
-                }
-            }
-        }
-    }
-
-    // MARK: - 内容网格
+    // MARK: - 海报墙（每行一个媒体库，横向滚动）
 
     @ViewBuilder
-    private var contentArea: some View {
+    private var shelves: some View {
         if isLoading {
             VStack {
                 Spacer()
@@ -166,26 +115,49 @@ struct FNOSMainView: View {
                 Spacer()
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if items.isEmpty {
+        } else if sections.isEmpty {
             VStack(spacing: 12) {
                 Text("暂无内容")
                     .font(.title3)
                     .foregroundColor(.secondary)
-                Text("如果媒体库已列出但这里为空，请把下方日志拍照反馈")
+                Text("请把下方日志拍照反馈")
                     .font(.footnote)
                     .foregroundColor(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView {
-                LazyVGrid(columns: columns, spacing: 24) {
-                    ForEach(items) { item in
+                LazyVStack(alignment: .leading, spacing: 36) {
+                    ForEach(sections) { section in
+                        shelf(section)
+                    }
+                }
+                .padding(.vertical, 24)
+            }
+        }
+    }
+
+    private func shelf(_ section: FNOSLibrarySection) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Text(section.library.Name ?? "未命名")
+                    .font(.title3)
+                    .bold()
+                Text("\(section.items.count)")
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+            .padding(.horizontal, 48)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 20) {
+                    ForEach(section.items) { item in
                         Button {
                             open(item: item)
                         } label: {
                             FNOSItemCard(item: item, client: client)
+                                .frame(width: cardWidth)
                         }
-                        .focused($focusedItemID, equals: item.Id)
                         #if os(tvOS)
                             .buttonStyle(.card)
                         #else
@@ -193,7 +165,8 @@ struct FNOSMainView: View {
                         #endif
                     }
                 }
-                .padding(.vertical, 8)
+                .padding(.horizontal, 48)
+                .padding(.vertical, 4)
             }
         }
     }
@@ -202,7 +175,7 @@ struct FNOSMainView: View {
 
     private var logArea: some View {
         VStack(alignment: .leading, spacing: 2) {
-            ForEach(Array(logs.suffix(4).enumerated()), id: \.offset) { _, line in
+            ForEach(Array(logs.suffix(3).enumerated()), id: \.offset) { _, line in
                 Text(line)
                     .font(.system(size: 12, design: .monospaced))
                     .foregroundColor(.green.opacity(0.7))
@@ -210,6 +183,8 @@ struct FNOSMainView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 48)
+        .padding(.vertical, 6)
     }
 
     // MARK: - 导航
@@ -271,60 +246,55 @@ struct FNOSMainView: View {
                 throw FNOSDirectError("解析 /Views 失败: \(error.localizedDescription)")
             }
 
-            libraries = envelope.Items
+            let libraries = envelope.Items
             log("✅ 媒体库 \(libraries.count) 个")
 
-            if let first = libraries.first {
-                selectedLibraryID = first.Id
-                await loadItems(for: first)
+            isLoading = true
+
+            // 每个库一行海报墙；单库失败不拖垮整页（打印真实报错后继续下一库）
+            var loaded: [FNOSLibrarySection] = []
+            for library in libraries {
+                do {
+                    let items = try await loadItems(for: library, client: newClient)
+                    loaded.append(FNOSLibrarySection(library: library, items: items))
+                    log("✅ 「\(library.Name ?? "?")」\(items.count) 条")
+                } catch {
+                    print("FNOS❗️加载「\(library.Name ?? "?")」失败: \(error)")
+                    log("❗️「\(library.Name ?? "?")」加载失败: \(error.localizedDescription)")
+                    loaded.append(FNOSLibrarySection(library: library, items: []))
+                }
+                sections = loaded
             }
+
+            isLoading = false
         } catch {
+            isLoading = false
             print("FNOS❗️加载媒体库失败: \(error)")
             log("❗️媒体库加载失败: \(error.localizedDescription)")
         }
     }
 
-    @MainActor
-    private func loadItems(for library: FNOSLibrary) async {
-        guard let client else {
-            log("❗️客户端未初始化")
-            print("FNOS❗️loadItems: client 为 nil")
-            return
-        }
-
-        isLoading = true
-        items = []
+    private func loadItems(for library: FNOSLibrary, client: FNOSDirectClient) async throws -> [FNOSItem] {
+        let data = try await client.get(
+            path: "Users/\(userID)/Items",
+            query: [
+                "ParentId": library.Id,
+                "Recursive": "true",
+                "Limit": "100",
+                "SortBy": "SortName",
+                "SortOrder": "Ascending",
+                "Fields": "PrimaryImageAspectRatio,ProductionYear,Overview",
+            ]
+        )
 
         do {
-            let data = try await client.get(
-                path: "Users/\(userID)/Items",
-                query: [
-                    "ParentId": library.Id,
-                    "Recursive": "true",
-                    "Limit": "200",
-                    "SortBy": "SortName",
-                    "SortOrder": "Ascending",
-                    "Fields": "PrimaryImageAspectRatio,ProductionYear,Overview",
-                ]
-            )
-
-            let envelope: FNOSItemsEnvelope
-            do {
-                envelope = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data)
-            } catch {
-                let raw = String(data: data.prefix(400), encoding: .utf8) ?? "(非文本)"
-                print("FNOS❗️解析 /Items 失败: \(error) 原文: \(raw)")
-                throw FNOSDirectError("解析 /Items 失败: \(error.localizedDescription)")
-            }
-
-            items = envelope.Items
-            log("✅ 「\(library.Name ?? "?")」\(items.count) 条")
+            let envelope = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data)
+            return envelope.Items
         } catch {
-            print("FNOS❗️加载内容失败: \(error)")
-            log("❗️内容加载失败: \(error.localizedDescription)")
+            let raw = String(data: data.prefix(400), encoding: .utf8) ?? "(非文本)"
+            print("FNOS❗️解析 /Items 失败: \(error) 原文: \(raw)")
+            throw FNOSDirectError("解析 /Items 失败: \(error.localizedDescription)")
         }
-
-        isLoading = false
     }
 
     @MainActor
@@ -337,7 +307,7 @@ struct FNOSMainView: View {
     }
 }
 
-// MARK: - 内容卡片（2:3 海报，圆角 12，文字恒显）
+// MARK: - 海报卡片（2:3，圆角 12，文字恒显）
 
 fileprivate struct FNOSItemCard: View {
 

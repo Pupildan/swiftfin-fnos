@@ -44,6 +44,7 @@
 		E10706102942F57D00646DAF /* Pulse in Frameworks */ = {isa = PBXBuildFile; productRef = E107060F2942F57D00646DAF /* Pulse */; };
 		E10706122942F57D00646DAF /* PulseLogHandler in Frameworks */ = {isa = PBXBuildFile; productRef = E10706112942F57D00646DAF /* PulseLogHandler */; };
 		E10706142942F57D00646DAF /* PulseUI in Frameworks */ = {isa = PBXBuildFile; productRef = E10706132942F57D00646DAF /* PulseUI */; };
+		E19005070000000000000003 /* KSPlayer in Frameworks */ = {isa = PBXBuildFile; productRef = E19005070000000000000002 /* KSPlayer */; };
 		E1079FDA2FC6FFCE004B5C54 /* StatefulMacros in Frameworks */ = {isa = PBXBuildFile; productRef = E1079FD92FC6FFCE004B5C54 /* StatefulMacros */; };
 		E113A2A72B5A178D009CAAAA /* CollectionHStack in Frameworks */ = {isa = PBXBuildFile; productRef = E113A2A62B5A178D009CAAAA /* CollectionHStack */; };
 		E113A2AA2B5A179A009CAAAA /* CollectionVGrid in Frameworks */ = {isa = PBXBuildFile; productRef = E113A2A92B5A179A009CAAAA /* CollectionVGrid */; };
@@ -239,6 +240,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				E19005070000000000000003 /* KSPlayer in Frameworks */,
 				E19005010000000000000002 /* MPVUI in Frameworks */,
 				E19005020000000000000002 /* MediaAccessibilityKit in Frameworks */,
 				62666E1727E501CC00EC0ECD /* CFNetwork.framework in Frameworks */,
@@ -467,6 +469,7 @@
 			);
 			name = "Swiftfin tvOS";
 			packageProductDependencies = (
+				E19005070000000000000002 /* KSPlayer */,
 				E13DD3CC27164CA7009D4DAF /* CoreStore */,
 				E12186DD2718F1C50010884C /* Defaults */,
 				E1002B6A2793E36600E47059 /* Algorithms */,
@@ -689,6 +692,7 @@
 				E164308A2E3AA9710028D4E8 /* XCRemoteSwiftPackageReference "Transmission" */,
 				E13CCE482E6C077D0070965F /* XCRemoteSwiftPackageReference "LNPopupUI" */,
 				E1BD95B02FBE8E44001CDA57 /* XCRemoteSwiftPackageReference "jellyfin-sdk-swift" */,
+				E19005070000000000000001 /* XCRemoteSwiftPackageReference "KSPlayer" */,
 				E1240A272FEA4F69004E6588 /* XCRemoteSwiftPackageReference "StatefulMacro" */,
 				E12CDBBD2FFB592A00828742 /* XCRemoteSwiftPackageReference "CollectionVGrid" */,
 				E16C08F5305A385900895062 /* XCRemoteSwiftPackageReference "CollectionHStack" */,
@@ -1404,6 +1408,14 @@
 				minimumVersion = 3.3.0;
 			};
 		};
+		E19005070000000000000001 /* XCRemoteSwiftPackageReference "KSPlayer" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/kingslay/KSPlayer.git";
+			requirement = {
+				kind = exactVersion;
+				minimumVersion = 2.3.4;
+			};
+		};
 		E1DC9812296DC06200982F06 /* XCRemoteSwiftPackageReference "PulseLogHandler" */ = {
 			isa = XCRemoteSwiftPackageReference;
 			repositoryURL = "https://github.com/kean/PulseLogHandler";
@@ -1767,6 +1779,11 @@
 			isa = XCSwiftPackageProductDependency;
 			package = E1BD95B02FBE8E44001CDA57 /* XCRemoteSwiftPackageReference "jellyfin-sdk-swift" */;
 			productName = JellyfinAPI;
+		};
+		E19005070000000000000002 /* KSPlayer */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = E19005070000000000000001 /* XCRemoteSwiftPackageReference "KSPlayer" */;
+			productName = KSPlayer;
 		};
 		E1BE3EBB2FE8DEA100327990 /* FactoryKit */ = {
 			isa = XCSwiftPackageProductDependency;

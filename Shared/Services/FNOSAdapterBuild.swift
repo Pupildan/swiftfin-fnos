@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v10"
+    static let version = "v11"
 
     /// 本版主要变更摘要
-    static let changes = "Liquid Glass 界面 + 原生播放器(鉴权注入) + 真实弹幕引擎"
+    static let changes = "KSPlayer 双引擎播放 + TV+ 式横向海报墙（移除模糊背景）"
 }

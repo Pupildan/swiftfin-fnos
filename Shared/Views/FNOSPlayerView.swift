@@ -6,92 +6,63 @@
 // Copyright (c) 2026 Jellyfin & Jellyfin Contributors
 //
 
-import AVKit
-import Combine
+import KSPlayer
 import SwiftUI
 
-// MARK: - AVPlayerViewController 包装（tvOS 原生遥控器操作 + 原生进度条）
+/// AVURLAsset 请求头 Key（ObjC 常量未暴露给 Swift，按官方字符串手动声明）
+private let fnosAVHTTPHeaderFieldsKey = "AVURLAssetHTTPHeaderFieldsKey"
 
-private struct FNOSPlayerControllerView: UIViewControllerRepresentable {
+// MARK: - 播放源扩展（只读 FNOSDirectClient 公开属性，不修改网络层文件）
 
-    let player: AVPlayer
+extension FNOSDirectClient {
 
-    func makeUIViewController(context: Context) -> AVPlayerViewController {
-        let controller = AVPlayerViewController()
-        controller.player = player
-        controller.showsPlaybackControls = true
-        return controller
-    }
+    /// 条目播放源（fnOS 硬性要求：stream 的 MediaSourceId 必须传真实值，空值一律 400）
+    func playbackSource(itemID: String, userID: String) async throws -> (mediaSourceID: String, container: String?) {
+        let data = try await get(path: "Users/\(userID)/Items/\(itemID)")
 
-    func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {}
-}
-
-// MARK: - AVURLAsset 请求头 Key（ObjC 常量未暴露给 Swift，按官方字符串手动声明）
-
-private extension AVURLAsset {
-    static let httpHeaderFieldsKey = "AVURLAssetHTTPHeaderFieldsKey"
-}
-
-// MARK: - 播放器持有者（时钟回调 + 倍率回调）
-
-@MainActor
-final class FNOSPlayerHolder: ObservableObject {
-
-    let player = AVPlayer()
-
-    private var timeObserver: Any?
-    private var rateCancellable: AnyCancellable?
-
-    /// 0.25 秒周期回调（媒体时间，秒）
-    var onTick: ((Double) -> Void)?
-    /// 播放/暂停/等待 状态回调（1 = 播放，0 = 暂停）
-    var onRateChange: ((Double) -> Void)?
-
-    func configure(item: AVPlayerItem) {
-        player.replaceCurrentItem(with: item)
-        player.play()
-
-        if timeObserver == nil {
-            timeObserver = player.addPeriodicTimeObserver(
-                forInterval: CMTime(value: 1, timescale: 4),
-                queue: .main
-            ) { [weak self] time in
-                let seconds = time.seconds
-                Task { @MainActor in
-                    self?.onTick?(seconds)
-                }
-            }
+        struct Detail: Decodable {
+            let MediaSources: [FNOSMediaSource]?
+        }
+        struct FNOSMediaSource: Decodable {
+            let Id: String
+            let Container: String?
+            let Path: String?
         }
 
-        rateCancellable = player.publisher(for: \.timeControlStatus)
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] status in
-                let rate: Double
-                switch status {
-                case .paused:
-                    rate = 0
-                default:
-                    rate = 1
-                }
-                Task { @MainActor in
-                    self?.onRateChange?(rate)
-                }
-            }
+        let detail: Detail
+        do {
+            detail = try JSONDecoder().decode(Detail.self, from: data)
+        } catch {
+            let raw = String(data: data.prefix(300), encoding: .utf8) ?? "(非文本)"
+            print("FNOS❗️解析条目详情失败: \(error) 原文: \(raw)")
+            throw FNOSDirectError("解析条目详情失败: \(error.localizedDescription)")
+        }
+
+        guard let source = detail.MediaSources?.first, !source.Id.isEmpty else {
+            throw FNOSDirectError("条目缺少 MediaSources，无法取播放源")
+        }
+        return (source.Id, source.Container ?? source.Path)
     }
 
-    func teardown() {
-        if let timeObserver {
-            player.removeTimeObserver(timeObserver)
-            self.timeObserver = nil
+    /// 播放直链（static=true 原始流；容器可能是 MKV，由 KSPlayer 引擎分流处理）
+    func streamURL(itemID: String, mediaSourceID: String) -> URL? {
+        do {
+            return try url(
+                path: "Videos/\(itemID)/stream",
+                query: [
+                    "static": "true",
+                    "MediaSourceId": mediaSourceID,
+                    "api_key": token,
+                ]
+            )
+        } catch {
+            print("FNOS❗️播放 URL 构造失败 \(itemID): \(error.localizedDescription)")
+            return nil
         }
-        rateCancellable?.cancel()
-        rateCancellable = nil
-        player.pause()
-        player.replaceCurrentItem(with: nil)
     }
 }
 
-// MARK: - 播放容器（鉴权注入 + Liquid Glass 顶栏 + 弹幕层）
+// MARK: - 播放容器（KSPlayerView + 引擎分流 + 弹幕）
 
 struct FNOSPlayerContainerView: View {
 
@@ -102,112 +73,164 @@ struct FNOSPlayerContainerView: View {
     @Environment(\.dismiss)
     private var dismiss
 
-    @StateObject private var playerHolder = FNOSPlayerHolder()
+    @StateObject private var coordinator = KSVideoPlayer.Coordinator()
     @StateObject private var danmuEngine = FNOSDanmuEngine()
 
     @State private var showDanmu = true
-    @State private var danmuNotice = ""
+    @State private var streamURL: URL?
+    @State private var containerInfo: String?
+    @State private var notice = "准备播放…"
     @State private var didSetup = false
 
     var body: some View {
         ZStack(alignment: .top) {
-            // 原生播放器（黑底防黑屏穿透）
-            FNOSPlayerControllerView(player: playerHolder.player)
-                .ignoresSafeArea()
-                .background(Color.black.ignoresSafeArea())
+            if let streamURL {
+                // KSPlayer 自带 tvOS 焦点命令（播放/暂停/退出/左右快进退）
+                KSVideoPlayerView(url: streamURL, options: makeOptions(), title: item.Name ?? "播放")
+                    .ignoresSafeArea()
+            } else {
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text(notice)
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
 
-            // 弹幕层：位于视频上方、顶栏下方；关闭时仅隐藏图层，
-            // 引擎时钟继续随播放器走，重新打开无缝衔接
+            // 弹幕层：关闭时仅隐藏图层，时钟随播放器继续走，重开无缝衔接
             if showDanmu {
                 FNOSDanmuView(engine: danmuEngine)
                     .ignoresSafeArea()
             }
 
             // Liquid Glass 悬浮顶栏
-            HStack(spacing: 20) {
-                Button {
-                    dismiss()
-                } label: {
-                    Image(systemName: "chevron.left")
-                        .font(.title3)
-                        .padding(12)
-                }
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(item.Name ?? "播放")
-                        .font(.headline)
-                        .lineLimit(1)
-                    if !danmuNotice.isEmpty {
-                        Text(danmuNotice)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                }
-
-                Spacer()
-
-                Button {
-                    showDanmu.toggle()
-                } label: {
-                    Label(
-                        showDanmu ? "弹幕 开" : "弹幕 关",
-                        systemImage: showDanmu ? "text.bubble" : "text.bubble.slash"
-                    )
-                }
-            }
-            .padding(.horizontal, 28)
-            .padding(.vertical, 12)
-            .background(.ultraThinMaterial)
-            .cornerRadius(18)
-            .padding(.horizontal, 48)
-            .padding(.top, 20)
+            topBar
         }
         .background(Color.black.ignoresSafeArea())
-        .onAppear {
-            setupIfNeeded()
+        .task {
+            await prepare()
         }
         .onDisappear {
-            playerHolder.teardown()
+            danmuEngine.setRate(0)
         }
     }
 
-    private func setupIfNeeded() {
+    // MARK: 顶栏（返回 + 片名 + 弹幕开关）
+
+    private var topBar: some View {
+        HStack(spacing: 20) {
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.title3)
+                    .padding(12)
+            }
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.Name ?? "播放")
+                    .font(.headline)
+                    .lineLimit(1)
+                if !notice.isEmpty {
+                    Text(notice)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            Spacer()
+
+            Button {
+                showDanmu.toggle()
+            } label: {
+                Label(
+                    showDanmu ? "弹幕 开" : "弹幕 关",
+                    systemImage: showDanmu ? "text.bubble" : "text.bubble.slash"
+                )
+            }
+        }
+        .padding(.horizontal, 28)
+        .padding(.vertical, 12)
+        .background(.ultraThinMaterial)
+        .cornerRadius(18)
+        .padding(.horizontal, 48)
+        .padding(.top, 20)
+    }
+
+    // MARK: 准备（真实 MediaSourceId → 直链 → 弹幕）
+
+    private func prepare() async {
         guard !didSetup else { return }
         didSetup = true
 
-        // 弹幕时钟绑定播放器：绝对不用系统时间
-        playerHolder.onTick = { mediaTime in
-            danmuEngine.sync(mediaTime: mediaTime)
+        // 弹幕时钟绑定 KSPlayer：时间回调 + 状态回调（暂停冻结外推），绝不用系统时间
+        coordinator.onPlay = { currentTime, _ in
+            danmuEngine.sync(mediaTime: currentTime)
         }
-        playerHolder.onRateChange = { rate in
-            danmuEngine.setRate(rate)
+        coordinator.onStateChanged = { _, state in
+            switch state {
+            case .paused, .playedToTheEnd, .error:
+                danmuEngine.setRate(0)
+            default:
+                danmuEngine.setRate(1)
+            }
         }
 
-        // 播放直链 + 鉴权头注入（防止飞牛直链 401 黑屏）
-        guard let url = client.streamURL(itemID: item.Id) else {
-            danmuNotice = "❗️播放地址构造失败"
+        // 1) 取真实 MediaSourceId（此前播放失败的直接原因之一：空值被 fnOS 400 拒绝）
+        let source: (mediaSourceID: String, container: String?)
+        do {
+            source = try await client.playbackSource(itemID: item.Id, userID: userID)
+        } catch {
+            print("FNOS❗️获取播放源失败: \(error)")
+            notice = "❗️获取播放源失败: \(error.localizedDescription)"
             return
         }
 
-        let asset = AVURLAsset(
-            url: url,
-            options: [AVURLAsset.httpHeaderFieldsKey: client.mediaHeaders]
-        )
-        playerHolder.configure(item: AVPlayerItem(asset: asset))
-
-        // 弹幕加载（真实服务端，按标题匹配）
-        let title = item.Name ?? "视频"
-        danmuNotice = "弹幕匹配中…"
-        Task {
-            await danmuEngine.load(title: title)
-            switch danmuEngine.status {
-            case .ready:
-                danmuNotice = "弹幕 \(danmuEngine.commentCount) 条"
-            case .failed(let message):
-                danmuNotice = "弹幕失败: \(message)"
-            default:
-                danmuNotice = ""
-            }
+        // 2) 构造直链
+        guard let url = client.streamURL(itemID: item.Id, mediaSourceID: source.mediaSourceID) else {
+            notice = "❗️播放地址构造失败"
+            return
         }
+        streamURL = url
+        containerInfo = source.container
+        notice = ""
+
+        // 3) 弹幕（真实服务端，按标题匹配）
+        danmuEngine.setRate(1)
+        let title = item.Name ?? "视频"
+        notice = "弹幕匹配中…"
+        await danmuEngine.load(title: title)
+        switch danmuEngine.status {
+        case .ready:
+            notice = "弹幕 \(danmuEngine.commentCount) 条"
+        case .failed(let message):
+            notice = "弹幕失败: \(message)"
+        default:
+            notice = ""
+        }
+    }
+
+    // MARK: 引擎分流（.mkv → FFmpeg；.mp4/.m3u8 → AVPlayer）
+
+    private func makeOptions() -> KSOptions {
+        let container = (containerInfo ?? "").lowercased()
+        let isMKV = container.contains("matroska") || container.contains("mkv")
+
+        KSOptions.firstPlayerType = isMKV ? KSMEPlayer.self : KSAVPlayer.self
+        print("FNOSℹ️播放引擎: \(isMKV ? "FFmpeg (KSMEPlayer)" : "AVPlayer (KSAVPlayer)") · 容器: \(container.isEmpty ? "未知" : container)")
+
+        let options = KSOptions()
+
+        // 鉴权头：fnOS 播放流必须带 X-Emby-Authorization（实测仅 api_key 会 400）
+        // AVPlayer 引擎：通过 avOptions 注入 AVURLAsset 请求头
+        options.avOptions[fnosAVHTTPHeaderFieldsKey] = client.mediaHeaders
+        // FFmpeg 引擎：http 协议的 headers 选项（\r\n 分隔）
+        let headerString = client.mediaHeaders
+            .map { "\($0.key): \($0.value)" }
+            .joined(separator: "\r\n")
+        options.formatContextOptions["headers"] = headerString
+
+        return options
     }
 }

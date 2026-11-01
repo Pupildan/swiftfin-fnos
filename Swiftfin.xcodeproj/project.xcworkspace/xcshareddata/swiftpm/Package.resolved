@@ -67,9 +67,7 @@
     {
       "identity": "engine",
       "kind": "remoteSourceControl",
-      "location": {
-        "remoteSourceControl": "https://github.com/Pupildan/Engine"
-      },
+      "location": "https://github.com/Pupildan/Engine",
       "state": {
         "version": "2.12.4",
         "revision": "79b6618e166c4c71f5b29a24a561164f3e9bd3cb"
@@ -357,9 +355,7 @@
     {
       "identity": "transmission",
       "kind": "remoteSourceControl",
-      "location": {
-        "remoteSourceControl": "https://github.com/Pupildan/Transmission"
-      },
+      "location": "https://github.com/Pupildan/Transmission",
       "state": {
         "version": "2.13.4",
         "revision": "a2d2792952e3b32c379942278fbcd690ff980768"

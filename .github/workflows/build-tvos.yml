@@ -7,14 +7,10 @@ on:
 
 jobs:
   build-tvos:
-    runs-on: macos-14
+    runs-on: xcode-27
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      # 强制使用 Xcode 15.4（Swift 5.10 工具链）
-      - name: Force Xcode 15.4
-        run: sudo xcode-select -s /Applications/Xcode_15.4.app
 
       - name: Show Xcode version
         run: xcodebuild -version

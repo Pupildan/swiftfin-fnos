@@ -1,9 +1,14 @@
 //
-// Swiftfin is subject to the terms of the Mozilla Public
-// License, v2.0. If a copy of the MPL was not distributed with this
-// file, can be obtained one at https://mozilla.org/MPL/2.0/.
+// FNOSPlayerView.swift
+// 飞牛影视播放器 —— KSPlayer 裸播放视图 + 自绘 Apple TV+ 式控制条。
 //
-// Copyright (c) 2026 Jellyfin & Jellyfin Contributors
+// 设计要点：
+// - 不用 KSVideoPlayerView（其内置 tvOS 控制条按钮样式无法定制），
+//   改用裸 KSVideoPlayer(UIViewRepresentable) + 完全自绘控制层；
+// - 控制条按钮一律 .plain 无背景（按用户要求删除音量/画中画）；
+// - 弹幕开关移入控制条；顶部区域彻底删除；
+// - 3 秒无操作自动隐藏控制条；隐藏状态下任意方向键/触摸唤出；
+// - MENU(onExitCommand) 退出播放。
 //
 
 import KSPlayer
@@ -62,7 +67,7 @@ extension FNOSDirectClient {
     }
 }
 
-// MARK: - 播放容器（KSPlayerView + 引擎分流 + 弹幕）
+// MARK: - 播放容器
 
 struct FNOSPlayerContainerView: View {
 
@@ -82,22 +87,19 @@ struct FNOSPlayerContainerView: View {
     @State private var notice = "准备播放…"
     @State private var didSetup = false
 
+    // 控制条状态
+    @State private var showControls = true
+    @State private var hideTask: Task<Void, Never>?
+    @FocusState private var focus: Control?
+
+    private enum Control: Hashable {
+        case rewind, playPause, danmu, forward
+    }
+
     var body: some View {
-        ZStack(alignment: .top) {
+        ZStack(alignment: .bottom) {
             if let streamURL {
-                // 必须显式传入自建 coordinator：
-                // KSVideoPlayerView(url:...) 便捷构造器会内部 new 一个 Coordinator，
-                // 外部 @StateObject 永远收不到 onPlay/onStateChanged（弹幕失联的直接原因）
-                KSVideoPlayerView(
-                    coordinator: coordinator,
-                    url: streamURL,
-                    options: makeOptions(),
-                    title: item.Name ?? "播放"
-                )
-                .ignoresSafeArea()
-                // 覆盖 KSPlayer tvOS 控制条按钮的默认白胶囊样式（重点修复莫名白色圆点）
-                .buttonStyle(.plain)
-                .tint(.white)
+                playerView(url: streamURL)
             } else {
                 VStack(spacing: 12) {
                     ProgressView()
@@ -112,60 +114,193 @@ struct FNOSPlayerContainerView: View {
             if showDanmu {
                 FNOSDanmuView(engine: danmuEngine)
                     .ignoresSafeArea()
+                    .allowsHitTesting(false)
             }
 
-            // Liquid Glass 悬浮顶栏
-            topBar
+            if showControls, streamURL != nil {
+                controlBar
+                    .transition(.opacity)
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black.ignoresSafeArea())
+        .onExitCommand {
+            dismiss()
+        }
+        .onPlayPauseCommand {
+            togglePlayPause()
+        }
         .task {
             await prepare()
         }
         .onDisappear {
+            hideTask?.cancel()
             danmuEngine.setRate(0)
         }
     }
 
-    // MARK: 顶栏（返回 + 片名 + 弹幕开关）
+    // MARK: 裸播放视图（无 KSPlayer 内置控制）
 
-    private var topBar: some View {
-        HStack(spacing: 20) {
-            Button {
-                dismiss()
-            } label: {
-                Image(systemName: "chevron.left")
-                    .font(.title3)
-                    .padding(12)
+    private func playerView(url: URL) -> some View {
+        KSVideoPlayer(coordinator: coordinator, url: url, options: makeOptions())
+            .onPlay { currentTime, _ in
+                danmuEngine.sync(mediaTime: currentTime)
             }
-
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.Name ?? "播放")
-                    .font(.headline)
-                    .lineLimit(1)
-                if !notice.isEmpty {
-                    Text(notice)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
+            .onStateChanged { _, state in
+                switch state {
+                case .paused, .playedToTheEnd, .error:
+                    danmuEngine.setRate(0)
+                default:
+                    danmuEngine.setRate(1)
                 }
             }
+            .ignoresSafeArea()
+            .focusable(!showControls)
+            .onMoveCommand { _ in
+                // 控制条隐藏时：任意方向键唤出控制条
+                showControls()
+            }
+            .onTapGesture {
+                showControls()
+            }
+    }
 
-            Spacer()
+    // MARK: 自绘控制条（无背景图标 + 进度 + 时间）
 
-            Button {
-                showDanmu.toggle()
-            } label: {
-                Label(
-                    showDanmu ? "弹幕 开" : "弹幕 关",
-                    systemImage: showDanmu ? "text.bubble" : "text.bubble.slash"
-                )
+    private var controlBar: some View {
+        VStack(spacing: 18) {
+            HStack(alignment: .center, spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.Name ?? "播放")
+                        .font(.headline)
+                        .lineLimit(1)
+                    if !notice.isEmpty {
+                        Text(notice)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                }
+                Spacer()
+            }
+
+            HStack(spacing: 64) {
+                controlButton(.rewind, icon: "gobackward.15") {
+                    coordinator.skip(interval: -15)
+                }
+                controlButton(.playPause, icon: isPlaying ? "pause.fill" : "play.fill") {
+                    togglePlayPause()
+                }
+                controlButton(.danmu, icon: showDanmu ? "text.bubble" : "text.bubble.slash") {
+                    showDanmu.toggle()
+                }
+                controlButton(.forward, icon: "goforward.15") {
+                    coordinator.skip(interval: 15)
+                }
+            }
+            .font(.system(size: 34, weight: .medium))
+            .foregroundStyle(.white)
+
+            HStack(spacing: 14) {
+                Text(timeString(coordinator.currentTime))
+                    .font(.caption.monospacedDigit())
+                    .foregroundColor(.white)
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule()
+                            .fill(.white.opacity(0.25))
+                        Capsule()
+                            .fill(.white)
+                            .frame(width: geo.size.width * progressFraction)
+                    }
+                }
+                .frame(height: 6)
+                Text(timeString(coordinator.totalTime))
+                    .font(.caption.monospacedDigit())
+                    .foregroundColor(.white)
             }
         }
-        .padding(.horizontal, 28)
-        .padding(.vertical, 12)
-        .background(.ultraThinMaterial)
-        .cornerRadius(18)
-        .padding(.horizontal, 48)
-        .padding(.top, 20)
+        .padding(.horizontal, 90)
+        .padding(.bottom, 56)
+        .padding(.top, 24)
+        .background(
+            LinearGradient(
+                stops: [
+                    .init(color: .black.opacity(0), location: 0),
+                    .init(color: .black.opacity(0.65), location: 1),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+        )
+        .onChange(of: focus) { _ in
+            scheduleHide()
+        }
+    }
+
+    private func controlButton(_ control: Control, icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .scaleEffect(focus == control ? 1.3 : 1.0)
+                .animation(.easeOut(duration: 0.15), value: focus == control)
+        }
+        .buttonStyle(.plain)
+        .focused($focus, equals: control)
+    }
+
+    // MARK: 状态助手
+
+    private var isPlaying: Bool {
+        coordinator.state.isPlaying
+    }
+
+    private var progressFraction: Double {
+        let total = Double(max(coordinator.totalTime, 1))
+        return min(max(Double(coordinator.currentTime) / total, 0), 1)
+    }
+
+    private func timeString(_ seconds: Int) -> String {
+        let s = max(seconds, 0)
+        let h = s / 3600, m = (s % 3600) / 60, sec = s % 60
+        if h > 0 {
+            return String(format: "%d:%02d:%02d", h, m, sec)
+        }
+        return String(format: "%02d:%02d", m, sec)
+    }
+
+    private func togglePlayPause() {
+        if isPlaying {
+            coordinator.playerLayer?.pause()
+        } else {
+            coordinator.playerLayer?.play()
+        }
+        showControls()
+    }
+
+    /// 任意操作 → 显示控制条并重置 3 秒隐藏计时
+    private func showControls() {
+        hideTask?.cancel()
+        if !showControls {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showControls = true
+            }
+            DispatchQueue.main.async {
+                focus = .playPause
+            }
+        }
+        scheduleHide()
+    }
+
+    private func scheduleHide() {
+        hideTask?.cancel()
+        hideTask = Task {
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeInOut(duration: 0.4)) {
+                showControls = false
+            }
+            focus = nil
+        }
     }
 
     // MARK: 准备（真实 MediaSourceId → 直链 → 弹幕）
@@ -174,20 +309,7 @@ struct FNOSPlayerContainerView: View {
         guard !didSetup else { return }
         didSetup = true
 
-        // 弹幕时钟绑定 KSPlayer：时间回调 + 状态回调（暂停冻结外推），绝不用系统时间
-        coordinator.onPlay = { currentTime, _ in
-            danmuEngine.sync(mediaTime: currentTime)
-        }
-        coordinator.onStateChanged = { _, state in
-            switch state {
-            case .paused, .playedToTheEnd, .error:
-                danmuEngine.setRate(0)
-            default:
-                danmuEngine.setRate(1)
-            }
-        }
-
-        // 1) 取真实 MediaSourceId（此前播放失败的直接原因之一：空值被 fnOS 400 拒绝）
+        // 1) 取真实 MediaSourceId（fnOS 硬性要求）
         let source: (mediaSourceID: String, container: String?)
         do {
             source = try await client.playbackSource(itemID: item.Id, userID: userID)
@@ -219,6 +341,7 @@ struct FNOSPlayerContainerView: View {
         default:
             notice = ""
         }
+        showControls()
     }
 
     // MARK: 引擎分流（.mkv → FFmpeg；.mp4/.m3u8 → AVPlayer）

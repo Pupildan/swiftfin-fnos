@@ -26,6 +26,12 @@ private struct FNOSPlayerControllerView: UIViewControllerRepresentable {
     func updateUIViewController(_ uiViewController: AVPlayerViewController, context: Context) {}
 }
 
+// MARK: - AVURLAsset 请求头 Key（ObjC 常量未暴露给 Swift，按官方字符串手动声明）
+
+private extension AVURLAsset {
+    static let httpHeaderFieldsKey = "AVURLAssetHTTPHeaderFieldsKey"
+}
+
 // MARK: - 播放器持有者（时钟回调 + 倍率回调）
 
 @MainActor
@@ -185,7 +191,7 @@ struct FNOSPlayerContainerView: View {
 
         let asset = AVURLAsset(
             url: url,
-            options: [AVURLAssetHTTPHeaderFieldsKey: client.mediaHeaders]
+            options: [AVURLAsset.httpHeaderFieldsKey: client.mediaHeaders]
         )
         playerHolder.configure(item: AVPlayerItem(asset: asset))
 

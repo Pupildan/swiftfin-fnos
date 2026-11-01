@@ -355,7 +355,7 @@ struct FNOSDanmuView: View {
             }
 
             // 滚动弹幕：右侧进入、匀速向左
-            let textWidth = Self.estimatedWidth(of: comment.text)
+            let textWidth = estimatedWidth(of: comment.text)
             let speed = (size.width + textWidth) / 12
             let distance = CGFloat(mediaNow - comment.time) * speed
             let trailingX = size.width - distance

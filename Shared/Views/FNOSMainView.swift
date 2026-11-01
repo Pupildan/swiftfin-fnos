@@ -376,7 +376,7 @@ fileprivate struct FNOSItemCard: View {
 fileprivate struct FNOSSeasonsSheet: View {
 
     let series: FNOSItem
-    let client: FNOSDirectClient
+    let client: FNOSDirectClient?
     let userID: String
     let onPlay: (FNOSItem) -> Void
 
@@ -460,6 +460,11 @@ fileprivate struct FNOSSeasonsSheet: View {
     }
 
     private func loadSeasons() async {
+        guard let client else {
+            message = "❗️客户端未初始化"
+            print("FNOS❗️loadSeasons: client 为 nil")
+            return
+        }
         do {
             let data = try await client.get(
                 path: "Shows/\(series.Id)/Seasons",
@@ -488,6 +493,11 @@ fileprivate struct FNOSSeasonsSheet: View {
     }
 
     private func loadEpisodes(season: FNOSItem) async {
+        guard let client else {
+            message = "❗️客户端未初始化"
+            print("FNOS❗️loadEpisodes: client 为 nil")
+            return
+        }
         do {
             let data = try await client.get(
                 path: "Shows/\(series.Id)/Episodes",

@@ -1,0 +1,136 @@
+//
+// Swiftfin is subject to the terms of the Mozilla Public
+// License, v2.0. If a copy of the MPL was not distributed with this
+// file, you can obtain one at https://mozilla.org/MPL/2.0/.
+//
+// Copyright (c) 2026 Jellyfin & Jellyfin Contributors
+//
+
+import Defaults
+import JellyfinAPI
+import SwiftUI
+
+struct ItemSubtitleSearchView: View {
+
+    @AdaptiveLayout
+    private var viewLayout
+
+    @Default(.accentColor)
+    private var accentColor
+
+    @ObservedObject
+    var viewModel: ItemSubtitlesViewModel
+
+    @Router
+    private var router
+
+    @State
+    private var isPerfectMatch = false
+    @State
+    private var selectedSubtitles: Set<String> = []
+
+    var body: some View {
+        ZStack {
+            switch viewModel.state {
+            case .initial, .content:
+                contentView
+            case .error:
+                viewModel.error.map {
+                    ErrorView(error: $0)
+                }
+            }
+        }
+        .navigationTitle(L10n.search)
+        .toolbarTitleDisplayMode(.inline)
+        .onReceive(viewModel.events) { event in
+            switch event {
+            case .deleted:
+                break
+            case .uploaded:
+                router.dismiss()
+            }
+        }
+        .errorMessage($viewModel.error)
+        .navigationBarCloseButton {
+            router.dismiss()
+        }
+        .topBarTrailing {
+            if viewModel.background.states.isNotEmpty {
+                ProgressView()
+            }
+
+            #if os(iOS)
+            if #available(iOS 26, *) {
+                Button(L10n.save, role: .confirm, action: save)
+                    .disabled(selectedSubtitles.isEmpty)
+            } else {
+                Button(L10n.save, action: save)
+                    .foregroundStyle(accentColor.overlayColor, accentColor)
+                    .disabled(selectedSubtitles.isEmpty)
+                    .backport
+                    .buttonStyle(.glassProminent)
+                    .controlSize(.small)
+            }
+            #endif
+        }
+        .onChange(of: isPerfectMatch) {
+            viewModel.search(isPerfectMatch: isPerfectMatch)
+        }
+    }
+
+    private var contentView: some View {
+        Form(systemImage: "textformat") {
+
+            Section(L10n.options) {
+                CulturePicker(L10n.language, threeLetterISOLanguageName: $viewModel.language)
+
+                Toggle(L10n.perfectMatch, isOn: $isPerfectMatch)
+            }
+
+            if viewLayout.isLarge {
+                Section {
+                    Button(action: save) {
+                        Text(L10n.save)
+                            .frame(maxWidth: .infinity)
+                    }
+                    .disabled(selectedSubtitles.isEmpty)
+                    .listRowInsets(.zero)
+                    .listRowBackground(Color.clear)
+                    .fontWeight(.semibold)
+                    .backport
+                    .buttonStyle(.glassProminent.shadow(false))
+                    .tint(accentColor)
+                }
+            }
+
+            Section(L10n.search) {
+
+                if viewModel.results.isEmpty {
+                    if viewModel.background.is(.searching) {
+                        ProgressView()
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    } else {
+                        Text(L10n.none)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    }
+                } else {
+                    ForEach(viewModel.results) { subtitle in
+                        SearchResultRow(subtitle: subtitle) {
+                            guard let subtitleID = subtitle.id else { return }
+
+                            selectedSubtitles.toggle(value: subtitleID)
+                        }
+                        .isSelected(subtitle.id.map { selectedSubtitles.contains($0) } == true)
+                    }
+                }
+            }
+        }
+    }
+
+    private func save() {
+        guard selectedSubtitles.isNotEmpty else { return }
+
+        viewModel.set(selectedSubtitles)
+    }
+}

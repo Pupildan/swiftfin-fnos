@@ -1,0 +1,300 @@
+//
+// Swiftfin is subject to the terms of the Mozilla Public
+// License, v2.0. If a copy of the MPL was not distributed with this
+// file, you can obtain one at https://mozilla.org/MPL/2.0/.
+//
+// Copyright (c) 2026 Jellyfin & Jellyfin Contributors
+//
+
+import JellyfinAPI
+import PulseUI
+import SwiftUI
+
+extension NavigationRoute {
+
+    static func actionBarButtonSelector(selectedButtonsBinding: Binding<[VideoPlayerActionButton]>) -> NavigationRoute {
+        NavigationRoute(id: "actionBarButtonSelector") {
+            OrderedSectionSelectorView(
+                selection: selectedButtonsBinding.map(
+                    getter: { $0.filter { VideoPlayerActionButton.supportedCases.contains($0) } },
+                    setter: { $0 + selectedButtonsBinding.wrappedValue.subtracting(VideoPlayerActionButton.supportedCases) }
+                ),
+                sources: VideoPlayerActionButton.supportedCases
+            )
+            .navigationTitle(L10n.barButtons.localizedCapitalized)
+        }
+    }
+
+    static func actionMenuButtonSelector(selectedButtonsBinding: Binding<[VideoPlayerActionButton]>) -> NavigationRoute {
+        NavigationRoute(id: "actionMenuButtonSelector") {
+            OrderedSectionSelectorView(
+                selection: selectedButtonsBinding.map(
+                    getter: { $0.filter { VideoPlayerActionButton.supportedCases.contains($0) } },
+                    setter: { $0 + selectedButtonsBinding.wrappedValue.subtracting(VideoPlayerActionButton.supportedCases) }
+                ),
+                sources: VideoPlayerActionButton.supportedCases
+            )
+            .navigationTitle(L10n.menuButtons.localizedCapitalized)
+        }
+    }
+
+    static func itemActionBarButtonSelector(selectedButtonsBinding: Binding<[ItemActionButton]>) -> NavigationRoute {
+        NavigationRoute(id: "itemActionBarButtonSelector") {
+            OrderedSectionSelectorView(selection: selectedButtonsBinding, sources: ItemActionButton.allCases)
+                .navigationTitle(L10n.barButtons.localizedCapitalized)
+        }
+    }
+
+    static func itemActionMenuButtonSelector(selectedButtonsBinding: Binding<[ItemActionButton]>) -> NavigationRoute {
+        NavigationRoute(id: "itemActionMenuButtonSelector") {
+            OrderedSectionSelectorView(selection: selectedButtonsBinding, sources: ItemActionButton.allCases)
+                .navigationTitle(L10n.menuButtons.localizedCapitalized)
+        }
+    }
+
+    static func supplementSelector(selectedSupplementsBinding: Binding<[VideoPlayerSupplementType]>) -> NavigationRoute {
+        NavigationRoute(id: "supplementSelector") {
+            OrderedSectionSelectorView(
+                selection: selectedSupplementsBinding,
+                sources: VideoPlayerSupplementType.allCases,
+                removable: VideoPlayerSupplementType.allCases.subtracting(VideoPlayerSupplementType.supportedCases)
+            )
+            .navigationTitle(L10n.supplements.localizedCapitalized)
+        }
+    }
+
+    #if os(iOS)
+    static var adminDashboard: NavigationRoute {
+        NavigationRoute(
+            id: "adminDashboard"
+        ) {
+            AdminDashboardView()
+        }
+    }
+    #endif
+
+    static var createDeviceProfile: NavigationRoute {
+        NavigationRoute(
+            id: "createDeviceProfile",
+            style: .sheet
+        ) {
+            CustomDeviceProfilesView.EditDeviceProfileView(profile: nil)
+                .navigationTitle(L10n.customProfile.localizedCapitalized)
+        }
+    }
+
+    static var customDeviceProfilesSettings: NavigationRoute {
+        NavigationRoute(
+            id: "customDeviceProfilesSettings"
+        ) {
+            CustomDeviceProfilesView()
+        }
+    }
+
+    static var customizeSettingsView: NavigationRoute {
+        NavigationRoute(
+            id: "customizeSettingsView"
+        ) {
+            CustomizeSettingsView()
+        }
+    }
+
+    #if DEBUG
+    static var debugSettings: NavigationRoute {
+        NavigationRoute(
+            id: "debugSettings"
+        ) {
+            DebugSettingsView()
+        }
+    }
+    #endif
+
+    static func editDeviceProfile(profile: Binding<CustomDeviceProfile>) -> NavigationRoute {
+        NavigationRoute(
+            id: "editDeviceProfile",
+            style: .sheet
+        ) {
+            CustomDeviceProfilesView.EditDeviceProfileView(profile: profile)
+                .navigationTitle(L10n.customProfile.localizedCapitalized)
+        }
+    }
+
+    static func editDeviceProfileAudio(selection: Binding<[AudioCodec]>) -> NavigationRoute {
+        NavigationRoute(id: "editDeviceProfileAudio") {
+            OrderedSectionSelectorView(systemImage: "waveform", selection: selection, sources: AudioCodec.allCases)
+                .navigationTitle(L10n.audio)
+        }
+    }
+
+    static func editDeviceProfileContainer(selection: Binding<[MediaContainer]>) -> NavigationRoute {
+        NavigationRoute(id: "editDeviceProfileContainer") {
+            OrderedSectionSelectorView(systemImage: "archivebox", selection: selection, sources: MediaContainer.allCases)
+                .navigationTitle(L10n.containers)
+        }
+    }
+
+    static func editDeviceProfileVideo(selection: Binding<[VideoCodec]>) -> NavigationRoute {
+        NavigationRoute(id: "editDeviceProfileVideo") {
+            OrderedSectionSelectorView(systemImage: "play.rectangle", selection: selection, sources: VideoCodec.allCases)
+                .navigationTitle(L10n.video)
+        }
+    }
+
+    static func editLocalServer(server: ServerState, isEditing: Bool = false) -> NavigationRoute {
+        NavigationRoute(id: "editServer") {
+            EditLocalServerView(
+                server: server,
+                isDeletePresented: isEditing
+            )
+        }
+    }
+
+    @MainActor
+    static func serverConnections(viewModel: ServerConnectionViewModel) -> NavigationRoute {
+        NavigationRoute(
+            id: "serverConnections-\(viewModel.server.id)"
+        ) {
+            ServerConnectionView(viewModel: viewModel)
+        }
+    }
+
+    @MainActor
+    static func editServerConnection(
+        viewModel: ServerConnectionViewModel,
+        connection: ServerConnection
+    ) -> NavigationRoute {
+        NavigationRoute(
+            id: "serverConnection-\(viewModel.server.id)-\(connection.id)",
+            style: .sheet
+        ) {
+            EditServerConnectionView(
+                viewModel: viewModel,
+                connection: connection
+            )
+        }
+    }
+
+    static var experimentalSettings: NavigationRoute {
+        NavigationRoute(
+            id: "experimentalSettings"
+        ) {
+            ExperimentalSettingsView()
+        }
+    }
+
+    #if os(iOS)
+    static var gestureSettings: NavigationRoute {
+        NavigationRoute(
+            id: "gestureSettings"
+        ) {
+            GestureSettingsView()
+        }
+    }
+    #endif
+
+    static var itemSettings: NavigationRoute {
+        NavigationRoute(
+            id: "itemSettings"
+        ) {
+            CustomizeSettingsView.ItemSection()
+        }
+    }
+
+    static var librarySettings: NavigationRoute {
+        NavigationRoute(
+            id: "librarySettings"
+        ) {
+            CustomizeSettingsView.LibrarySection()
+        }
+    }
+
+    static var posterSettings: NavigationRoute {
+        NavigationRoute(
+            id: "posterSettings"
+        ) {
+            CustomizeSettingsView.PosterSection()
+        }
+    }
+
+    static var indicatorSettings: NavigationRoute {
+        NavigationRoute(
+            id: "indicatorSettings"
+        ) {
+            IndicatorSettingsView()
+        }
+    }
+
+    static func itemFilterDrawerSelector(selection: Binding<[ItemFilterType]>) -> NavigationRoute {
+        NavigationRoute(id: "itemFilterDrawerSelector") {
+            OrderedSectionSelectorView(systemImage: "line.3.horizontal.decrease", selection: selection, sources: ItemFilterType.allCases)
+                .navigationTitle(L10n.filters)
+        }
+    }
+
+    static func itemViewAttributes(selection: Binding<[ItemViewAttribute]>) -> NavigationRoute {
+        NavigationRoute(id: "itemViewAttributes") {
+            OrderedSectionSelectorView(systemImage: "tag", selection: selection, sources: ItemViewAttribute.allCases)
+                .navigationTitle(L10n.mediaAttributes.localizedCapitalized)
+        }
+    }
+
+    static var localUserSecurity: NavigationRoute {
+        NavigationRoute(
+            id: "localUserSecurity"
+        ) {
+            WithLocalUserAuthentication {
+                LocalUserSecurityView()
+            }
+        }
+    }
+
+    static func localUserSettings(user: UserDto) -> NavigationRoute {
+        NavigationRoute(id: "localUserSettings") {
+            LocalUserSettingsView(user: user)
+        }
+    }
+
+    static var log: NavigationRoute {
+        NavigationRoute(
+            id: "log"
+        ) {
+            ConsoleView()
+        }
+    }
+
+    static var playbackQualitySettings: NavigationRoute {
+        NavigationRoute(
+            id: "playbackQualitySettings"
+        ) {
+            PlaybackQualitySettingsView()
+        }
+    }
+
+    #if os(iOS)
+    static func resetUserPassword(userID: String) -> NavigationRoute {
+        NavigationRoute(
+            id: "resetUserPassword",
+            style: .sheet
+        ) {
+            ResetUserPasswordView(userID: userID, requiresCurrentPassword: true)
+        }
+    }
+    #endif
+
+    static var settings: NavigationRoute {
+        NavigationRoute(
+            id: "settings",
+            style: .sheet
+        ) {
+            SettingsView()
+        }
+    }
+
+    static var videoPlayerSettings: NavigationRoute {
+        NavigationRoute(
+            id: "videoPlayerSettings"
+        ) {
+            VideoPlayerSettingsView()
+        }
+    }
+}

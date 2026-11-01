@@ -1,0 +1,155 @@
+//
+// Swiftfin is subject to the terms of the Mozilla Public
+// License, v2.0. If a copy of the MPL was not distributed with this
+// file, you can obtain one at https://mozilla.org/MPL/2.0/.
+//
+// Copyright (c) 2026 Jellyfin & Jellyfin Contributors
+//
+
+import Defaults
+import FactoryKit
+import JellyfinAPI
+import SwiftUI
+
+struct SettingsView: View {
+
+    #if os(iOS)
+    @Default(.userAppearance)
+    private var appearance
+    #endif
+
+    @Default(.userAccentColor)
+    private var accentColor
+
+    @InjectedObject(\.userSessionManager)
+    private var userSessionManager: UserSessionManager
+
+    @Router
+    private var router
+
+    // MARK: - Body
+
+    var body: some View {
+        Form(image: .jellyfinBlobBlue) {
+            serverSection
+            customizeSection
+            diagnosticsSection
+        }
+        #if os(iOS)
+        .navigationTitle(L10n.settings)
+            .navigationBarCloseButton {
+                router.dismiss()
+            }
+        #endif
+    }
+
+    // MARK: - Server Section
+
+    @ViewBuilder
+    private var serverSection: some View {
+        if let userSession = userSessionManager.currentSession {
+            Section {
+                UserProfileRow(user: userSession.user.data) {
+                    router.route(to: .localUserSettings(user: userSession.user.data))
+                }
+
+                ChevronButton(
+                    L10n.server,
+                    action: {
+                        router.route(to: .editLocalServer(server: userSession.server))
+                    }
+                ) {
+                    Label {
+                        Text(userSession.server.name)
+                    } icon: {
+                        if !userSession.server.isVersionCompatible {
+                            Image(systemName: "exclamationmark.circle.fill")
+                        }
+                    }
+                    .labelStyle(.sectionFooterWithImage(imageStyle: .orange))
+                }
+
+                #if os(iOS)
+                if userSession.user.data.policy?.isAdministrator == true {
+                    ChevronButton(L10n.dashboard) {
+                        router.route(to: .adminDashboard)
+                    }
+                }
+                #endif
+            }
+        }
+
+        Section {
+            Button {
+                Task { @MainActor in
+                    UIDevice.impact(.medium)
+                    await userSessionManager.signOut(reason: .explicit)
+                    router.dismiss()
+                }
+            } label: {
+                Text(L10n.switchUser)
+                    .frame(maxWidth: .infinity)
+                    // Otherwise non-Liquid Glass only uses text height
+                    .if(!UIDevice.supportsLiquidGlass) { button in
+                        button
+                            .frame(maxHeight: .infinity)
+                    }
+            }
+            .listRowInsets(.zero)
+            .listRowBackground(Color.clear)
+            #if os(iOS)
+            .listRowSeparator(.hidden)
+            #endif
+            .fontWeight(.semibold)
+            .backport
+            .buttonStyle(.glassProminent.shadow(false))
+            .tint(accentColor)
+            #if os(iOS)
+            .controlSize(.large)
+            #endif
+        }
+    }
+
+    // MARK: - Customization Section
+
+    private var customizeSection: some View {
+        Section {
+            #if os(iOS)
+            Picker(L10n.appearance, selection: $appearance)
+            #endif
+
+            ColorPicker(L10n.accentColor, selection: $accentColor, supportsOpacity: false)
+
+            ChevronButton(L10n.advanced) {
+                router.route(to: .customizeSettingsView)
+            }
+        } header: {
+            Text(L10n.customize)
+        } footer: {
+            Text(L10n.viewsMayRequireRestart)
+        }
+    }
+
+    // MARK: - Diagnostics Section
+
+    private var diagnosticsSection: some View {
+        Section {
+
+            if ExperimentalSettingsView.isEnabled {
+                ChevronButton(L10n.experimental) {
+                    router.route(to: .experimentalSettings)
+                }
+            }
+
+            ChevronButton(L10n.logs) {
+                router.route(to: .log)
+            }
+
+            #if DEBUG
+            ChevronButton("Debug") {
+                router.route(to: .debugSettings)
+            }
+            #endif
+        }
+    }
+}

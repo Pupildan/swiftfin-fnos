@@ -1,0 +1,374 @@
+//
+// Swiftfin is subject to the terms of the Mozilla Public
+// License, v2.0. If a copy of the MPL was not distributed with this
+// file, you can obtain one at https://mozilla.org/MPL/2.0/.
+//
+// Copyright (c) 2026 Jellyfin & Jellyfin Contributors
+//
+
+import Defaults
+import FactoryKit
+import JellyfinAPI
+import SwiftUI
+
+private let userViewLibraryListImageWidth: CGFloat = 110
+
+struct UserViewLibrary: PagingLibrary {
+
+    typealias Element = UserViewLibraryElement
+    typealias PageElement = ItemPatch
+
+    let hasNextPage: Bool = false
+    let parent: TitledLibraryParent = .init(
+        displayTitle: L10n.media,
+        id: "user-views"
+    )
+
+    func libraryStyleOptions(environment: Empty) -> LibraryStyleOptions {
+        UserViewLibraryElement.supportedLibraryStyleOptions
+    }
+
+    func retrievePage(
+        environment: Empty,
+        pageState: LibraryPageState
+    ) async throws -> [ItemPatch] {
+        guard pageState.pageOffset == 0 else { return [] }
+
+        let parameters = Paths.GetUserViewsParameters(userID: pageState.userSession.user.id)
+        let request = Paths.getUserViews(parameters: parameters)
+
+        async let userViews = pageState.userSession.client.send(request)
+        async let currentUser = pageState.userSession.client.send(Paths.getCurrentUser)
+
+        let excludedLibraryIDs = try await currentUser.value.configuration?.myMediaExcludes ?? []
+        let response = try await userViews
+
+        return try pageState.items(from: response)
+            .filter { patch in
+                CollectionType.supportedCases.contains(patch.value.collectionType ?? .folders) &&
+                    !excludedLibraryIDs.contains(patch.value.id ?? "")
+            }
+    }
+
+    func materialize(_ page: [ItemPatch], pageState: LibraryPageState) throws -> [UserViewLibraryElement] {
+        let elements: [UserViewLibraryElement] = try page.compactMap { patch in
+            guard let record = try pageState.userSession.items.merge(patch, token: pageState.itemRequest) else { return nil }
+
+            return .userView(ItemEntry(item: record))
+        }
+
+        return elements.prepending(.favorites, if: Defaults[.Customization.Library.showFavorites])
+    }
+}
+
+enum UserViewLibraryElement: Displayable, Hashable, Identifiable, LibraryElement, SystemImageable {
+
+    case favorites
+    case userView(ItemEntry)
+
+    static var supportedLibraryStyleOptions: LibraryStyleOptions {
+        BaseItemKind.libraryStyleOptions(for: [.userView])
+    }
+
+    var displayTitle: String {
+        switch self {
+        case .favorites:
+            L10n.favorites
+        case let .userView(item):
+            item.displayTitle
+        }
+    }
+
+    var id: String {
+        switch self {
+        case .favorites:
+            "favorites"
+        case let .userView(item):
+            item.itemID
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .favorites:
+            "heart.fill"
+        case let .userView(item):
+            if item.snapshot.collectionType == .livetv {
+                "tv"
+            } else {
+                "folder.fill"
+            }
+        }
+    }
+
+    func libraryDidSelectElement(
+        router: Router.Wrapper,
+        in namespace: Namespace.ID
+    ) {
+        switch self {
+        case .favorites:
+            router.route(
+                to: .contentGroup(
+                    provider: ItemTypeContentGroupProvider(
+                        itemTypes: [
+                            BaseItemKind.movie,
+                            .series,
+                            .boxSet,
+                            .episode,
+                            .musicVideo,
+                            .video,
+                            .liveTvProgram,
+                            .tvChannel,
+                            .musicArtist,
+                            .person,
+                        ],
+                        parent: .init(name: L10n.favorites),
+                        environment: .init(filters: .favorites)
+                    )
+                ),
+                in: namespace
+            )
+
+        case let .userView(item):
+            if item.snapshot.collectionType == .livetv {
+                router.route(to: .liveTV, in: namespace)
+            } else {
+                router.route(
+                    to: .library(library: ItemLibrary(parent: item.snapshot, filters: .default)),
+                    in: namespace
+                )
+            }
+        }
+    }
+
+    func makeBody(
+        libraryStyle: LibraryStyle,
+        action: (() -> Void)?
+    ) -> some View {
+        Group {
+            switch libraryStyle.displayType {
+            case .grid:
+                UserViewLibraryGridElement(element: self)
+            case .list:
+                UserViewLibraryListElement(element: self)
+            }
+        }
+        .contextMenu {
+            if case let .userView(item) = self {
+                ShuffleButton(item: item.snapshot)
+            }
+        }
+    }
+}
+
+private struct UserViewLibraryGridElement: View {
+
+    @Default(.Customization.Library.randomImage)
+    private var useRandomImage
+
+    @Namespace
+    private var namespace
+
+    @Router
+    private var router
+
+    @State
+    private var imageSources: [ImageSource] = []
+
+    let element: UserViewLibraryElement
+
+    private var isTitleLabelVisible: Bool {
+        switch element {
+        case .favorites:
+            true
+        case .userView:
+            useRandomImage
+        }
+    }
+
+    var body: some View {
+        Button {
+            element.libraryDidSelectElement(router: router, in: namespace)
+        } label: {
+            ImageView(imageSources)
+                .image { image in
+                    if isTitleLabelVisible {
+                        titleLabelOverlay(with: image)
+                    } else {
+                        image
+                    }
+                }
+                .placeholder { imageSource in
+                    titleLabelOverlay(with: DefaultPlaceholderView(blurHash: imageSource.blurHash))
+                }
+                .failure {
+                    Color.secondarySystemFill
+                        .opacity(0.75)
+                        .overlay {
+                            titleLabel
+                                .foregroundStyle(.primary)
+                        }
+                }
+                .id(imageSources.hashValue)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .posterStyle(.landscape)
+                .matchedTransitionSource(id: "item", in: namespace)
+        }
+        .foregroundStyle(.primary, .secondary)
+        .onFirstAppear(perform: setImageSources)
+        .onChange(of: useRandomImage) {
+            setImageSources()
+        }
+        .buttonStyle(.card)
+    }
+
+    private var titleLabel: some View {
+        Text(element.displayTitle)
+            .font(.title2)
+            .fontWeight(.semibold)
+            .lineLimit(1)
+            .multilineTextAlignment(.center)
+            .frame(alignment: .center)
+    }
+
+    private func titleLabelOverlay(with content: some View) -> some View {
+        ZStack {
+            content
+
+            Color.black
+                .opacity(0.5)
+
+            titleLabel
+                .foregroundStyle(.white)
+        }
+    }
+
+    private func setImageSources() {
+        Task { @MainActor in
+            imageSources = await element.libraryImageSources(useRandomImage: useRandomImage)
+        }
+    }
+}
+
+private struct UserViewLibraryListElement: View {
+
+    @AdaptiveLayout
+    private var viewLayout
+
+    @Default(.Customization.Library.randomImage)
+    private var useRandomImage
+
+    @Namespace
+    private var namespace
+
+    @Router
+    private var router
+
+    @State
+    private var imageSources: [ImageSource] = []
+
+    let element: UserViewLibraryElement
+
+    var body: some View {
+        ListRow(insets: .init(vertical: 8, horizontal: viewLayout.edgePadding)) {
+            imageView
+        } content: {
+            Text(element.displayTitle)
+                .font(.callout)
+                .fontWeight(.semibold)
+                .foregroundStyle(.primary)
+                .lineLimit(2)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } action: {
+            element.libraryDidSelectElement(router: router, in: namespace)
+        }
+        #if !os(tvOS)
+        .matchedTransitionSource(id: "item", in: namespace)
+        #endif
+        .onFirstAppear(perform: setImageSources)
+        .onChange(of: useRandomImage) {
+            setImageSources()
+        }
+    }
+
+    private var imageView: some View {
+        ZStack {
+            Color.secondarySystemFill
+                .opacity(0.75)
+
+            ImageView(imageSources)
+                .placeholder { imageSource in
+                    DefaultPlaceholderView(blurHash: imageSource.blurHash)
+                }
+                .failure {
+                    Image(systemName: element.systemImage)
+                        .foregroundStyle(.secondary)
+                }
+                .id(imageSources.hashValue)
+        }
+        .posterStyle(.landscape)
+        .subtleShadow()
+        .frame(width: userViewLibraryListImageWidth)
+    }
+
+    private func setImageSources() {
+        Task { @MainActor in
+            imageSources = await element.libraryImageSources(useRandomImage: useRandomImage)
+        }
+    }
+}
+
+@MainActor
+private extension UserViewLibraryElement {
+
+    func libraryImageSources(useRandomImage: Bool) async -> [ImageSource] {
+        switch self {
+        case .favorites:
+            return await (try? randomItemImageSources()) ?? []
+        case let .userView(item):
+            if useRandomImage {
+                return await (try? randomItemImageSources()) ?? []
+            }
+
+            return [item.snapshot.imageSource(.primary, itemID: item.itemID, environment: ImageSourceOptions(maxWidth: 500))]
+                .compactMap(\.self)
+        }
+    }
+
+    func randomItemImageSources() async throws -> [ImageSource] {
+        guard let userSession = Container.shared.currentUserSession() else {
+            throw UserSessionError.missingCurrentSession
+        }
+
+        var parentID: String?
+        var filters: [ItemTrait]?
+        var includeItemTypes: [BaseItemKind] = BaseItemKind.supportedCases
+
+        switch self {
+        case .favorites:
+            filters = [.isFavorite]
+        case let .userView(item):
+            if item.snapshot.collectionType == .livetv {
+                includeItemTypes = [.tvProgram, .liveTvProgram]
+            } else {
+                parentID = item.itemID
+            }
+        }
+
+        var parameters = Paths.GetItemsParameters()
+        parameters.filters = filters
+        parameters.includeItemTypes = includeItemTypes
+        parameters.isRecursive = true
+        parameters.limit = 3
+        parameters.parentID = parentID
+        parameters.sortBy = [.random]
+        parameters.userID = userSession.user.id
+
+        let request = Paths.getItems(parameters: parameters)
+        let response = try await userSession.send(request)
+
+        return (response.value.items ?? [])
+            .flatMap { $0.imageSources(for: .landscape, size: .custom(width: 200)) }
+    }
+}

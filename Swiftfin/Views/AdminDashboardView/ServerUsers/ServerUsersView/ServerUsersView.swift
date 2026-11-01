@@ -1,0 +1,270 @@
+//
+// Swiftfin is subject to the terms of the Mozilla Public
+// License, v2.0. If a copy of the MPL was not distributed with this
+// file, you can obtain one at https://mozilla.org/MPL/2.0/.
+//
+// Copyright (c) 2026 Jellyfin & Jellyfin Contributors
+//
+
+import CollectionVGrid
+import JellyfinAPI
+import SwiftUI
+
+struct ServerUsersView: View {
+
+    @AdaptiveLayout
+    private var viewLayout
+
+    @Router
+    private var router
+
+    @State
+    private var isPresentingDeleteSelectionConfirmation = false
+    @State
+    private var isPresentingDeleteConfirmation = false
+    @State
+    private var isPresentingSelfDeleteError = false
+    @State
+    private var selectedUsers: Set<String> = []
+    @State
+    private var isEditing: Bool = false
+
+    @State
+    private var isHiddenFilterActive: Bool = false
+    @State
+    private var isDisabledFilterActive: Bool = false
+
+    @StateObject
+    private var viewModel = ServerUsersViewModel()
+
+    // MARK: - Body
+
+    var body: some View {
+        ZStack {
+            switch viewModel.state {
+            case .content:
+                userListView
+            case .error:
+                ErrorView(error: viewModel.error ?? ErrorMessage(L10n.unknownError))
+            case .initial:
+                ProgressView()
+            }
+        }
+        .animation(.linear(duration: 0.2), value: viewModel.state)
+        .navigationTitle(L10n.users)
+        .toolbarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(isEditing)
+        .refreshable {
+            await viewModel.getUsers(isHidden: isHiddenFilterActive, isDisabled: isDisabledFilterActive)
+        }
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                if isEditing {
+                    navigationBarSelectView
+                }
+            }
+
+            ToolbarItem(placement: .topBarTrailing) {
+                if isEditing {
+                    Button(L10n.cancel, role: .cancel) {
+                        isEditing.toggle()
+
+                        UIDevice.impact(.light)
+
+                        if !isEditing {
+                            selectedUsers.removeAll()
+                        }
+                    }
+                    .foregroundStyle(.primary, .secondary)
+                    .if(true) { view in
+                        if #available(iOS 26.0, *) {
+                            view
+                        } else {
+                            view
+                                .backport
+                                .buttonStyle(.glass)
+                        }
+                    }
+                    .controlSize(.small)
+                }
+            }
+
+            ToolbarItem(placement: .bottomBar) {
+                if isEditing {
+                    Button(L10n.delete, role: .destructive) {
+                        isPresentingDeleteSelectionConfirmation = true
+                    }
+                    .backport
+                    .buttonStyle(.glassProminent)
+                    .disabled(selectedUsers.isEmpty)
+                }
+            }
+        }
+        .navigationBarMenuButton(
+            isLoading: viewModel.background.is(.gettingUsers),
+            isHidden: isEditing
+        ) {
+            Button(L10n.addUser, systemImage: "plus") {
+                router.route(to: .addServerUser())
+            }
+
+            if viewModel.users.isNotEmpty {
+                Button(L10n.editUsers, systemImage: "checkmark.circle") {
+                    isEditing = true
+                }
+            }
+
+            Divider()
+
+            Section(L10n.filters) {
+                Toggle(L10n.hidden, systemImage: "eye.slash", isOn: $isHiddenFilterActive)
+                Toggle(L10n.disabled, systemImage: "person.slash", isOn: $isDisabledFilterActive)
+            }
+        }
+
+        .onChange(of: isDisabledFilterActive) {
+            viewModel.getUsers(
+                isHidden: isHiddenFilterActive,
+                isDisabled: isDisabledFilterActive
+            )
+        }
+        .onChange(of: isHiddenFilterActive) {
+            viewModel.getUsers(
+                isHidden: isHiddenFilterActive,
+                isDisabled: isDisabledFilterActive
+            )
+        }
+        .onFirstAppear {
+            viewModel.getUsers(isHidden: isHiddenFilterActive, isDisabled: isDisabledFilterActive)
+        }
+        .confirmationDialog(
+            L10n.delete,
+            isPresented: $isPresentingDeleteSelectionConfirmation,
+            titleVisibility: .visible
+        ) {
+            deleteSelectedUsersConfirmationActions
+        } message: {
+            Text(L10n.deleteSelectionUsersWarning)
+        }
+        .confirmationDialog(
+            L10n.delete,
+            isPresented: $isPresentingDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            deleteUserConfirmationActions
+        } message: {
+            Text(L10n.deleteUserWarning)
+        }
+        .alert(L10n.deleteUserFailed, isPresented: $isPresentingSelfDeleteError) {
+            Button(L10n.ok, role: .cancel) {}
+        } message: {
+            Text(L10n.deleteUserSelfDeletion(viewModel.userSession?.user.username ?? ""))
+        }
+        .onNotification(.didAddServerUser) { newUser in
+            viewModel.appendUser(newUser)
+            router.route(to: .userDetails(user: newUser))
+        }
+    }
+
+    // MARK: - User List View
+
+    private var userListView: some View {
+        List {
+            InsetGroupedListHeader(
+                L10n.users,
+                description: L10n.allUsersDescription
+            ) {
+                UIApplication.shared.open(.jellyfinDocsUsers)
+            }
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+            .padding(.vertical, 24)
+
+            if viewModel.users.isEmpty {
+                Text(L10n.none)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                    .listRowSeparator(.hidden)
+                    .listRowInsets(.zero)
+            } else {
+                ForEach(viewModel.users, id: \.self) { user in
+                    if let userID = user.id {
+                        ServerUsersRow(user: user) {
+                            if isEditing {
+                                selectedUsers.toggle(value: userID)
+                            } else {
+                                router.route(to: .userDetails(user: user))
+                            }
+                        } onDelete: {
+                            selectedUsers.removeAll()
+                            selectedUsers.insert(userID)
+                            isPresentingDeleteConfirmation = true
+                        }
+                        .isEditing(isEditing)
+                        .isSelected(selectedUsers.contains(userID))
+                        .listRowInsets(viewLayout.edgeInsets)
+                    }
+                }
+            }
+        }
+        .listStyle(.plain)
+    }
+
+    // MARK: - Navigation Bar Select/Remove All Content
+
+    @ViewBuilder
+    private var navigationBarSelectView: some View {
+
+        let isAllSelected: Bool = selectedUsers.count == viewModel.users.count
+
+        Button(isAllSelected ? L10n.removeAll : L10n.selectAll) {
+            if isAllSelected {
+                selectedUsers = []
+            } else {
+                selectedUsers = Set(viewModel.users.compactMap(\.id))
+            }
+        }
+        .foregroundStyle(.primary, .secondary)
+        .if(true) { view in
+            if #available(iOS 26.0, *) {
+                view
+            } else {
+                view
+                    .backport
+                    .buttonStyle(.glass)
+            }
+        }
+        .controlSize(.small)
+        .enabled(isEditing)
+    }
+
+    // MARK: - Delete Selected Users Confirmation Actions
+
+    @ViewBuilder
+    private var deleteSelectedUsersConfirmationActions: some View {
+        Button(L10n.cancel, role: .cancel) {}
+
+        Button(L10n.confirm, role: .destructive) {
+            viewModel.deleteUsers(Array(selectedUsers))
+            isEditing = false
+            selectedUsers.removeAll()
+        }
+    }
+
+    // MARK: - Delete User Confirmation Actions
+
+    @ViewBuilder
+    private var deleteUserConfirmationActions: some View {
+        Button(L10n.cancel, role: .cancel) {}
+
+        Button(L10n.delete, role: .destructive) {
+            if let userToDelete = selectedUsers.first, selectedUsers.count == 1 {
+                if userToDelete == viewModel.userSession?.user.id {
+                    isPresentingSelfDeleteError = true
+                } else {
+                    viewModel.deleteUsers([userToDelete])
+                    selectedUsers.removeAll()
+                }
+            }
+        }
+    }
+}

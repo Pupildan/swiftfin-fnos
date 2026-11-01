@@ -1,0 +1,71 @@
+name: Build tvOS
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build-tvos:
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      # SwiftfinMacros 是本地宏包，CI 环境跳过宏指纹校验
+      - name: Allow macros on CI
+        run: defaults write com.apple.dt.Xcode IDESkipMacroFingerprintValidation -bool YES
+
+      - name: Resolve dependencies
+        working-directory: swiftfin-fnos
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project Swiftfin.xcodeproj \
+            -scheme "Swiftfin tvOS"
+
+      # 未签名编译：CODE_SIGNING_ALLOWED=NO 跳过证书/描述文件
+      # 出包后可由付费开发者账号重签名，或供 Xcode 免费签名真机调试流程使用
+      - name: Build (unsigned)
+        working-directory: swiftfin-fnos
+        run: |
+          xcodebuild \
+            -project Swiftfin.xcodeproj \
+            -scheme "Swiftfin tvOS" \
+            -configuration Release \
+            -sdk appletvos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build | tail -40
+
+      - name: Package unsigned ipa
+        working-directory: swiftfin-fnos
+        run: |
+          APP=$(find build/Build/Products/Release-appletvos -maxdepth 1 -name "*.app" | head -1)
+          echo "Found app bundle: $APP"
+          mkdir -p ipa/Payload
+          cp -R "$APP" ipa/Payload/
+          cd ipa
+          zip -qry "../Swiftfin-FNOS-tvos-unsigned.ipa" Payload
+          cd ..
+          ls -lh Swiftfin-FNOS-tvos-unsigned.ipa
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Swiftfin-FNOS-tvos-unsigned
+          path: swiftfin-fnos/Swiftfin-FNOS-tvos-unsigned.ipa
+          retention-days: 30
+
+      # 如需在 CI 直接出「已签名 ipa」（需要付费开发者账号）：
+      # 1. 在仓库 Settings → Secrets 添加：
+      #    BUILD_CERTIFICATE_BASE64 / P12_PASSWORD
+      #    PROVISIONING_PROFILE_BASE64（tvOS 通配或指定 App ID）
+      #    KEYCHAIN_PASSWORD / EXPORT_OPTIONS_PLIST_BASE64
+      # 2. 在上面 Package 步骤前插入：导入证书到临时钥匙串 →
+      #    xcodebuild -exportArchive -exportOptionsPlist ExportOptions.plist
+      # 参考 fastlane match 或 apple-actions/import-codesign-certs。

@@ -1,0 +1,171 @@
+//
+// Swiftfin is subject to the terms of the Mozilla Public
+// License, v2.0. If a copy of the MPL was not distributed with this
+// file, you can obtain one at https://mozilla.org/MPL/2.0/.
+//
+// Copyright (c) 2026 Jellyfin & Jellyfin Contributors
+//
+
+import CollectionVGrid
+import JellyfinAPI
+import SwiftUI
+
+// TODO: WebSocket
+struct ServerActivityView: View {
+
+    @AdaptiveLayout
+    private var viewLayout
+
+    @Router
+    private var router
+
+    @StateObject
+    private var usersViewModel = PagingLibraryViewModel(library: ServerUsersLibrary())
+    @StateObject
+    private var viewModel = PagingLibraryViewModel(library: ServerActivityLibrary())
+
+    // MARK: - Body
+
+    var body: some View {
+        ZStack {
+            switch viewModel.state {
+            case .content:
+                contentView
+            case .error:
+                viewModel.error.map(ErrorView.init)
+            case .initial, .refreshing:
+                ProgressView()
+            }
+        }
+        .animation(.linear(duration: 0.2), value: viewModel.state)
+        .navigationTitle(L10n.activity)
+        .toolbarTitleDisplayMode(.inline)
+        .refreshable {
+            await usersViewModel.refresh()
+            await viewModel.refresh()
+        }
+        .topBarTrailing {
+            if viewModel.background.is(.gettingNextPage) {
+                ProgressView()
+            }
+
+            let systemImage = if #available(iOS 26, *) {
+                "line.3.horizontal.decrease"
+            } else {
+                "line.3.horizontal.decrease.circle"
+            }
+
+            Menu(
+                L10n.filters,
+                systemImage: systemImage
+            ) {
+                startDateButton
+                userFilterButton
+            }
+        }
+        .onFirstAppear {
+            Task {
+                await usersViewModel.refresh()
+                await viewModel.refresh()
+            }
+        }
+        .onChange(of: viewModel.environment) {
+            viewModel.refresh()
+        }
+    }
+
+    // MARK: - Content View
+
+    @ViewBuilder
+    private var contentView: some View {
+        if viewModel.elements.isEmpty {
+            Text(L10n.none)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                .listRowSeparator(.hidden)
+                .listRowInsets(.zero)
+        } else {
+            CollectionVGrid(
+                uniqueElements: viewModel.elements,
+                layout: .columns(
+                    1,
+                    itemSpacing: viewLayout.itemSpacing,
+                    lineSpacing: viewLayout.itemSpacing
+                )
+            ) { log in
+
+                let user = usersViewModel.elements.first(
+                    property: \.id,
+                    equalTo: log.userID
+                )
+
+                let logViewModel = ServerActivityDetailViewModel(
+                    log: log,
+                    user: user
+                )
+
+                LogEntry(viewModel: logViewModel) {
+                    router.route(to: .activityDetails(viewModel: logViewModel))
+                }
+            }
+            .onReachedBottomEdge(offset: .offset(300)) {
+                viewModel.getNextPage()
+            }
+            .frame(maxWidth: .infinity)
+            .ignoresSafeArea(edges: .vertical)
+        }
+    }
+
+    // MARK: - User Filter Button
+
+    private var userFilterButton: some View {
+        Picker(selection: $viewModel.environment.hasUserID) {
+            Label(
+                L10n.all,
+                systemImage: "line.3.horizontal"
+            )
+            .tag(nil as Bool?)
+
+            Label(
+                L10n.users,
+                systemImage: "person"
+            )
+            .tag(true as Bool?)
+
+            Label(
+                L10n.system,
+                systemImage: "gearshape"
+            )
+            .tag(false as Bool?)
+        } label: {
+            Text(L10n.type)
+
+            if let hasUserID = viewModel.environment.hasUserID {
+                Text(hasUserID ? L10n.users : L10n.system)
+                Image(systemName: hasUserID ? "person" : "gearshape")
+
+            } else {
+                Text(L10n.all)
+                Image(systemName: "line.3.horizontal")
+            }
+        }
+        .pickerStyle(.menu)
+    }
+
+    // MARK: - Start Date Button
+
+    private var startDateButton: some View {
+        Button {
+            router.route(to: .activityFilters(environment: $viewModel.environment))
+        } label: {
+            Text(L10n.startDate)
+
+            if let startDate = viewModel.environment.minDate {
+                Text(startDate.formatted(date: .numeric, time: .omitted))
+            } else {
+                Text(verbatim: .emptyDash)
+            }
+
+            Image(systemName: "calendar")
+        }
+    }
+}

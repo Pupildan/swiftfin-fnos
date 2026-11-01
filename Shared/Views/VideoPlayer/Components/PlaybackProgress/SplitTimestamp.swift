@@ -1,0 +1,189 @@
+//
+// Swiftfin is subject to the terms of the Mozilla Public
+// License, v2.0. If a copy of the MPL was not distributed with this
+// file, you can obtain one at https://mozilla.org/MPL/2.0/.
+//
+// Copyright (c) 2026 Jellyfin & Jellyfin Contributors
+//
+
+import Defaults
+import SwiftUI
+
+extension VideoPlayer.PlaybackControls {
+
+    struct SplitTimeStamp: PresentationView {
+
+        @AdaptiveLayout
+        private var viewLayout
+
+        @Default(.VideoPlayer.Overlay.trailingTimestampType)
+        private var trailingTimestampType
+
+        @Environment(ViewState.self)
+        private var viewState
+        @Environment(MediaSession.self)
+        private var mediaSession
+
+        @State
+        private var contentSize: CGSize = .zero
+        @State
+        private var leadingTimestampSize: CGSize = .zero
+        @State
+        private var trailingTimestampSize: CGSize = .zero
+
+        private let statusIndicatorSize: CGFloat = 22
+
+        private var scrubbedProgress: Double {
+            guard let runtime = mediaSession.item.runtime, runtime > .zero else { return 0 }
+
+            return scrubbedSeconds / runtime
+        }
+
+        private var previewXOffset: CGFloat {
+            let p = contentSize.width * scrubbedProgress - (leadingTimestampSize.width / 2)
+
+            return clamp(p, min: 0, max: contentSize.width - leadingTimestampSize.width)
+        }
+
+        private var shouldHideTrailingTimestamp: Bool {
+            let leadingTimestampMaxX = previewXOffset + leadingTimestampSize.width
+            let trailingTimestampMinX = contentSize.width - trailingTimestampSize.width
+
+            return leadingTimestampMaxX >= trailingTimestampMinX
+        }
+
+        private var isScrubbing: Bool {
+            viewState.isScrubbing
+        }
+
+        private var scrubbedSeconds: Duration {
+            viewState.scrubbedSeconds
+        }
+
+        @ViewBuilder
+        private var playbackStatusIndicator: some View {
+            if mediaSession.activity == .loading || mediaSession.playbackState.isBuffering {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .tint(.primary)
+                    .visualEffect { content, geometry in
+                        content.scaleEffect(statusIndicatorSize / max(geometry.size.width, 1))
+                    }
+                    .frame(width: statusIndicatorSize, height: statusIndicatorSize)
+                    .accessibilityLabel(mediaSession.activity == .loading ? L10n.playerLoading : L10n.playerBuffering)
+            } else if mediaSession.playbackRequestStatus == .paused {
+                Image(systemName: "pause.circle")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: statusIndicatorSize, height: statusIndicatorSize)
+                    .accessibilityLabel(L10n.pause)
+            }
+        }
+
+        private var leadingTimestamp: some View {
+            HStack(spacing: 2) {
+
+                Text(scrubbedSeconds, format: .runtime)
+
+                Group {
+                    // swiftlint:disable:next hard_coded_display_string
+                    Text("/")
+
+                    Text(mediaSession.seconds, format: .runtime)
+                }
+                .foregroundStyle(.secondary)
+                .isVisible(isScrubbing)
+            }
+        }
+
+        private var trailingTimestamp: some View {
+            HStack(spacing: 2) {
+                Group {
+                    if let runtime = mediaSession.item.runtime {
+                        Text(runtime - mediaSession.seconds, format: .runtime)
+                    } else {
+                        Text(verbatim: .emptyRuntime)
+                    }
+
+                    // swiftlint:disable:next hard_coded_display_string
+                    Text("/")
+                }
+                .foregroundStyle(.secondary)
+                .isVisible(isScrubbing)
+
+                if let runtime = mediaSession.item.runtime {
+                    switch trailingTimestampType {
+                    case .timeLeft:
+                        Text(.zero - (runtime - scrubbedSeconds), format: .runtime)
+                    case .totalTime:
+                        Text(runtime, format: .runtime)
+                    }
+                } else {
+                    Text(verbatim: .emptyRuntime)
+                }
+            }
+        }
+
+        var standardView: some View {
+            HStack {
+                Button {
+                    switch trailingTimestampType {
+                    case .timeLeft:
+                        trailingTimestampType = .totalTime
+                    case .totalTime:
+                        trailingTimestampType = .timeLeft
+                    }
+                } label: {
+                    leadingTimestamp
+                }
+                .foregroundStyle(.primary, .secondary)
+
+                Spacer()
+
+                Button {
+                    switch trailingTimestampType {
+                    case .timeLeft:
+                        trailingTimestampType = .totalTime
+                    case .totalTime:
+                        trailingTimestampType = .timeLeft
+                    }
+                } label: {
+                    trailingTimestamp
+                }
+                .foregroundStyle(.primary, .secondary)
+            }
+            .font(.caption2)
+            .monospacedDigit()
+            .lineLimit(1)
+            .foregroundStyle(isScrubbing ? .primary : .secondary, .secondary)
+        }
+
+        var largeView: some View {
+            ZStack {
+                if let runtime = mediaSession.item.runtime {
+                    Text(.zero - (runtime - scrubbedSeconds), format: .runtime)
+                } else {
+                    Text(verbatim: .emptyRuntime)
+                }
+            }
+            .opacity(shouldHideTrailingTimestamp ? 0 : 1)
+            .animation(.linear(duration: 0.1), value: shouldHideTrailingTimestamp)
+            .trackingSize($trailingTimestampSize)
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .overlay(alignment: .leading) {
+                HStack(spacing: 8) {
+                    playbackStatusIndicator
+                    Text(scrubbedSeconds, format: .runtime)
+                }
+                .trackingSize($leadingTimestampSize)
+                .offset(x: previewXOffset)
+            }
+            .font(.caption)
+            .fontWeight(viewLayout.value(standard: nil, large: .medium))
+            .monospacedDigit()
+            .trackingSize($contentSize)
+            .foregroundStyle(viewState.isProgressBarFocused ? .primary : .secondary)
+            .opacity(viewState.isProgressBarFocused ? 1 : 0.7)
+        }
+    }
+}

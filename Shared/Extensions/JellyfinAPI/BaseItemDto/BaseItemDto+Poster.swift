@@ -1,0 +1,286 @@
+//
+// Swiftfin is subject to the terms of the Mozilla Public
+// License, v2.0. If a copy of the MPL was not distributed with this
+// file, you can obtain one at https://mozilla.org/MPL/2.0/.
+//
+// Copyright (c) 2026 Jellyfin & Jellyfin Contributors
+//
+
+import Algorithms
+import FactoryKit
+import Foundation
+import Get
+import JellyfinAPI
+import SwiftUI
+
+extension BaseItemDto: Poster {
+
+    struct Environment: WithDefaultValue, WithImageSourceOptions, WithViewContext {
+
+        var maxWidth: CGFloat?
+        var maxHeight: CGFloat?
+        var quality: Int?
+        var useParent: Bool = false
+        var viewContext: ViewContext = .init()
+
+        static var `default`: Self {
+            .init()
+        }
+    }
+
+    func resolveEnvironment(_ environment: EnvironmentValues) -> Environment {
+        let viewContext = environment.viewContext
+
+        return .init(
+            useParent: viewContext.contains(.isThumb) && environment.posterConfiguration.useSeriesLandscapeBackdrop,
+            viewContext: viewContext
+        )
+    }
+
+    var preferredPosterDisplayType: PosterDisplayType {
+        type?.preferredPosterDisplayType ?? .portrait
+    }
+
+    var subtitle: String? {
+        switch type {
+        case .episode:
+            seasonEpisodeLabel
+        case .person:
+            people?.first?.displayRole
+        case .video:
+            extraType?.displayTitle
+        default:
+            nil
+        }
+    }
+
+    var systemImage: String {
+        switch type {
+        case .audio, .musicAlbum:
+            "music.note"
+        case .boxSet:
+            "film.stack"
+        case .channel, .tvChannel, .liveTvChannel, .program:
+            "tv"
+        case .episode, .movie, .season, .series, .video:
+            "film"
+        case .collectionFolder, .folder, .userView:
+            "folder.fill"
+        case .musicVideo:
+            "music.note.tv.fill"
+        case .person:
+            "person.fill"
+        default:
+            "circle"
+        }
+    }
+
+    var posterLabel: some View {
+        BaseItemDtoPosterLabel(item: self)
+    }
+
+    var posterContextMenu: some View {
+        BaseItemDtoPosterContextMenu(item: self)
+    }
+
+    func posterOverlay(for displayType: PosterDisplayType) -> some View {
+        ZStack {
+            PosterIndicatorsOverlay(
+                item: self,
+                posterDisplayType: displayType
+            )
+
+            PosterSelectionOverlay()
+        }
+    }
+
+    func imageSources(
+        for displayType: PosterDisplayType,
+        environment: Environment
+    ) -> [ImageSource] {
+        @ImageSourceBuilder
+        var sources: [ImageSource] {
+            let isLandscape = displayType == .landscape
+            let preferThumb = isLandscape && environment.viewContext.contains(.isThumb)
+            let inheritLandscape = !isLandscape || type != .episode || environment.useParent
+            let isProgram = type == .program || type == .liveTvProgram || type == .tvProgram
+
+            if isLandscape, environment.viewContext.contains(.isBackdrop) {
+                if type == .episode {
+                    imageSource(.backdrop, itemID: parentBackdropItemID, tag: parentBackdropImageTags?.first, environment: environment)
+                }
+
+                imageSource(.backdrop, itemID: id, environment: environment)
+            }
+
+            // Program squares represent the channel in the guide.
+            if displayType == .square, isProgram {
+                imageSource(.primary, itemID: channelID, tag: channelPrimaryImageTag, environment: environment)
+            }
+
+            if preferThumb {
+                imageSource(.thumb, itemID: id, environment: environment)
+
+                if inheritLandscape {
+                    imageSource(.thumb, itemID: seriesID, tag: seriesThumbImageTag, environment: environment)
+                    imageSource(.thumb, itemID: parentThumbItemID, tag: parentThumbImageTag, environment: environment)
+                }
+            }
+
+            if isLandscape {
+                let preferPrimary: Bool = if let primaryImageAspectRatio, primaryImageAspectRatio > 0 {
+                    primaryImageAspectRatio >= 1.33
+                } else {
+                    switch type {
+                    case .collectionFolder, .episode, .folder, .musicVideo, .userView, .video:
+                        true
+                    default:
+                        false
+                    }
+                }
+
+                if preferThumb || !preferPrimary {
+                    imageSource(.backdrop, itemID: id, environment: environment)
+                }
+
+                if type == .season || (type == .episode && environment.useParent) {
+                    imageSource(.backdrop, itemID: parentBackdropItemID, tag: parentBackdropImageTags?.first, environment: environment)
+                }
+            } else if type == .episode {
+                // A portrait episode card uses its season/series poster when available.
+                imageSource(.primary, itemID: parentPrimaryImageItemID, tag: parentPrimaryImageTag, environment: environment)
+                imageSource(.primary, itemID: seriesID, tag: seriesPrimaryImageTag, environment: environment)
+            }
+
+            imageSource(.primary, itemID: id, environment: environment)
+
+            // Never substitute a parent portrait for an episode's landscape still.
+            if type != .episode || !isLandscape {
+                imageSource(.primary, itemID: seriesID, tag: seriesPrimaryImageTag, environment: environment)
+                imageSource(.primary, itemID: parentPrimaryImageItemID, tag: parentPrimaryImageTag, environment: environment)
+            }
+
+            imageSource(.primary, itemID: albumID, tag: albumPrimaryImageTag, environment: environment)
+
+            if type == .season {
+                imageSource(.thumb, itemID: id, environment: environment)
+            }
+
+            imageSource(.backdrop, itemID: id, environment: environment)
+            imageSource(.thumb, itemID: id, environment: environment)
+
+            if inheritLandscape {
+                imageSource(.thumb, itemID: seriesID, tag: seriesThumbImageTag, environment: environment)
+                imageSource(.thumb, itemID: parentThumbItemID, tag: parentThumbImageTag, environment: environment)
+                imageSource(.backdrop, itemID: parentBackdropItemID, tag: parentBackdropImageTags?.first, environment: environment)
+            }
+
+            if isProgram {
+                imageSource(.primary, itemID: channelID, tag: channelPrimaryImageTag, environment: environment)
+            }
+        }
+
+        return Array(sources.uniqued())
+    }
+
+    @ViewBuilder
+    func transform(image: Image, displayType: PosterDisplayType) -> some View {
+        switch type {
+        case .channel, .tvChannel:
+            ContainerRelativeView(ratio: 0.95) {
+                image
+                    .aspectRatio(contentMode: .fit)
+            }
+
+        case .program:
+            if displayType == .square {
+                ContainerRelativeView(ratio: 0.95) {
+                    image
+                        .aspectRatio(contentMode: .fit)
+                }
+            } else {
+                image
+                    .aspectRatio(contentMode: .fill)
+            }
+
+        default:
+            image
+                .aspectRatio(contentMode: .fill)
+        }
+    }
+}
+
+private struct BaseItemDtoPosterContextMenu: View {
+
+    @Router
+    private var router
+
+    @SharedBaseItem
+    private var item: BaseItemDto
+
+    init(item: BaseItemDto) {
+        self.item = item
+    }
+
+    private var isFavorite: Bool {
+        item.userData?.isFavorite == true
+    }
+
+    private var isPlayed: Bool {
+        item.userData?.isPlayed == true
+    }
+
+    var body: some View {
+        if let itemID = item.id {
+            Button(L10n.goToItem, systemImage: "info.circle") {
+                router.route(to: .item(id: itemID))
+            }
+        }
+
+        if item.type == .episode, let seriesID = item.seriesID {
+            Button(L10n.goToSeries, systemImage: "tv") {
+                router.route(to: .item(id: seriesID))
+            }
+        }
+
+        ShuffleButton(item: item)
+
+        if item.canBePlayed {
+            Button(isPlayed ? L10n.markAsUnplayed : L10n.markAsPlayed, systemImage: isPlayed ? "circle" : "checkmark.circle") {
+                Task {
+                    await toggleIsPlayed()
+                }
+            }
+        }
+
+        if item.id != nil {
+            Button(isFavorite ? L10n.removeFromFavorites : L10n.addToFavorites, systemImage: isFavorite ? "heart.slash" : "heart") {
+                Task {
+                    await toggleIsFavorite()
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func toggleIsPlayed() async {
+        guard let session = Container.shared.currentUserSession() else { return }
+
+        do {
+            try await session.setPlayed($item, to: !isPlayed)
+        } catch {
+            session.itemActionErrors.send(error)
+        }
+    }
+
+    @MainActor
+    private func toggleIsFavorite() async {
+        guard let session = Container.shared.currentUserSession() else { return }
+
+        do {
+            try await session.setFavorite($item, to: !isFavorite)
+        } catch {
+            session.itemActionErrors.send(error)
+        }
+    }
+}

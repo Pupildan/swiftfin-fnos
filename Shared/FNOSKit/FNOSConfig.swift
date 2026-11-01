@@ -33,7 +33,16 @@ public enum FNOSConfig {
         if !raw.hasPrefix("http://") && !raw.hasPrefix("https://") {
             raw = "http://" + raw
         }
-        if !raw.contains(":", range: raw.index(after: raw.startIndex)..<raw.endIndex) {
+        // 剥离 scheme 后再查端口冒号（"http://" 中的冒号不算数）
+        let afterScheme: Substring
+        if raw.hasPrefix("https://") {
+            afterScheme = raw.dropFirst(8)
+        } else if raw.hasPrefix("http://") {
+            afterScheme = raw.dropFirst(7)
+        } else {
+            afterScheme = raw[...]
+        }
+        if !afterScheme.contains(":") {
             raw += ":\(defaultPort)"
         }
         if !raw.hasSuffix("/") { raw += "/" }

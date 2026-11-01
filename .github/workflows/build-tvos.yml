@@ -7,10 +7,14 @@ on:
 
 jobs:
   build-tvos:
-    runs-on: macos-26
+    runs-on: macos-14
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # 强制使用 Xcode 15.4（Swift 5.10 工具链）
+      - name: Force Xcode 15.4
+        run: sudo xcode-select -s /Applications/Xcode_15.4.app
 
       - name: Show Xcode version
         run: xcodebuild -version
@@ -19,40 +23,17 @@ jobs:
       - name: Allow macros on CI
         run: defaults write com.apple.dt.Xcode IDESkipMacroFingerprintValidation -bool YES
 
+      # 依赖按 Package.resolved 锁定的精确版本解析，禁止升级
       - name: Resolve dependencies
         working-directory: .
         run: |
+          set -o pipefail
           xcodebuild -resolvePackageDependencies \
             -project Swiftfin.xcodeproj \
             -scheme "Swiftfin tvOS" \
-            -derivedDataPath build
-
-      # 上游两个包在 Xcode 26 (Swift 6.2) 下有未修复的编译错误，resolve 后就地打最小补丁
-      - name: Patch upstream packages
-        working-directory: .
-        run: |
-          SP=build/SourcePackages/checkouts
-          # Engine: Swift 6.2 要求 existential 元类型显式转换
-          ENGINE=$SP/Engine/Sources/EngineCore/Runtime.swift
-          if [ -f "$ENGINE" ]; then
-            sed -i '' 's/swift_getFieldValue(field.key, field.type, instance)/swift_getFieldValue(field.key, field.type as (any Any).Type, instance)/' "$ENGINE"
-            grep -q "any Any).Type" "$ENGINE" || { echo "::error::Engine patch failed"; exit 1; }
-            echo "Engine patched"
-          else
-            echo "Engine not in graph, skip"
-          fi
-          # MediaAccessibilityKit: region-isolation 误报，标注 nonisolated(unsafe)
-          MAK=$SP/MediaAccessibilityKit/Sources/MediaAccessibilityKit/PreferenceUpdates.swift
-          if [ -f "$MAK" ]; then
-            sed -i '' 's/^        let observation = Mutex/nonisolated(unsafe) let observation = Mutex/' "$MAK"
-            grep -q "nonisolated(unsafe) let observation" "$MAK" || { echo "::error::MAK patch failed"; exit 1; }
-            echo "MediaAccessibilityKit patched"
-          else
-            echo "MediaAccessibilityKit not in graph, skip"
-          fi
+            -derivedDataPath build | tail -40
 
       # 未签名编译：CODE_SIGNING_ALLOWED=NO 跳过证书/描述文件
-      # 出包后可由付费开发者账号重签名，或供 Xcode 免费签名真机调试流程使用
       - name: Build (unsigned)
         working-directory: .
         run: |
@@ -64,6 +45,7 @@ jobs:
             -sdk appletvos \
             -derivedDataPath build \
             -disableAutomaticPackageResolution \
+            SWIFT_VERSION=5.0 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \

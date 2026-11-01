@@ -239,21 +239,28 @@ struct FNOSPlayerContainerView: View {
             print("FNOSℹ️滑动手势已挂载")
 
             FNOSPanBridge.shared.onPan = { gesture in
+                // 门控：只有进度条聚焦时滑动才拖进度，否则转盘滑动用于移动焦点
                 switch gesture.state {
                 case .began:
-                    revealControls()
+                    if focus == .scrubber {
+                        scrubActive = true
+                        scrubValue = Double(coordinator.timemodel.currentTime)
+                    } else if !controlsVisible {
+                        revealControls()
+                    }
                 case .changed:
+                    guard focus == .scrubber, scrubActive else { return }
                     let translation = gesture.translation(in: gesture.view)
                     gesture.setTranslation(.zero, in: gesture.view)
                     // 滑动灵敏度：1px ≈ 0.2s（转盘快速滚动可快速拖动）
                     let delta = Double(translation.x) * 0.2
                     let total = Double(max(coordinator.timemodel.totalTime, 1))
-                    let base = scrubActive ? scrubValue : Double(coordinator.timemodel.currentTime)
-                    scrubActive = true
-                    scrubValue = min(max(base + delta, 0), total)
+                    scrubValue = min(max(scrubValue + delta, 0), total)
                     scheduleScrubCommit()
                 case .ended, .cancelled:
-                    commitScrubIfNeeded()
+                    if focus == .scrubber {
+                        commitScrubIfNeeded()
+                    }
                 default:
                     break
                 }
@@ -365,6 +372,7 @@ struct FNOSPlayerContainerView: View {
         .frame(height: 28)
         .focusable(true)
         .focused($focus, equals: .scrubber)
+        .focusEffectDisabled()
         .onMoveCommand { direction in
             switch direction {
             case .left:
@@ -386,6 +394,7 @@ struct FNOSPlayerContainerView: View {
         }
         .buttonStyle(.plain)
         .focused($focus, equals: control)
+        .focusEffectDisabled()
     }
 
     /// 倍速按钮：0.5 → 1.0 → 1.5 → 2.0 循环
@@ -400,6 +409,7 @@ struct FNOSPlayerContainerView: View {
         }
         .buttonStyle(.plain)
         .focused($focus, equals: .rate)
+        .focusEffectDisabled()
     }
 
     private func cycleRate() {

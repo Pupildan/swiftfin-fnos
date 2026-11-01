@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v15"
+    static let version = "v16"
 
     /// 本版主要变更摘要
-    static let changes = "圆形液态玻璃选中背景/主按钮居中/倍速0.5-2.0/转盘滑动拖进度"
+    static let changes = "修复选中白框与进度误动，弹幕渲染改位图缓存消除卡顿"
 }

@@ -9,6 +9,7 @@
 import AVFoundation
 import Combine
 import SwiftUI
+import UIKit
 
 // MARK: - 弹幕数据模型
 
@@ -377,22 +378,59 @@ struct FNOSDanmuView: View {
         }
     }
 
-    /// 黑色描边打底 + 彩色正文，保证任意背景可读
+    /// 黑色描边打底 + 彩色正文，预渲染成 UIImage 缓存（每帧只贴图，消除卡顿）
     private func drawText(
         _ context: inout GraphicsContext,
         text: String,
         color: Color,
         center: CGPoint
     ) {
-        let shadow = Text(text)
-            .font(.system(size: fontSize, weight: .medium))
-            .foregroundColor(.black.opacity(0.85))
-        context.draw(shadow, at: CGPoint(x: center.x + 1.5, y: center.y + 1.5))
+        let image = cachedImage(for: text, color: color)
+        let origin = CGPoint(x: center.x - image.size.width / 2, y: center.y - image.size.height / 2)
+        context.draw(Image(uiImage: image), in: CGRect(origin: origin, size: image.size))
+    }
 
-        let body = Text(text)
-            .font(.system(size: fontSize, weight: .medium))
-            .foregroundColor(color)
-        context.draw(body, at: center)
+    private static let textImageCache: NSCache<NSString, UIImage> = {
+        let cache = NSCache<NSString, UIImage>()
+        cache.countLimit = 600
+        return cache
+    }()
+
+    private func cachedImage(for text: String, color: Color) -> UIImage {
+        var r: CGFloat = 1, g: CGFloat = 1, b: CGFloat = 1, a: CGFloat = 1
+        UIColor(color).getRed(&r, green: &g, blue: &b, alpha: &a)
+        let key = ("\(text)#\(Int(fontSize))#\(Int(r * 255)),\(Int(g * 255)),\(Int(b * 255))") as NSString
+        if let cached = Self.textImageCache.object(forKey: key) {
+            return cached
+        }
+
+        let scale = UIScreen.main.scale
+        let font = UIFont.systemFont(ofSize: CGFloat(fontSize), weight: .medium)
+        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor(color)]
+        let textSize = (text as NSString).size(withAttributes: attrs)
+        let pad = ceil(font.lineHeight * 0.2)
+        let size = CGSize(width: ceil(textSize.width) + pad * 2, height: ceil(textSize.height) + pad * 2)
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = scale
+        let renderer = UIGraphicsImageRenderer(size: size, format: format)
+        let image = renderer.image { rendererContext in
+            let origin = CGPoint(x: pad, y: pad)
+            // 黑色描边打底（四向偏移），保证任意背景可读
+            let strokeAttrs: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: UIColor.black.withAlphaComponent(0.85),
+            ]
+            let offsets = [CGPoint(x: -1.5, y: 0), CGPoint(x: 1.5, y: 0),
+                           CGPoint(x: 0, y: -1.5), CGPoint(x: 0, y: 1.5),
+                           CGPoint(x: 1.2, y: 1.2)]
+            for offset in offsets {
+                (text as NSString).draw(at: CGPoint(x: origin.x + offset.x, y: origin.y + offset.y), withAttributes: strokeAttrs)
+            }
+            (text as NSString).draw(at: origin, withAttributes: attrs)
+        }
+        Self.textImageCache.setObject(image, forKey: key)
+        return image
     }
 
     /// CJK 全角估算：每字符 ≈ 1.0 倍字号

@@ -46,6 +46,7 @@ struct FNOSMainView: View {
 
     @State private var playbackTarget: FNOSPlaybackTarget?
     @State private var seriesItem: FNOSItem?
+    @State private var detailItem: FNOSItem?
 
     private let cardWidth: CGFloat = 240
 
@@ -74,6 +75,22 @@ struct FNOSMainView: View {
                 userID: userID,
                 onPlay: { episode in
                     openPlayback(item: episode)
+                }
+            )
+        }
+        .fullScreenCover(item: $detailItem) { detail in
+            FNOSItemDetailView(
+                item: detail,
+                client: client ?? FNOSDirectClient(baseURL: URL(string: "http://localhost")!, token: ""),
+                userID: userID,
+                onPlay: { played in
+                    openPlayback(item: played)
+                },
+                onEpisodes: { series in
+                    detailItem = nil
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                        seriesItem = series
+                    }
                 }
             )
         }
@@ -194,11 +211,7 @@ struct FNOSMainView: View {
     // MARK: - 导航
 
     private func open(item: FNOSItem) {
-        if item.type == "Series" {
-            seriesItem = item
-        } else {
-            openPlayback(item: item)
-        }
+        detailItem = item
     }
 
     private func openPlayback(item: FNOSItem) {
@@ -311,6 +324,8 @@ fileprivate struct FNOSItemCard: View {
 
     let item: FNOSItem
     let client: FNOSDirectClient?
+    var aspect: CGFloat = 2 / 3
+    var cornerRadius: CGFloat = 12
 
     var body: some View {
         VStack(spacing: 8) {
@@ -321,8 +336,8 @@ fileprivate struct FNOSItemCard: View {
                 ),
                 headers: client?.mediaHeaders ?? [:]
             )
-            .aspectRatio(2 / 3, contentMode: .fit)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .aspectRatio(aspect, contentMode: .fit)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
 
             Text(item.Name ?? "未命名")
                 .font(.headline)
@@ -341,7 +356,7 @@ fileprivate struct FNOSItemCard: View {
 
 // MARK: - 剧集选择（Seasons → Episodes，端点均已实测）
 
-fileprivate struct FNOSSeasonsSheet: View {
+struct FNOSSeasonsSheet: View {
 
     let series: FNOSItem
     let client: FNOSDirectClient?
@@ -384,12 +399,13 @@ fileprivate struct FNOSSeasonsSheet: View {
                                     .padding(.horizontal, 16)
                                     .padding(.vertical, 8)
                             }
+                            .foregroundStyle(selectedSeasonID == season.Id ? .black : .white)
                             .background(
                                 selectedSeasonID == season.Id
-                                    ? Color.accentColor
-                                    : Color.white.opacity(0.12)
+                                    ? Color.white
+                                    : Color.white.opacity(0.12),
+                                in: Capsule()
                             )
-                            .cornerRadius(8)
                         }
                     }
                 }
@@ -407,7 +423,7 @@ fileprivate struct FNOSSeasonsSheet: View {
                                 onPlay(episode)
                                 dismiss()
                             } label: {
-                                FNOSItemCard(item: episode, client: client)
+                                FNOSItemCard(item: episode, client: client, aspect: 16 / 9)
                             }
                             #if os(tvOS)
                                 .buttonStyle(.card)

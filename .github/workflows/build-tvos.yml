@@ -19,6 +19,16 @@ jobs:
       - name: Allow macros on CI
         run: defaults write com.apple.dt.Xcode IDESkipMacroFingerprintValidation -bool YES
 
+      # 缓存 DerivedData + SPM（两者都在 -derivedDataPath build 下）
+      # 键随 Package.resolved 变化；restore-keys 兜底增量恢复
+      - name: Restore build cache
+        uses: actions/cache/restore@v4
+        with:
+          path: build
+          key: tvos-build-${{ hashFiles('Swiftfin.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
+          restore-keys: |
+            tvos-build-
+
       # 依赖按 Package.resolved 锁定的精确版本解析，禁止升级
       - name: Resolve dependencies
         working-directory: .
@@ -27,9 +37,10 @@ jobs:
           xcodebuild -resolvePackageDependencies \
             -project Swiftfin.xcodeproj \
             -scheme "Swiftfin tvOS" \
-            -derivedDataPath build | tail -40
+            -derivedDataPath build
 
       # 未签名编译：CODE_SIGNING_ALLOWED=NO 跳过证书/描述文件
+      # -enable-batch-mode：批量化 Swift 编译，缩短全量编译时间
       - name: Build (unsigned)
         working-directory: .
         run: |
@@ -41,11 +52,12 @@ jobs:
             -sdk appletvos \
             -derivedDataPath build \
             -disableAutomaticPackageResolution \
+            -enable-batch-mode \
             SWIFT_VERSION=5.0 \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            build | tail -60
+            build
 
       - name: Package unsigned ipa
         working-directory: .
@@ -60,6 +72,14 @@ jobs:
           zip -qry "../Swiftfin-FNOS-tvos-unsigned.ipa" Payload
           cd ..
           ls -lh Swiftfin-FNOS-tvos-unsigned.ipa
+
+      # 失败也保存缓存：失败轮次里已编译的依赖/模块不浪费
+      - name: Save build cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: build
+          key: tvos-build-${{ hashFiles('Swiftfin.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved') }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

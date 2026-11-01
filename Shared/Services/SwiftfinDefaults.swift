@@ -302,6 +302,36 @@ extension Defaults.Keys {
             UserKey("videoPlayerType", default: .mpv)
         }
 
+        /// 弹幕（FNOSKit DanmakuEngine）相关偏好
+        enum Danmaku {
+
+            static var isVisible: Key<Bool> {
+                UserKey("danmakuVisible", default: true)
+            }
+
+            static var fontSize: Key<Double> {
+                UserKey("danmakuFontSize", default: 42)
+            }
+
+            static var scrollDuration: Key<Double> {
+                UserKey("danmakuScrollDuration", default: 11)
+            }
+
+            static var opacity: Key<Double> {
+                UserKey("danmakuOpacity", default: 1)
+            }
+
+            /// 弹幕服务地址（danmu_api），空 = 使用媒体服务器同主机 :9321
+            static var serviceURL: Key<String> {
+                UserKey("danmakuServiceURL", default: "")
+            }
+
+            /// danmu_api 访问密钥（部署时配置的 KEY）
+            static var apiKey: Key<String> {
+                UserKey("danmakuApiKey", default: "")
+            }
+        }
+
         enum Gesture {
 
             static var horizontalPanAction: Key<PanGestureAction> {

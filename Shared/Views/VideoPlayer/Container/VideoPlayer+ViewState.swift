@@ -110,7 +110,37 @@ extension VideoPlayer {
                 provider.overlayActions.map {
                     OverlayAction(id: .init(providerID: provider.id, actionID: $0.id), button: $0)
                 }
-            }
+            } + danmakuOverlayActions
+        }
+
+        /// 弹幕开关与设置（FNOSKit 弹幕）
+        private var danmakuOverlayActions: [OverlayAction] {
+            guard mediaSession?.playbackItem?.baseItem.isLiveStream != true else { return [] }
+
+            let model = danmakuModel
+
+            return [
+                OverlayAction(
+                    id: .init(providerID: "danmaku", actionID: "toggle"),
+                    button: VideoPlayerOverlayAction(
+                        id: "danmaku.toggle",
+                        title: model.isVisible ? "弹幕开" : "弹幕关",
+                        systemImage: model.isVisible ? "text.bubble.fill" : "text.bubble"
+                    ) {
+                        model.isVisible.toggle()
+                    }
+                ),
+                OverlayAction(
+                    id: .init(providerID: "danmaku", actionID: "settings"),
+                    button: VideoPlayerOverlayAction(
+                        id: "danmaku.settings",
+                        title: "弹幕设置",
+                        systemImage: "slider.horizontal.3"
+                    ) {
+                        presentGuestSupplement(DanmakuSettingsSupplement(model: model))
+                    }
+                ),
+            ]
         }
 
         var isPresentingOverlayActions: Bool {
@@ -366,6 +396,9 @@ extension VideoPlayer {
 
         let toastProxy: ToastProxy = .init()
 
+        /// 播放器弹幕会话（FNOSKit）
+        let danmakuModel = DanmakuModel()
+
         @ObservationIgnored
         weak var containerView: VideoPlayer.UIContainerViewController?
         private(set) weak var mediaSession: MediaSession?
@@ -479,6 +512,8 @@ extension VideoPlayer {
         func connect(mediaSession: MediaSession) {
             sessionObservations.removeAll()
             self.mediaSession = mediaSession
+            danmakuModel.attach(mediaSession: mediaSession)
+            danmakuModel.loadIfNeeded(for: mediaSession.playbackItem)
             var previousActivity: (MediaSession.Activity?, Bool)?
 
             let observations = [
@@ -486,6 +521,8 @@ extension VideoPlayer {
                     mediaSession?.playbackItem
                 } onChange: { [weak self] _ in
                     guard let self else { return }
+
+                    danmakuModel.loadIfNeeded(for: self.mediaSession?.playbackItem)
 
                     if let selectedSupplementID {
                         if supplements.contains(where: { $0.id == selectedSupplementID }) {

@@ -126,9 +126,10 @@ public struct DanmakuOverlay: UIViewRepresentable {
             coordinator.lastVisible = isVisible
             uiView.setVisible(isVisible)
         }
-        // 样式变化（字号/速度等）
+        // 样式变化（字号/速度/透明度等）
         if coordinator.lastStyle.fontSize != style.fontSize
-            || coordinator.lastStyle.scrollDuration != style.scrollDuration {
+            || coordinator.lastStyle.scrollDuration != style.scrollDuration
+            || coordinator.lastStyle.opacity != style.opacity {
             coordinator.lastStyle = style
             uiView.engine.updateStyle(style)
         }

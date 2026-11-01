@@ -91,6 +91,24 @@ extension VideoPlayer {
 
         // MARK: - Views
 
+        /// 弹幕层：CATextLayer 图层引擎，宿主视图 isUserInteractionEnabled=false，
+        /// 遥控器事件与焦点完全穿透（不参与 tvOS 焦点引擎）。
+        private struct DanmakuPlayerOverlay: View {
+
+            let viewState: ViewState
+
+            var body: some View {
+                if viewState.mediaSession != nil {
+                    DanmakuOverlay(
+                        player: viewState.danmakuModel.clock,
+                        timeline: viewState.danmakuModel.timeline,
+                        isVisible: viewState.danmakuModel.isVisible,
+                        style: viewState.danmakuModel.style
+                    )
+                }
+            }
+        }
+
         private struct PlayerContainerView: View {
 
             @Environment(ViewState.self)
@@ -106,6 +124,9 @@ extension VideoPlayer {
             var body: some View {
                 VideoViewport(videoSize: videoSize) { videoLayout in
                     player(videoLayout)
+                }
+                .overlay {
+                    DanmakuPlayerOverlay(viewState: viewState)
                 }
                 #if os(iOS)
                 .overlay(Color.black.opacity(shouldPresentDimOverlay ? 0.5 : 0.0))

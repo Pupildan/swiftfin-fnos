@@ -13,6 +13,14 @@ extension URLSessionConfiguration {
     /// A session configuration object built upon the default
     /// configuration with values for Swiftfin.
     static let swiftfin: URLSessionConfiguration = {
-        .default.mutating(\.timeoutIntervalForRequest, with: 20)
+        let configuration = URLSessionConfiguration.default
+            .mutating(\.timeoutIntervalForRequest, with: 20)
+
+        // 飞牛影视 8005 兼容层适配（鉴权头/参数改写/未实现端点兜底）
+        var protocolClasses = configuration.protocolClasses ?? []
+        protocolClasses.insert(FnOSCompatURLProtocol.self, at: 0)
+        configuration.protocolClasses = protocolClasses
+
+        return configuration
     }()
 }

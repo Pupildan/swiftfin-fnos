@@ -37,9 +37,12 @@ public final class DanmuAPIService {
     private let baseURL: URL
     private let session: URLSession
     private let cache = NSCache<NSString, DanmakuTimeline>()
+    /// danmu_api 的访问密钥（部署时设置的 KEY，401 时必填）
+    private let apiKey: String?
 
-    public init(baseURL: URL) {
+    public init(baseURL: URL, apiKey: String? = nil) {
         self.baseURL = baseURL
+        self.apiKey = apiKey
         let config = URLSessionConfiguration.default
         config.timeoutIntervalForRequest = 15
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
@@ -47,9 +50,9 @@ public final class DanmuAPIService {
         cache.totalCostLimit = 32   // 最多缓存 32 集的内存副本
     }
 
-    public convenience init?(host: String, port: Int = 9321) {
+    public convenience init?(host: String, port: Int = 9321, apiKey: String? = nil) {
         guard let url = URL(string: "http://\(host):\(port)") else { return nil }
-        self.init(baseURL: url)
+        self.init(baseURL: url, apiKey: apiKey)
     }
 
     // MARK: - 对外主入口
@@ -142,7 +145,7 @@ public final class DanmuAPIService {
 
     /// 文件名匹配 → episodeId
     public func match(fileName: String) async throws -> DanmuMatch {
-        guard let url = URL(string: baseURL.absoluteString + "/api/v2/match") else {
+        guard let url = authorizedURL("/api/v2/match") else {
             throw DanmuServiceError.badURL
         }
         var request = URLRequest(url: url)
@@ -173,7 +176,7 @@ public final class DanmuAPIService {
         let cacheKey = "dandan-\(episodeId)" as NSString
         if let cached = cache.object(forKey: cacheKey) { return cached }
 
-        guard let url = URL(string: baseURL.absoluteString + "/api/v2/comment/\(episodeId)?format=json") else {
+        guard let url = authorizedURL("/api/v2/comment/\(episodeId)", query: "format=json") else {
             throw DanmuServiceError.badURL
         }
         let (data, response) = try await session.data(from: url)
@@ -229,7 +232,7 @@ public final class DanmuAPIService {
             if let episodeNumber { query.append("episode_number=\(episodeNumber)") }
         }
         guard !query.isEmpty,
-              let url = URL(string: baseURL.absoluteString + "/danmu/get?" + query.joined(separator: "&")) else {
+              let url = authorizedURL("/danmu/get", query: query.joined(separator: "&")) else {
             throw DanmuServiceError.badURL
         }
 
@@ -269,7 +272,7 @@ public final class DanmuAPIService {
     }
 
     public func searchAnime(keyword: String) async throws -> [AnimeSearchResult] {
-        guard let url = URL(string: baseURL.absoluteString + "/api/v2/search/anime?keyword=" + encodeURIComponent(keyword)) else {
+        guard let url = authorizedURL("/api/v2/search/anime", query: "keyword=" + encodeURIComponent(keyword)) else {
             throw DanmuServiceError.badURL
         }
         let (data, _) = try await session.data(from: url)
@@ -277,6 +280,16 @@ public final class DanmuAPIService {
     }
 
     // MARK: - 工具
+
+    /// 给 URL 追加 API Key（danmu_api 鉴权：?key= 或 Authorization Bearer 均可）
+    private func authorizedURL(_ path: String, query: String? = nil) -> URL? {
+        var string = baseURL.absoluteString + path
+        var pairs = [String]()
+        if let query, !query.isEmpty { pairs.append(query) }
+        if let apiKey, !apiKey.isEmpty { pairs.append("key=\(encodeURIComponent(apiKey))") }
+        if !pairs.isEmpty { string += "?" + pairs.joined(separator: "&") }
+        return URL(string: string)
+    }
 
     private func encodeURIComponent(_ s: String) -> String {
         s.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? s

@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v7"
+    static let version = "v8"
 
     /// 本版主要变更摘要
-    static let changes = "拦截链定位诊断 + token 预注册"
+    static let changes = "适配层整体迁移至 delegate（真机实证可用）"
 }

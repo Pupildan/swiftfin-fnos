@@ -81,7 +81,7 @@ final class ServerConnectionManager: ObservableObject {
                 url: connection.url,
                 accessToken: accessToken
             ),
-            delegate: LegacyAuthHeaderInjector(),
+            delegate: FnOSRequestDelegate(),
             sessionConfiguration: sessionConfiguration,
             sessionDelegate: URLSessionProxyDelegate(logger: NetworkLogger.swiftfin())
         )

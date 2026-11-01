@@ -110,10 +110,13 @@ final class FnOSCompatURLProtocol: URLProtocol {
               url.scheme == "http" || url.scheme == "https"
         else { return false }
 
-        // 已登录的 API 请求（Authorization 带 Token）或已知飞牛主机的请求
-        if Self.parseToken(fromAuthorization: request.value(forHTTPHeaderField: "Authorization")) != nil {
-            return true
+        // SDK API 请求（带 MediaBrowser Authorization 头）由 FnOSRequestDelegate
+        // 全权适配（delegate 层在真机上确定运行）；本协议仅服务图片等无鉴权头的请求
+        if request.value(forHTTPHeaderField: "Authorization")?.hasPrefix("MediaBrowser") == true {
+            return false
         }
+
+        // 已知飞牛主机的其余请求（图片等，需注入双头）
         if let host = url.host, Self.token(for: host) != nil {
             return true
         }

@@ -88,33 +88,12 @@ struct SettingsView: View {
         do {
             let parameters = Paths.GetUserViewsParameters(userID: session.user.id)
             let request = Paths.getUserViews(parameters: parameters)
-            // 直接走 client.send 以拿到原始响应（头/体），用于判断适配层是否介入
             let response = try await session.client.send(request)
 
             if let http = response.response as? HTTPURLResponse {
-                let shim = http.value(forHTTPHeaderField: "X-FnOS-Shim") ?? "无"
-                lines.append("HTTP \(http.statusCode) · Shim: \(shim)")
-            }
-
-            // 原始请求是否带 Token=（canInit 命中前提）
-            if let originalRequest = response.originalRequest,
-               let auth = originalRequest.value(forHTTPHeaderField: "Authorization"),
-               auth.contains("Token=")
-            {
-                lines.append("请求带Token: 是")
+                lines.append("HTTP \(http.statusCode)")
             } else {
-                lines.append("请求带Token: 否（canInit 不会命中）")
-            }
-
-            let stats = FnOSCompatURLProtocol.stats()
-            lines.append("拦截计数: canInit=\(stats.canInit) start=\(stats.startLoading) inject=\(stats.injected)")
-
-            // 原始响应体里是否带 CollectionType（区分「未注入」与「注入但解码丢失」）
-            if let object = try? JSONSerialization.jsonObject(with: response.data) as? [String: Any],
-               let items = object["Items"] as? [[String: Any]]
-            {
-                let withKey = items.filter { $0["CollectionType"] != nil }.count
-                lines.append("原始体含类型: \(withKey)/\(items.count)")
+                lines.append("本地适配响应: \(response.data.count) 字节")
             }
 
             let views = response.value.items ?? []

@@ -74,7 +74,7 @@ final class ConnectToServerViewModel: ObservableObject {
 
         let client = JellyfinClient(
             configuration: .swiftfinConfiguration(url: url),
-            delegate: LegacyAuthHeaderInjector(),
+            delegate: FnOSRequestDelegate(),
             sessionDelegate: URLSessionProxyDelegate(logger: NetworkLogger.swiftfin())
         )
 

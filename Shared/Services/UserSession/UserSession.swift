@@ -40,7 +40,7 @@ final class UserSession {
         // or the item store retained by views and playback.
         let client = JellyfinClient(
             configuration: .swiftfinConfiguration(url: url, accessToken: user.accessToken),
-            delegate: LegacyAuthHeaderInjector(),
+            delegate: FnOSRequestDelegate(),
             sessionConfiguration: .swiftfin,
             sessionDelegate: URLSessionProxyDelegate(logger: NetworkLogger.swiftfin())
         )

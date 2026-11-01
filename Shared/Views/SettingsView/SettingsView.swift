@@ -27,13 +27,21 @@ struct SettingsView: View {
     @Router
     private var router
 
+    // 飞牛适配实时诊断结果（打开设置页时现场查询）
+    @State
+    private var fnosDiagnostics: [String] = []
+
     // MARK: - Body
 
     var body: some View {
         Form(image: .jellyfinBlobBlue) {
+            fnosSection
             serverSection
             customizeSection
             diagnosticsSection
+        }
+        .task {
+            await runFnOSDiagnostics()
         }
         #if os(iOS)
         .navigationTitle(L10n.settings)
@@ -41,6 +49,62 @@ struct SettingsView: View {
                 router.dismiss()
             }
         #endif
+    }
+
+    // MARK: - 飞牛适配（版本 + 实时诊断）
+
+    /// 版本号放在设置根页最顶部，用户无需翻找即可核对更新是否生效
+    private var fnosSection: some View {
+        Section {
+            LabeledContent(
+                "飞牛适配版",
+                value: "FNOS \(FNOSAdapterBuild.version)"
+            )
+
+            LabeledContent(
+                L10n.version,
+                value: "\(UIApplication.appVersion ?? .emptyDash) (\(UIApplication.bundleVersion ?? .emptyDash))"
+            )
+
+            ForEach(fnosDiagnostics, id: \.self) { line in
+                Text(line)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("飞牛适配")
+        }
+    }
+
+    @MainActor
+    private func runFnOSDiagnostics() async {
+        guard let session = userSessionManager.currentSession else {
+            fnosDiagnostics = ["未登录服务器"]
+            return
+        }
+
+        var lines = ["服务器: \(session.server.effectiveServerURL.absoluteString)"]
+
+        do {
+            let parameters = Paths.GetUserViewsParameters(userID: session.user.id)
+            let request = Paths.getUserViews(parameters: parameters)
+            let response = try await session.send(request)
+            let views = response.value.items ?? []
+
+            if views.isEmpty {
+                lines.append("⚠️ 服务器返回 0 个媒体库")
+            } else {
+                lines.append("媒体库 \(views.count) 个:")
+                for view in views {
+                    let type = view.collectionType?.rawValue ?? "无类型"
+                    lines.append("· \(view.name ?? "?") → \(type)")
+                }
+            }
+        } catch {
+            lines.append("⚠️ 查询失败: \(String(describing: error))")
+        }
+
+        fnosDiagnostics = lines
     }
 
     // MARK: - Server Section

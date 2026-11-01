@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v5"
+    static let version = "v6"
 
     /// 本版主要变更摘要
-    static let changes = "媒体库类型合成 + HTML 陷阱端点拦截"
+    static let changes = "设置页版本号 + 实时适配诊断"
 }

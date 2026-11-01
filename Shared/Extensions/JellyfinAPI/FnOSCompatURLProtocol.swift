@@ -136,14 +136,30 @@ final class FnOSCompatURLProtocol: URLProtocol {
 
         // ---- 3. 响应模式判定 ----
         if originalPath.hasSuffix("/Items/Latest") {
-            // Latest 改写：响应需从信封转回纯数组（SDK 期望 [BaseItemDto]）
+            // Latest 改写为无 ParentId 的全局查询 → fnOS 返回 0，
+            // 必须走跨库合并；SDK 期望纯数组，交付时转换。
             responseMode = .latestArray
+            deliverMergeAsArray = true
+            if Self.viewIDs(for: host).isEmpty {
+                startViewsBootstrap(baseRequest: mutable, host: host)
+                return
+            }
+            startMergedLoad(baseRequest: mutable, host: host)
+            return
         } else if originalPath.hasSuffix("/Views") {
             // /Views：正常透传，同时收集媒体库 ID
             responseMode = .viewsCollect
-        } else if Self.needsViewMerge(path: originalPath, queryItems(of: url)), !Self.viewIDs(for: host).isEmpty {
-            // 全局 Items 查询：拆分为逐库请求后合并
+        } else if Self.needsViewMerge(path: originalPath, queryItems(of: url)) {
+            // 全局 Items 查询：拆分为逐库请求后合并。
+            // 库 ID 注册表为空（/Views 尚未被调用，如 App 启动直接进电影/剧集页签）时，
+            // 先引导拉取一次 /Views 注册库 ID，再合并——否则 fnOS 全局查询一律返回 0。
+            if Self.viewIDs(for: host).isEmpty {
+                responseMode = .viewsBootstrap
+                startViewsBootstrap(baseRequest: mutable, host: host)
+                return
+            }
             responseMode = .multiView
+            deliverMergeAsArray = false
             startMergedLoad(baseRequest: mutable, host: host)
             return
         } else {
@@ -208,6 +224,8 @@ final class FnOSCompatURLProtocol: URLProtocol {
         mergeRequests.removeAll()
         probeRemaining.removeAll()
         probeCurrentID = nil
+        pendingMergeRequest = nil
+        pendingMergeHost = nil
         forwardingSession?.invalidateAndCancel()
         forwardingSession = nil
     }
@@ -219,6 +237,8 @@ final class FnOSCompatURLProtocol: URLProtocol {
         case latestArray
         case viewsCollect
         case multiView
+        /// 全局查询到达但库 ID 注册表为空：先拉取 /Views 注册，再进入合并
+        case viewsBootstrap
         /// fnOS 对未实现端点返回 200 + text/html 网页 → 缓冲后合成空响应
         case htmlBlocked
     }
@@ -233,10 +253,23 @@ final class FnOSCompatURLProtocol: URLProtocol {
 
     // multiView 合并状态
     private var mergeRequests: [URLRequest] = []
-    private var mergeSortByDate = false
+    private var mergeSort: MergeSort = .none
     private var mergeStartIndex = 0
     private var mergeLimit = 100
     private var mergedItems: [[String: Any]] = []
+    /// Latest 场景：合并结果以纯数组交付（SDK 期望 [BaseItemDto]）
+    private var deliverMergeAsArray = false
+
+    /// 全局查询的跨库合并排序方式
+    private enum MergeSort {
+        case none
+        case dateCreated
+        case sortName
+    }
+
+    // 全局查询到达但库 ID 注册表为空时：先引导拉取 /Views 再合并
+    private var pendingMergeRequest: NSMutableURLRequest?
+    private var pendingMergeHost: String?
 
     // /Views CollectionType 探测链状态
     // fnOS 不返回库类型，而 Swiftfin 首页/媒体库按 collectionType 过滤 → 缺失全被丢弃。
@@ -300,6 +333,16 @@ extension FnOSCompatURLProtocol: URLSessionDataDelegate {
                 cleanup(session: completedSession)
                 return
             }
+            // 引导 /Views 失败：降级为直发原请求（fnOS 返回 0 但不报错）
+            if responseMode == .viewsBootstrap, let baseRequest = pendingMergeRequest {
+                pendingMergeRequest = nil
+                pendingMergeHost = nil
+                responseMode = deliverMergeAsArray ? .latestArray : .passthrough
+                deliverMergeAsArray = false
+                startForwarding(baseRequest)
+                cleanup(session: completedSession)
+                return
+            }
             client?.urlProtocol(self, didFailWithError: error)
             cleanup(session: completedSession)
             return
@@ -318,6 +361,8 @@ extension FnOSCompatURLProtocol: URLSessionDataDelegate {
             }
         case .multiView:
             handleMergeStepCompletion()
+        case .viewsBootstrap:
+            handleViewsBootstrapCompletion()
         case .htmlBlocked:
             deliverSynthesizedEmptyForHTML()
         }
@@ -483,6 +528,91 @@ extension FnOSCompatURLProtocol: URLSessionDataDelegate {
         continueViewProbes()
     }
 
+    // MARK: viewsBootstrap：全局查询先于 /Views 到达时，先引导注册库 ID
+
+    private func startViewsBootstrap(baseRequest: NSMutableURLRequest, host: String) {
+        guard let originalURL = request.url,
+              let uid = Self.userID(fromAPIPath: originalURL),
+              var components = URLComponents(url: originalURL, resolvingAgainstBaseURL: false)
+        else {
+            // 无法构造引导请求：退化为直发（fnOS 全局查询会返回 0，但不至于报错）
+            responseMode = .passthrough
+            startForwarding(baseRequest)
+            return
+        }
+
+        pendingMergeRequest = baseRequest
+        pendingMergeHost = host
+
+        components.path = "/Users/\(uid)/Views"
+        components.query = nil
+
+        guard let viewsURL = components.url else {
+            client?.urlProtocol(self, didFailWithError: URLError(.badURL))
+            return
+        }
+
+        var bootstrapRequest = URLRequest(url: viewsURL)
+        bootstrapRequest.httpMethod = "GET"
+        bootstrapRequest.timeoutInterval = 15
+        for (key, value) in request.allHTTPHeaderFields ?? [:] {
+            guard key.caseInsensitiveCompare("Host") != .orderedSame,
+                  key.caseInsensitiveCompare("Content-Length") != .orderedSame,
+                  key.caseInsensitiveCompare("Content-Type") != .orderedSame
+            else { continue }
+            bootstrapRequest.setValue(value, forHTTPHeaderField: key)
+        }
+        if let token = Self.token(for: host) {
+            bootstrapRequest.setValue(token, forHTTPHeaderField: "X-Emby-Token")
+        }
+        if bootstrapRequest.value(forHTTPHeaderField: "X-Emby-Authorization") == nil {
+            let authorization = bootstrapRequest.value(forHTTPHeaderField: "Authorization")
+                ?? "MediaBrowser Client=\"Swiftfin\", Device=\"AppleTV\", DeviceId=\"swiftfin-fnos\", Version=\"1.0\""
+            bootstrapRequest.setValue(Self.quoted(authorization), forHTTPHeaderField: "X-Emby-Authorization")
+        }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 15
+        let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+        forwardingSession = session
+        dataTask = session.dataTask(with: bootstrapRequest)
+        dataTask?.resume()
+    }
+
+    private func handleViewsBootstrapCompletion() {
+        if let host = pendingMergeHost,
+           let object = try? JSONSerialization.jsonObject(with: bufferedData) as? [String: Any],
+           let items = object["Items"] as? [[String: Any]]
+        {
+            let ids = items.compactMap { $0["Id"] as? String }
+            if !ids.isEmpty {
+                Self.registerViewIDs(host: host, ids: ids)
+            }
+        }
+
+        guard let baseRequest = pendingMergeRequest, let host = pendingMergeHost else {
+            client?.urlProtocolDidFinishLoading(self)
+            return
+        }
+
+        pendingMergeRequest = nil
+        pendingMergeHost = nil
+        bufferedData.removeAll()
+        bufferedResponse = nil
+
+        responseMode = .multiView
+        startMergedLoad(baseRequest: baseRequest, host: host)
+    }
+
+    private func startForwarding(_ baseRequest: NSMutableURLRequest) {
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.timeoutIntervalForRequest = 20
+        let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+        forwardingSession = session
+        dataTask = session.dataTask(with: baseRequest as URLRequest)
+        dataTask?.resume()
+    }
+
     private func finishViewProbes() {
         probeCurrentID = nil
 
@@ -566,8 +696,15 @@ extension FnOSCompatURLProtocol: URLSessionDataDelegate {
         }
         mergeLimit = readParam("limit") ?? 100
         mergeStartIndex = readParam("startindex") ?? 0
-        mergeSortByDate = query.first { $0.name.lowercased() == "sortby" }?
-            .value?.lowercased() == "datecreated"
+        let sortBy = query.first { $0.name.lowercased() == "sortby" }?
+            .value?.lowercased() ?? ""
+        if sortBy.contains("datecreated") {
+            mergeSort = .dateCreated
+        } else if sortBy.contains("sortname") {
+            mergeSort = .sortName
+        } else {
+            mergeSort = .none
+        }
 
         // 每库请求多取一些以支持跨库排序后的分页
         query.removeAll { $0.name.lowercased() == "parentid" }
@@ -595,12 +732,7 @@ extension FnOSCompatURLProtocol: URLSessionDataDelegate {
         guard !requests.isEmpty else {
             // 没有可拆分的库：退化为单请求直发
             responseMode = .passthrough
-            let configuration = URLSessionConfiguration.ephemeral
-            configuration.timeoutIntervalForRequest = 20
-            let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
-            forwardingSession = session
-            dataTask = session.dataTask(with: baseRequest as URLRequest)
-            dataTask?.resume()
+            startForwarding(baseRequest)
             return
         }
 
@@ -635,22 +767,38 @@ extension FnOSCompatURLProtocol: URLSessionDataDelegate {
 
         // 全部库完成：排序 → 总数 → 分页切片
         var items = mergedItems
-        if mergeSortByDate {
+        switch mergeSort {
+        case .dateCreated:
             items.sort {
                 ($0["DateCreated"] as? String ?? "") > ($1["DateCreated"] as? String ?? "")
             }
+        case .sortName:
+            items.sort {
+                ($0["SortName"] as? String ?? $0["Name"] as? String ?? "")
+                    .localizedStandardCompare($1["SortName"] as? String ?? $1["Name"] as? String ?? "") == .orderedAscending
+            }
+        case .none:
+            break
         }
         let total = items.count
         let slice = Array(items.dropFirst(mergeStartIndex).prefix(mergeLimit))
         mergedItems.removeAll()
 
-        let envelope: [String: Any] = [
-            "Items": slice,
-            "TotalRecordCount": total,
-            "StartIndex": mergeStartIndex,
-        ]
-        let payload = (try? JSONSerialization.data(withJSONObject: envelope))
-            ?? Data(#"{"Items":[],"TotalRecordCount":0,"StartIndex":0}"#.utf8)
+        let payload: Data
+        if deliverMergeAsArray {
+            // Latest：SDK 期望 [BaseItemDto] 纯数组
+            payload = (try? JSONSerialization.data(withJSONObject: slice))
+                ?? Data("[]".utf8)
+        } else {
+            let envelope: [String: Any] = [
+                "Items": slice,
+                "TotalRecordCount": total,
+                "StartIndex": mergeStartIndex,
+            ]
+            payload = (try? JSONSerialization.data(withJSONObject: envelope))
+                ?? Data(#"{"Items":[],"TotalRecordCount":0,"StartIndex":0}"#.utf8)
+        }
+        deliverMergeAsArray = false
 
         let response = HTTPURLResponse(
             url: request.url ?? URL(fileURLWithPath: "/"),
@@ -745,7 +893,13 @@ extension FnOSCompatURLProtocol {
         guard let url else { return nil }
         let path = normalizedPath(of: url)
         guard path.hasSuffix("/Views") else { return nil }
+        return userID(fromAPIPath: url)
+    }
 
+    /// 从 /Users/{uid}/... API 路径提取用户 ID
+    private static func userID(fromAPIPath url: URL?) -> String? {
+        guard let url else { return nil }
+        let path = normalizedPath(of: url)
         let parts = path.split(separator: "/").map(String.init)
         guard let usersIndex = parts.firstIndex(of: "Users"),
               usersIndex + 1 < parts.count

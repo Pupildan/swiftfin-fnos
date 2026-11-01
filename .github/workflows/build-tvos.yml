@@ -58,7 +58,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Swiftfin-FNOS-tvos-unsigned
-          path: swiftfin-fnos/Swiftfin-FNOS-tvos-unsigned.ipa
+          path: Swiftfin-FNOS-tvos-unsigned.ipa
           retention-days: 30
 
       # 如需在 CI 直接出「已签名 ipa」（需要付费开发者账号）：

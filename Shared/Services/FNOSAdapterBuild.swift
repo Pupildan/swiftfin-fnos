@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v33"
+    static let version = "v34"
 
     /// 本版主要变更摘要
-    static let changes = "修复Hero图文错位(文案随翻页动画同步/图片复用清空/刷新清旧数据)；修复焦点离开Hero后预告仍在播放；修复媒体库返回Hero闪退(每次预告用全新Coordinator)；设置新增Hero图源切换(横图/竖版海报)"
+    static let changes = "修复Hero海报错位根因：轮播 HStack 未左对齐导致屏幕显示相邻两页各一半（此前误判为刮削数据问题）；保留 v33 的文案同步/清图/防闪退/焦点停播修复"
 }

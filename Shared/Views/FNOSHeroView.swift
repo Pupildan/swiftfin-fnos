@@ -128,7 +128,10 @@ struct FNOSHeroBanner: View {
                     .offset(x: -CGFloat(currentIndex) * geo.size.width)
                     .animation(.easeInOut(duration: 0.35), value: currentIndex)
                 }
-                .frame(width: geo.size.width, height: geo.size.height)
+                // 关键：HStack 宽 = N × 页宽，必须左对齐定位。
+                // 若用默认 .center，6W 宽的 HStack 会被居中到 W 宽容器里（左边缘 -2.5W），
+                // 叠加 offset 后屏幕显示的就是「相邻两页各占一半」= 图文错位的真正根因。
+                .frame(width: geo.size.width, height: geo.size.height, alignment: .leading)
                 .clipped()
                 .ignoresSafeArea()
 

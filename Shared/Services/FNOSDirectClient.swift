@@ -187,8 +187,15 @@ struct FNOSPeopleEntry: Decodable {
     let Name: String?
     let Id: String?
     let Role: String?
-    let Type: String?
+    /// JSON 里叫 "Type"（Actor/Director），Swift 不能用这个属性名（与 .Type 冲突）
+    let JobType: String?
     let PrimaryImageTag: String?
+
+    enum CodingKeys: String, CodingKey {
+        case Name, Id, Role
+        case JobType = "Type"
+        case PrimaryImageTag
+    }
 }
 
 extension FNOSItem {

@@ -457,6 +457,12 @@ struct FNOSHomeSettingsView: View {
     // 播放器引擎：默认 KSPlayer；开启后走 mpv（MPVUI），用于杜比视界 P5 的色彩转换
     @AppStorage("fnos.play.engineMPV") private var engineMPV = false
 
+    // 弹幕外观（与播放器内「弹幕设置」共用同一批键）
+    @AppStorage("fnos.danmu.fontSize") private var danmuFontSize: Double = 26
+    @AppStorage("fnos.danmu.speed") private var danmuSpeed: Double = 1
+    @AppStorage("fnos.danmu.opacity") private var danmuOpacity: Double = 1
+    @AppStorage("fnos.danmu.offsetY") private var danmuOffsetY: Double = 0
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -511,6 +517,44 @@ struct FNOSHomeSettingsView: View {
                             isOn: hdr10Compat
                         ) {
                             hdr10Compat.toggle()
+                        }
+                    }
+
+                    section(
+                        "弹幕",
+                        footer: "字号、速度、不透明度、垂直位置对两个播放引擎都生效；播放中也可以按「弹幕设置」实时调。"
+                    ) {
+                        FNOSSettingAdjustRow(
+                            title: "字号",
+                            systemImage: "textformat.size",
+                            value: "\(Int(danmuFontSize)) pt"
+                        ) { step in
+                            danmuFontSize = min(max(danmuFontSize + Double(step) * 2, 18), 48)
+                        }
+                        FNOSSettingAdjustRow(
+                            title: "滚动速度",
+                            systemImage: "speedometer",
+                            value: String(format: "%.1fx", danmuSpeed)
+                        ) { step in
+                            let next = ((danmuSpeed + Double(step) * 0.1) * 10).rounded() / 10
+                            danmuSpeed = min(max(next, 0.5), 3.0)
+                        }
+                        FNOSSettingAdjustRow(
+                            title: "不透明度",
+                            systemImage: "circle.lefthalf.filled",
+                            value: "\(Int((danmuOpacity * 100).rounded()))%"
+                        ) { step in
+                            let next = ((danmuOpacity + Double(step) * 0.05) * 100).rounded() / 100
+                            danmuOpacity = min(max(next, 0.2), 1)
+                        }
+                        FNOSSettingAdjustRow(
+                            title: "垂直位置",
+                            systemImage: "arrow.up.and.down",
+                            value: danmuOffsetY == 0
+                                ? "默认"
+                                : (danmuOffsetY > 0 ? "下移 \(Int(danmuOffsetY)) pt" : "上移 \(Int(-danmuOffsetY)) pt")
+                        ) { step in
+                            danmuOffsetY = min(max(danmuOffsetY + Double(step) * 20, -80), 420)
                         }
                     }
 
@@ -642,6 +686,69 @@ private struct FNOSSettingRow: View {
     private var rowForeground: Color {
         if focused { return destructive ? Color(red: 0.75, green: 0.1, blue: 0.1) : .black }
         return destructive ? Color(red: 1, green: 0.36, blue: 0.36) : .white
+    }
+}
+
+// MARK: - 可调节设置行（← → 调整数值，Select 加一档）
+
+private struct FNOSSettingAdjustRow: View {
+
+    let title: String
+    var systemImage: String? = nil
+    let value: String
+    /// step = -1 减一档，+1 加一档
+    let onAdjust: (Int) -> Void
+
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        HStack(spacing: 14) {
+            if let systemImage {
+                Image(systemName: systemImage)
+                    .font(.system(size: 21, weight: .semibold))
+                    .frame(width: 28)
+            }
+
+            Text(title)
+                .font(.system(size: 24, weight: .medium))
+                .lineLimit(1)
+
+            Spacer(minLength: 16)
+
+            Image(systemName: "chevron.left")
+                .font(.system(size: 15, weight: .bold))
+                .opacity(focused ? 0.55 : 0.15)
+
+            Text(value)
+                .font(.system(size: 21, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .frame(minWidth: 130, alignment: .center)
+
+            Image(systemName: "chevron.right")
+                .font(.system(size: 15, weight: .bold))
+                .opacity(focused ? 0.55 : 0.15)
+        }
+        .foregroundColor(focused ? .black : .white)
+        .padding(.horizontal, 26)
+        .frame(height: 72)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(focused ? Color.white : Color.white.opacity(0.10))
+        )
+        .scaleEffect(focused ? 1.015 : 1.0)
+        .animation(.easeOut(duration: 0.14), value: focused)
+        .focusable()
+        .focusEffectDisabled()
+        .focused($focused)
+        .onMoveCommand { direction in
+            switch direction {
+            case .left: onAdjust(-1)
+            case .right: onAdjust(1)
+            default: break
+            }
+        }
+        .onTapGesture { onAdjust(1) }
     }
 }
 

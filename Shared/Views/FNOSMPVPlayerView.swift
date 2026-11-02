@@ -15,9 +15,12 @@ import SwiftUI
 // 3. `setTextSubtitleInterceptionEnabled(true)` —— mpv 侧不带字体，内封中文字幕会因缺字体
 //    变乱码；拦截成文本交给我们用系统字体渲染，编码与字体问题一次解决。
 //
-// 焦点设计（v58 修正）：控制条常显，不再自动隐藏。
-// 之前体验差的原因：控制条隐藏时把根视图设成 `focusable(true)`，唤出控制条后根视图又变回
-// 不可聚焦，焦点当场丢失 → 方向键彻底没反应、按钮再也够不着。
+// 焦点设计（v59）：
+// - `.surface`（画面层）**始终存在**，控制条隐藏时它是唯一可聚焦对象，方向键按下去就能唤回
+//   控制条。之前版本把"可聚焦性"挂在根视图上反复开关，导致焦点当场丢失、按键彻底失灵。
+// - 控制条 5 秒无操作自动淡出（暂停 / 选集展开 / 弹幕设置打开时不隐藏），任何按键或调整都
+//   会刷新活动时间。
+// - 选集条每一集都有明确的焦点态（白底黑字 + 放大）与"正在播放"标记，不再分不清焦点在哪。
 
 @MainActor
 struct FNOSMPVPlayerView: View {
@@ -43,18 +46,37 @@ struct FNOSMPVPlayerView: View {
 
     @State private var showDanmu = true
     @State private var showEpisodeStrip = false
+    @State private var showDanmuSettings = false
     @State private var showInfo = false
     @State private var infoText = ""
     @State private var switching = false
+
+    /// 控制条是否可见（自动隐藏）
+    @State private var controlsVisible = true
+    /// 最近一次用户操作时间（刷新自动隐藏计时）
+    @State private var lastActivity = Date()
 
     @State private var lastPersist: Double = 0
     @State private var lastSeekAt = Date.distantPast
     @State private var seekBurst = 0
 
+    // 弹幕外观（与 FNOSDanmuView 共用同一批键）
+    @AppStorage("fnos.danmu.fontSize") private var danmuFontSize: Double = 26
+    @AppStorage("fnos.danmu.opacity") private var danmuOpacity: Double = 1
+    @AppStorage("fnos.danmu.speed") private var danmuSpeed: Double = 1
+    @AppStorage("fnos.danmu.offsetY") private var danmuOffsetY: Double = 0
+
     @FocusState private var focus: Control?
+    @FocusState private var danmuFocus: DanmuRow?
 
     private enum Control: Hashable {
-        case rewind, playPause, forward, danmuToggle, episode, info, scrubber
+        case surface
+        case rewind, playPause, forward, danmuToggle, danmuSettings, episode, info, scrubber
+        case episodeItem(String)
+    }
+
+    private enum DanmuRow: Hashable {
+        case size, speed, opacity, offsetY, toggle
     }
 
     init(
@@ -84,9 +106,7 @@ struct FNOSMPVPlayerView: View {
             Color.black.ignoresSafeArea()
 
             if let player {
-                MPVVideoPlayer(player: player)
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
+                videoSurface(player)
 
                 // 弹幕层
                 if showDanmu {
@@ -101,7 +121,15 @@ struct FNOSMPVPlayerView: View {
                         .allowsHitTesting(false)
                 }
 
-                controlBar(player)
+                if controlsVisible {
+                    controlBar(player)
+                        .transition(.opacity)
+                }
+
+                if showDanmuSettings {
+                    danmuSettingsPanel
+                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                }
 
                 if showInfo {
                     infoPanel
@@ -118,8 +146,37 @@ struct FNOSMPVPlayerView: View {
         }
         .onAppear(perform: startIfNeeded)
         .onDisappear(perform: teardown)
-        .onExitCommand { onExit() }
-        .onPlayPauseCommand { togglePlayPause() }
+        .onExitCommand(perform: handleExitCommand)
+        .onPlayPauseCommand {
+            bumpActivity()
+            showControls()
+            togglePlayPause()
+        }
+        .onChange(of: focus) { _, newValue in
+            // 焦点落到画面层说明是自动隐藏造成的，不算用户活动
+            if newValue == .surface { return }
+            if newValue != nil { bumpActivity() }
+        }
+    }
+
+    // MARK: - 画面层（唯一的兜底焦点）
+
+    private func videoSurface(_ player: MPVPlayer) -> some View {
+        ZStack {
+            MPVVideoPlayer(player: player)
+                .ignoresSafeArea()
+                .allowsHitTesting(false)
+
+            Color.clear
+                .contentShape(Rectangle())
+                .focusable(!controlsVisible)
+                .focused($focus, equals: .surface)
+                .focusEffectDisabled()
+                .onMoveCommand { _ in
+                    // 控制条隐藏时任意方向键都能唤回
+                    showControls()
+                }
+        }
     }
 
     // MARK: - 字幕
@@ -145,7 +202,7 @@ struct FNOSMPVPlayerView: View {
                 episodeStrip
             }
 
-            HStack(spacing: 20) {
+            HStack(spacing: 18) {
                 controlButton(.rewind, systemImage: "gobackward.10") {
                     player.seek(by: .seconds(-10))
                 }
@@ -171,6 +228,10 @@ struct FNOSMPVPlayerView: View {
                     danmu.setRate(showDanmu ? 1 : 0)
                 }
 
+                controlButton(.danmuSettings, systemImage: "slider.horizontal.3", subtitle: "弹幕设置") {
+                    openDanmuSettings()
+                }
+
                 if episodes.count > 1 {
                     controlButton(
                         .episode,
@@ -178,7 +239,7 @@ struct FNOSMPVPlayerView: View {
                         subtitle: showEpisodeStrip ? "收起" : "选集",
                         wide: showEpisodeStrip
                     ) {
-                        showEpisodeStrip.toggle()
+                        toggleEpisodeStrip()
                     }
                 }
 
@@ -218,37 +279,91 @@ struct FNOSMPVPlayerView: View {
             )
             .ignoresSafeArea()
         )
-        .defaultFocus($focus, .playPause)
     }
 
+    // MARK: - 选集条
+
     private var episodeStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            LazyHStack(spacing: 12) {
-                ForEach(episodes) { ep in
-                    Button {
-                        switchEpisode(to: ep)
-                    } label: {
-                        Text("第 \(ep.number) 集")
-                            .font(.system(size: 19, weight: .semibold))
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 9)
-                            .background(
-                                Capsule()
-                                    .fill(ep.number == currentNumber ? Color.white : Color.white.opacity(0.16))
-                            )
-                            .foregroundColor(ep.number == currentNumber ? .black : .white)
-                            .overlay(
-                                Capsule().stroke(Color.white.opacity(0.35), lineWidth: 1)
-                            )
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 12) {
+                    ForEach(episodes) { ep in
+                        episodeChip(ep)
+                            .id(ep.guid)
                     }
-                    .buttonStyle(FNOSBareButtonStyle())
                 }
+                .padding(.horizontal, 52)
+                .padding(.vertical, 6)
             }
-            .padding(.horizontal, 52)
+            .frame(height: 66)
+            .focusSection()
+            .onAppear {
+                proxy.scrollTo(currentGUID, anchor: .center)
+            }
+            .onChange(of: currentGUID) { _, guid in
+                proxy.scrollTo(guid, anchor: .center)
+            }
         }
-        .frame(height: 54)
-        .focusSection()
     }
+
+    private func episodeChip(_ ep: FNOSNativeClient.EpisodeRef) -> some View {
+        let isFocused = focus == .episodeItem(ep.guid)
+        let isCurrent = ep.number == currentNumber
+
+        return Button {
+            switchEpisode(to: ep)
+        } label: {
+            HStack(spacing: 6) {
+                if isCurrent {
+                    Image(systemName: "play.fill")
+                        .font(.system(size: 13, weight: .bold))
+                }
+                Text("第 \(ep.number) 集")
+                    .font(.system(size: 19, weight: .semibold))
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 10)
+            .background(
+                Capsule()
+                    .fill(
+                        isFocused
+                            ? Color.white
+                            : (isCurrent ? Color.white.opacity(0.30) : Color.white.opacity(0.12))
+                    )
+            )
+            .foregroundColor(isFocused ? .black : .white)
+            .overlay(
+                Capsule().stroke(
+                    isFocused ? Color.clear : Color.white.opacity(isCurrent ? 0.6 : 0.18),
+                    lineWidth: isCurrent ? 2 : 1
+                )
+            )
+            .scaleEffect(isFocused ? 1.08 : 1.0)
+            .shadow(color: .black.opacity(isFocused ? 0.45 : 0), radius: 10, y: 4)
+            .animation(.easeOut(duration: 0.12), value: isFocused)
+        }
+        .buttonStyle(FNOSBareButtonStyle())
+        .focused($focus, equals: .episodeItem(ep.guid))
+    }
+
+    private func toggleEpisodeStrip() {
+        bumpActivity()
+        let next = !showEpisodeStrip
+        withAnimation(.easeInOut(duration: 0.18)) {
+            showEpisodeStrip = next
+        }
+        if next {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 120_000_000)
+                focus = .episodeItem(currentGUID)
+                bumpActivity()
+            }
+        } else {
+            focus = .episode
+        }
+    }
+
+    // MARK: - 进度条
 
     private func scrubber(_ player: MPVPlayer) -> some View {
         let total = max(seconds(player.duration), 1)
@@ -279,12 +394,15 @@ struct FNOSMPVPlayerView: View {
         }
         .frame(height: 26)
         .focusable()
+        .focusEffectDisabled()
         .focused($focus, equals: .scrubber)
         .onMoveCommand { direction in
             switch direction {
             case .left:
+                bumpActivity()
                 quickSeek(player, by: -1)
             case .right:
+                bumpActivity()
                 quickSeek(player, by: 1)
             case .up:
                 focus = .playPause
@@ -302,7 +420,10 @@ struct FNOSMPVPlayerView: View {
         action: @escaping () -> Void
     ) -> some View {
         let isFocused = focus == control
-        return Button(action: action) {
+        return Button {
+            bumpActivity()
+            action()
+        } label: {
             HStack(spacing: 8) {
                 Image(systemName: systemImage)
                     .font(.system(size: 21, weight: .semibold))
@@ -314,6 +435,127 @@ struct FNOSMPVPlayerView: View {
         }
         .buttonStyle(FNOSBareButtonStyle())
         .focused($focus, equals: control)
+    }
+
+    // MARK: - 弹幕设置面板
+
+    private var danmuSettingsPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("弹幕设置")
+                    .font(.system(size: 24, weight: .bold))
+                Spacer()
+                Text("← → 调整　Menu 返回")
+                    .font(.system(size: 15))
+                    .foregroundColor(.white.opacity(0.55))
+            }
+            .padding(.bottom, 2)
+
+            danmuRow(.size, label: "字号", value: "\(Int(danmuFontSize)) pt")
+            danmuRow(.speed, label: "滚动速度", value: String(format: "%.1fx", danmuSpeed))
+            danmuRow(.opacity, label: "不透明度", value: "\(Int((danmuOpacity * 100).rounded()))%")
+            danmuRow(.offsetY, label: "垂直位置", value: offsetLabel)
+            danmuRow(.toggle, label: "显示弹幕", value: showDanmu ? "开" : "关")
+        }
+        .padding(28)
+        .frame(width: 620)
+        // 不用 Material：tvOS 焦点引擎见到材质会在聚焦视图上叠系统高亮板（HANDOVER 红线 5）
+        .background(Color.black.opacity(0.88), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color.white.opacity(0.18), lineWidth: 1)
+        )
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
+        .padding(.trailing, 80)
+        .padding(.bottom, 150)
+        .onExitCommand(perform: closeDanmuSettings)
+    }
+
+    private var offsetLabel: String {
+        if danmuOffsetY == 0 { return "默认" }
+        return danmuOffsetY > 0 ? "下移 \(Int(danmuOffsetY)) pt" : "上移 \(Int(-danmuOffsetY)) pt"
+    }
+
+    private func danmuRow(_ row: DanmuRow, label: String, value: String) -> some View {
+        let isFocused = danmuFocus == row
+        return HStack {
+            Text(label)
+                .font(.system(size: 19, weight: .medium))
+            Spacer()
+            Text(value)
+                .font(.system(size: 19, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+        }
+        .padding(.horizontal, 20)
+        .frame(height: 56)
+        .background(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .fill(isFocused ? Color.white : Color.white.opacity(0.08))
+        )
+        .foregroundColor(isFocused ? .black : .white)
+        .overlay(
+            RoundedRectangle(cornerRadius: 13, style: .continuous)
+                .stroke(Color.white.opacity(isFocused ? 0 : 0.14), lineWidth: 1)
+        )
+        .scaleEffect(isFocused ? 1.02 : 1.0)
+        .animation(.easeOut(duration: 0.12), value: isFocused)
+        .focusable()
+        .focusEffectDisabled()
+        .focused($danmuFocus, equals: row)
+        .onMoveCommand { direction in
+            switch direction {
+            case .left:
+                bumpActivity()
+                adjustDanmu(row, delta: -1)
+            case .right:
+                bumpActivity()
+                adjustDanmu(row, delta: 1)
+            default:
+                break
+            }
+        }
+        .onTapGesture {
+            bumpActivity()
+            if row == .toggle {
+                showDanmu.toggle()
+                danmu.setRate(showDanmu ? 1 : 0)
+            }
+        }
+    }
+
+    private func adjustDanmu(_ row: DanmuRow, delta: Double) {
+        switch row {
+        case .size:
+            danmuFontSize = min(max(danmuFontSize + delta * 2, 18), 48)
+        case .speed:
+            let next = ((danmuSpeed + delta * 0.1) * 10).rounded() / 10
+            danmuSpeed = min(max(next, 0.5), 3.0)
+        case .opacity:
+            let next = ((danmuOpacity + delta * 0.05) * 100).rounded() / 100
+            danmuOpacity = min(max(next, 0.2), 1)
+        case .offsetY:
+            danmuOffsetY = min(max(danmuOffsetY + delta * 20, -80), 420)
+        case .toggle:
+            showDanmu.toggle()
+            danmu.setRate(showDanmu ? 1 : 0)
+        }
+    }
+
+    private func openDanmuSettings() {
+        bumpActivity()
+        withAnimation(.easeOut(duration: 0.18)) { showDanmuSettings = true }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            danmuFocus = .size
+            bumpActivity()
+        }
+    }
+
+    private func closeDanmuSettings() {
+        withAnimation(.easeOut(duration: 0.16)) { showDanmuSettings = false }
+        danmuFocus = nil
+        focus = .danmuSettings
+        bumpActivity()
     }
 
     // MARK: - 诊断面板
@@ -349,6 +591,45 @@ struct FNOSMPVPlayerView: View {
         帧率 容器 \(fps(diagnostics.containerFramesPerSecond)) → 解码 \(fps(diagnostics.estimatedDecodedFramesPerSecond)) / 显示 \(fps(diagnostics.estimatedDisplayFramesPerSecond)) (面板 \(fps(diagnostics.nominalDisplayFramesPerSecond)))
         色彩 \(shortDV(player))
         """
+    }
+
+    // MARK: - 控制条显隐
+
+    private func bumpActivity() {
+        lastActivity = Date()
+    }
+
+    private func showControls() {
+        bumpActivity()
+        guard !controlsVisible else { return }
+        withAnimation(.easeOut(duration: 0.18)) { controlsVisible = true }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            focus = .playPause
+            bumpActivity()
+        }
+    }
+
+    private func hideControls() {
+        guard controlsVisible else { return }
+        // 顺序很关键：先把控制条从视图树里撤掉，surface 才变成可聚焦对象，然后把焦点落上去。
+        // 反过来（先给一个即将消失的按钮设焦点）就会复现"焦点丢失、按键全无响应"的老问题。
+        withAnimation(.easeInOut(duration: 0.22)) { controlsVisible = false }
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            focus = .surface
+        }
+    }
+
+    private func handleExitCommand() {
+        bumpActivity()
+        if showDanmuSettings {
+            closeDanmuSettings()
+        } else if showEpisodeStrip {
+            toggleEpisodeStrip()
+        } else {
+            onExit()
+        }
     }
 
     // MARK: - 生命周期
@@ -387,6 +668,7 @@ struct FNOSMPVPlayerView: View {
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 300_000_000)
             focus = .playPause
+            bumpActivity()
         }
     }
 
@@ -411,6 +693,21 @@ struct FNOSMPVPlayerView: View {
                 if abs(position - lastPersist) > 4 {
                     lastPersist = position
                     UserDefaults.standard.set(position, forKey: resumeKey)
+                }
+
+                // 自动隐藏：播放中、无面板展开、5 秒无操作
+                if controlsVisible,
+                   !player.isPaused,
+                   !showEpisodeStrip,
+                   !showDanmuSettings,
+                   !showInfo,
+                   Date().timeIntervalSince(lastActivity) > 5 {
+                    hideControls()
+                }
+
+                // 焦点兜底：任何原因导致焦点丢失都重新落到有效对象上
+                if focus == nil {
+                    focus = controlsVisible ? .playPause : .surface
                 }
 
                 try? await Task.sleep(nanoseconds: 250_000_000)
@@ -446,6 +743,7 @@ struct FNOSMPVPlayerView: View {
         } else {
             player.pause()
         }
+        bumpActivity()
     }
 
     /// 连续按左右时自动加速：10s → 30s → 60s
@@ -466,6 +764,7 @@ struct FNOSMPVPlayerView: View {
     private func switchEpisode(to ep: FNOSNativeClient.EpisodeRef) {
         guard !switching, ep.number != currentNumber else { return }
         switching = true
+        bumpActivity()
 
         Task { @MainActor in
             defer { switching = false }
@@ -487,6 +786,7 @@ struct FNOSMPVPlayerView: View {
             player.load(next.url, startTime: start)
             loadDanmu()
             focus = .playPause
+            bumpActivity()
         }
     }
 
@@ -536,7 +836,7 @@ private struct FNOSControlChrome: ViewModifier {
     func body(content: Content) -> some View {
         content
             .foregroundColor(isFocused ? .black : .white)
-            .padding(.horizontal, wide ? 28 : 18)
+            .padding(.horizontal, wide ? 28 : 16)
             .frame(height: 54)
             .background(
                 Capsule()

@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v58"
+    static let version = "v59"
 
     /// 本版主要变更摘要
-    static let changes = "mpv：控制条常显修复焦点丢失、进度条连续按左右自动加速(10/30/60s)、播放器内直接换集(整季列表)、直链解析失败自动回退 KSPlayer；首页设置按钮改成 Hero 同款胶囊按钮"
+    static let changes = "mpv：控制条 5 秒无操作自动隐藏（暂停/选集/弹幕设置时不隐藏），任意方向键唤回；选集条每集有焦点白底高亮 + 正在播放标记并自动滚到当前集；新增弹幕设置（字号/速度/不透明度/垂直位置，播放中实时可调 + 设置页常驻）；弹幕去掉黑色描边"
 }

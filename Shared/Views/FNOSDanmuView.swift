@@ -394,8 +394,10 @@ struct FNOSDanmuView: View {
     @AppStorage("fnos.danmu.fontSize") private var fontSize: Double = 26
     @AppStorage("fnos.danmu.opacity") private var opacity: Double = 1
     @AppStorage("fnos.danmu.speed") private var speed: Double = 1
+    @AppStorage("fnos.danmu.offsetY") private var offsetY: Double = 0
     private var laneHeight: CGFloat { CGFloat(fontSize) * 1.4 }
-    private let laneTopInset: CGFloat = 110
+    /// 顶部基准线（垂直位置偏移会叠加在这里）
+    private var laneTopInset: CGFloat { 110 + CGFloat(offsetY) }
 
     var body: some View {
         TimelineView(.animation) { timeline in
@@ -418,7 +420,10 @@ struct FNOSDanmuView: View {
                 // 底部 / 顶部固定弹幕
                 let elapsed = mediaNow - comment.time
                 guard elapsed >= 0, elapsed <= 5 else { continue }
-                let y = comment.mode == 4 ? size.height - 80 : laneTopInset
+                let rawY = comment.mode == 4
+                    ? size.height - 80 + CGFloat(offsetY)
+                    : laneTopInset
+                let y = min(max(rawY, 60), size.height - 60)
                 drawText(
                     &context,
                     text: comment.text,
@@ -448,7 +453,7 @@ struct FNOSDanmuView: View {
         }
     }
 
-    /// 黑色描边打底 + 彩色正文，预渲染成 UIImage 缓存（每帧只贴图，消除卡顿）
+    /// 纯彩色正文（v59 去掉了黑色描边，按用户要求保持清爽），预渲染成 UIImage 缓存（每帧只贴图，消除卡顿）
     private func drawText(
         _ context: inout GraphicsContext,
         text: String,
@@ -484,19 +489,8 @@ struct FNOSDanmuView: View {
         let format = UIGraphicsImageRendererFormat()
         format.scale = scale
         let renderer = UIGraphicsImageRenderer(size: size, format: format)
-        let image = renderer.image { rendererContext in
+        let image = renderer.image { _ in
             let origin = CGPoint(x: pad, y: pad)
-            // 黑色描边打底（四向偏移），保证任意背景可读
-            let strokeAttrs: [NSAttributedString.Key: Any] = [
-                .font: font,
-                .foregroundColor: UIColor.black.withAlphaComponent(0.85),
-            ]
-            let offsets = [CGPoint(x: -1.5, y: 0), CGPoint(x: 1.5, y: 0),
-                           CGPoint(x: 0, y: -1.5), CGPoint(x: 0, y: 1.5),
-                           CGPoint(x: 1.2, y: 1.2)]
-            for offset in offsets {
-                (text as NSString).draw(at: CGPoint(x: origin.x + offset.x, y: origin.y + offset.y), withAttributes: strokeAttrs)
-            }
             (text as NSString).draw(at: origin, withAttributes: attrs)
         }
         Self.textImageCache.setObject(image, forKey: key)

@@ -332,22 +332,22 @@ struct FNOSHeroBanner: View {
                     .frame(maxWidth: 720, alignment: .leading)
             }
 
-            HStack(spacing: 20) {
-                // ▶ 播放（剧集走选集，电影直进 KSPlayer+弹幕）
+            // Hero 按钮：视觉与详情页一致（未选中半透明玻璃 / 选中白底黑字），
+            // 但样式在本文件独立实现，后续详情页改动不会影响 Hero。
+            HStack(spacing: 28) {
+                // ▶ 立即播放（剧集走选集，电影直进播放器）
                 Button {
                     onPlay(item)
                 } label: {
-                    Label(item.type == "Series" ? "选集" : "播放", systemImage: "play.fill")
-                        .font(.headline)
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 12)
+                    heroButtonLabel(.play, isPrimary: true) {
+                        Text(item.type == "Series" ? "选集" : "立即播放")
+                            .font(.system(size: 21, weight: .semibold))
+                    }
                 }
-                #if os(tvOS)
-                    .buttonStyle(.card)
-                #endif
+                .buttonStyle(.plain)
+                .focusEffectDisabled()
                 .focused($focusedButton, equals: .play)
                 .onMoveCommand { direction in
-                    // 左键=上一张海报；下键=媒体库；上键不响应（不许跳去设置）
                     switch direction {
                     case .left:
                         pagePrevious()
@@ -362,17 +362,13 @@ struct FNOSHeroBanner: View {
                 Button {
                     toggleWatchLater(item)
                 } label: {
-                    Label(
-                        isWatchLater(item) ? "已加入" : "稍后看",
-                        systemImage: isWatchLater(item) ? "checkmark.circle.fill" : "plus.circle"
-                    )
-                    .font(.headline)
-                    .padding(.horizontal, 18)
-                    .padding(.vertical, 12)
+                    heroButtonLabel(.plus, isPrimary: false) {
+                        Image(systemName: isWatchLater(item) ? "checkmark" : "plus")
+                            .font(.system(size: 22, weight: .semibold))
+                    }
                 }
-                #if os(tvOS)
-                    .buttonStyle(.card)
-                #endif
+                .buttonStyle(.plain)
+                .focusEffectDisabled()
                 .focused($focusedButton, equals: .plus)
                 .onMoveCommand { direction in
                     if direction == .down {
@@ -384,17 +380,15 @@ struct FNOSHeroBanner: View {
                 Button {
                     onDetail(item)
                 } label: {
-                    Label("详情", systemImage: "info.circle")
-                        .font(.headline)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 12)
+                    heroButtonLabel(.detail, isPrimary: false) {
+                        Image(systemName: "info")
+                            .font(.system(size: 22, weight: .semibold))
+                    }
                 }
-                #if os(tvOS)
-                    .buttonStyle(.card)
-                #endif
+                .buttonStyle(.plain)
+                .focusEffectDisabled()
                 .focused($focusedButton, equals: .detail)
                 .onMoveCommand { direction in
-                    // 右键=下一张海报；下键=媒体库；上键不响应（不许跳去设置）
                     switch direction {
                     case .right:
                         pageNext()
@@ -405,11 +399,42 @@ struct FNOSHeroBanner: View {
                     }
                 }
             }
-            .padding(.top, 6)
+            .padding(.top, 8)
             #if os(tvOS)
                 .defaultFocus($focusedButton, .play)
             #endif
         }
+    }
+
+    // MARK: Hero 按钮外观（独立实现，与详情页解耦）
+
+    /// - 未聚焦：半透明液态玻璃（黑 35% + 白 25% 描边），白字
+    /// - 聚焦：纯白背景，黑字，轻微放大
+    @ViewBuilder
+    private func heroButtonLabel<L: View>(
+        _ id: HeroButton,
+        isPrimary: Bool,
+        @ViewBuilder label: () -> L
+    ) -> some View {
+        let isFocused = focusedButton == id
+        label()
+            .foregroundColor(isFocused ? .black : .white)
+            .padding(.horizontal, isPrimary ? 34 : 0)
+            .padding(.vertical, isPrimary ? 15 : 0)
+            .frame(width: isPrimary ? nil : 54, height: isPrimary ? nil : 54)
+            .background(
+                Capsule()
+                    .fill(isFocused ? Color.white : Color.black.opacity(0.35))
+            )
+            .overlay(
+                Capsule()
+                    .strokeBorder(
+                        Color.white.opacity(isFocused ? 0 : 0.25),
+                        lineWidth: 1
+                    )
+            )
+            .scaleEffect(isFocused ? 1.06 : 1.0)
+            .animation(.easeOut(duration: 0.16), value: isFocused)
     }
 
     // MARK: 焦点驱动的海报翻页（翻页后焦点强制留在原按钮上）

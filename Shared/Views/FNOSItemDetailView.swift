@@ -18,10 +18,13 @@ struct FNOSItemDetailView: View {
 
     @Environment(\.dismiss) private var dismiss
 
-    // 详情数据（以 PlaybackInfo 为准：媒体源、时长）
+    // 详情数据（媒体源、时长、演员）
     @State private var mediaSourceID: String?
     @State private var runtimeTicks: Int64?
+    @State private var people: [FNOSDirectClient.FNOSPerson] = []
     @State private var loadError: String?
+    // 从海报提取的主色（动态液态玻璃背景）
+    @State private var themeColor: Color?
 
     // 三个按钮的焦点
     private enum DetailButton { case play, plus, info }
@@ -65,7 +68,20 @@ struct FNOSItemDetailView: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
-                Color.black.ignoresSafeArea()
+                // 动态液态玻璃背景：从海报自动取色，向下逐渐过渡到纯黑
+                ZStack {
+                    Color.black
+                    if let themeColor {
+                        RadialGradient(
+                            colors: [themeColor.opacity(0.55), themeColor.opacity(0.18), .clear],
+                            center: .top,
+                            startRadius: 0,
+                            endRadius: geo.size.height * 1.1
+                        )
+                    }
+                }
+                .ignoresSafeArea()
+                .animation(.easeInOut(duration: 0.6), value: themeColor)
 
                 ScrollViewReader { proxy in
                     ScrollView(.vertical, showsIndicators: false) {
@@ -208,7 +224,7 @@ struct FNOSItemDetailView: View {
                         .foregroundColor(.red.opacity(0.9))
                 }
 
-                HStack(spacing: 24) {
+                HStack(spacing: 28) {
                     // 立即播放（白色主按钮）
                     detailButton(.play, isPrimary: true) {
                         playNow()
@@ -279,23 +295,9 @@ struct FNOSItemDetailView: View {
     ) -> some View {
         let isFocused = focusedButton == id
         Button(action: action) {
-            label()
-                .foregroundColor(isFocused ? .black : .white)
-                .padding(.horizontal, isPrimary ? 34 : 0)
-                .padding(.vertical, isPrimary ? 15 : 0)
-                .background(
-                    Capsule()
-                        .fill(isFocused ? Color.white : Color.black.opacity(0.35))
-                )
-                .overlay(
-                    Capsule()
-                        .strokeBorder(
-                            Color.white.opacity(isFocused ? 0 : 0.25),
-                            lineWidth: 1
-                        )
-                )
-                .scaleEffect(isFocused ? 1.06 : 1.0)
-                .animation(.easeOut(duration: 0.16), value: isFocused)
+            FNOSFocusButtonLabel(isFocused: isFocused, isPrimary: isPrimary) {
+                label()
+            }
         }
         .buttonStyle(FNOSBareButtonStyle())
         .focused($focusedButton, equals: id)
@@ -305,7 +307,12 @@ struct FNOSItemDetailView: View {
     // MARK: - 下方信息区块
 
     private var infoSection: some View {
-        VStack(alignment: .leading, spacing: 34) {
+        VStack(alignment: .leading, spacing: 40) {
+            // 演员阵容
+            if !people.isEmpty {
+                castSection
+            }
+
             if let overview = item.Overview, !overview.isEmpty {
                 VStack(alignment: .leading, spacing: 16) {
                     Text("关于")
@@ -344,6 +351,47 @@ struct FNOSItemDetailView: View {
         }
     }
 
+    private var castSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("演员阵容")
+                .font(.system(size: 26, weight: .bold))
+                .foregroundColor(.white)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 28) {
+                    ForEach(Array(people.enumerated()), id: \.offset) { _, person in
+                        VStack(spacing: 10) {
+                            FNOSAsyncImage(
+                                url: person.id.flatMap { id in
+                                    client?.personImageURL(personID: id, tag: person.imageTag)
+                                },
+                                headers: client?.mediaHeaders ?? [:],
+                                contentMode: .fill
+                            )
+                            .frame(width: 132, height: 132)
+                            .clipShape(Circle())
+                            .overlay(Circle().stroke(Color.white.opacity(0.12), lineWidth: 1))
+
+                            Text(person.name)
+                                .font(.system(size: 17, weight: .semibold))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+
+                            if let role = person.role, !role.isEmpty, role != person.name {
+                                Text(role)
+                                    .font(.system(size: 15))
+                                    .foregroundColor(.white.opacity(0.55))
+                                    .lineLimit(1)
+                            }
+                        }
+                        .frame(width: 156)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+        }
+    }
+
     private func infoCard(rows: [(String, String)]) -> some View {
         VStack(alignment: .leading, spacing: 20) {
             ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
@@ -371,13 +419,19 @@ struct FNOSItemDetailView: View {
     private func loadDetail() async {
         guard let client else { return }
         do {
-            let info = try await client.fetchPlaybackInfo(itemID: item.Id, userID: userID)
-            mediaSourceID = info.MediaSources?.first?.Id
-            runtimeTicks = info.MediaSources?.first?.RunTimeTicks
+            let detail = try await client.fetchItemDetail(itemID: item.Id, userID: userID)
+            mediaSourceID = detail.mediaSourceID
+            runtimeTicks = detail.runTimeTicks
+            people = detail.people
             if mediaSourceID == nil {
                 loadError = "未获取到媒体源"
             }
-            print("FNOSℹ️详情 \(item.Name ?? "?") 时长 ticks=\(runtimeTicks ?? -1) 源=\(mediaSourceID ?? "nil")")
+            print("FNOSℹ️详情 \(item.Name ?? "?") 时长ticks=\(runtimeTicks ?? -1) 源=\(mediaSourceID ?? "nil") 演员=\(people.count)")
+
+            // 从海报提取主题色（失败就保持黑底，不影响功能）
+            if let url = backdropURL {
+                themeColor = await FNOSDominantColor.color(for: url, headers: client.mediaHeaders)
+            }
         } catch {
             loadError = "获取播放信息失败：\(error.localizedDescription)"
             print("FNOS❗️详情加载失败: \(error)")

@@ -37,49 +37,81 @@ extension FNOSDirectClient {
         }
     }
 
-    /// 请求播放信息。
-    /// 注意：飞牛的 GET /Users/{uid}/Items/{id} **不返回 MediaSources**，
-    /// 必须走 POST Items/{id}/PlaybackInfo?UserId=，否则拿不到真实 MediaSourceId（stream 空值一律 400）。
-    func fetchPlaybackInfo(itemID: String, userID: String) async throws -> FNOSPlaybackInfo {
-        let requestURL = try url(path: "Items/\(itemID)/PlaybackInfo", query: ["UserId": userID])
-        var request = URLRequest(url: requestURL)
-        request.httpMethod = "POST"
-        request.timeoutInterval = 20
-        request.httpBody = Data("{}".utf8)
-        for (key, value) in requestHeaders {
-            request.setValue(value, forHTTPHeaderField: key)
-        }
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+    /// 条目详情（宽松解析：飞牛各版本字段不完全一致，用 JSONSerialization 容错）。
+    struct FNOSItemDetail {
+        var mediaSourceID: String?
+        var container: String?
+        var runTimeTicks: Int64?
+        var people: [FNOSPerson] = []
+    }
 
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let http = response as? HTTPURLResponse else {
-            throw FNOSDirectError("PlaybackInfo 非 HTTP 响应")
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            let body = String(data: data.prefix(300), encoding: .utf8) ?? "(二进制)"
-            print("FNOS❗️PlaybackInfo HTTP \(http.statusCode): \(body)")
-            throw FNOSDirectError("获取播放源失败 HTTP \(http.statusCode)")
-        }
-        do {
-            let info = try JSONDecoder().decode(FNOSPlaybackInfo.self, from: data)
-            print("FNOS✅ PlaybackInfo \(itemID) → \(info.MediaSources?.count ?? 0) 个媒体源")
-            return info
-        } catch {
+    struct FNOSPerson {
+        let id: String?
+        let name: String
+        let role: String?
+        let type: String?
+        let imageTag: String?
+    }
+
+    /// GET Users/{uid}/Items/{itemId}
+    /// 实测：这个端点会返回 MediaSources / People / RunTimeTicks（之前能播放正是靠它）。
+    /// 解析一律走 JSONSerialization 手动取值，避免模型字段不匹配导致整体解码失败。
+    func fetchItemDetail(itemID: String, userID: String) async throws -> FNOSItemDetail {
+        let data = try await get(path: "Users/\(userID)/Items/\(itemID)")
+
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             let raw = String(data: data.prefix(300), encoding: .utf8) ?? "(非文本)"
-            print("FNOS❗️PlaybackInfo 解析失败: \(error) 原文: \(raw)")
-            throw FNOSDirectError("解析播放源失败: \(error.localizedDescription)")
+            print("FNOS❗️条目详情非 JSON 对象: \(raw)")
+            throw FNOSDirectError("条目详情格式异常")
         }
+
+        var detail = FNOSItemDetail()
+        detail.runTimeTicks = (root["RunTimeTicks"] as? NSNumber)?.int64Value
+
+        if let sources = root["MediaSources"] as? [[String: Any]], let first = sources.first {
+            detail.mediaSourceID = (first["Id"] as? String) ?? (first["id"] as? String)
+            detail.container = (first["Container"] as? String) ?? (first["container"] as? String)
+            if let ticks = (first["RunTimeTicks"] as? NSNumber)?.int64Value, ticks > 0 {
+                detail.runTimeTicks = ticks
+            }
+            print("FNOS✅ 条目详情 \(itemID) → 媒体源 \(detail.mediaSourceID ?? "nil") 容器 \(detail.container ?? "?")")
+        } else {
+            print("FNOS⚠️ 条目详情 \(itemID) 无 MediaSources")
+        }
+
+        if let people = root["People"] as? [[String: Any]] {
+            detail.people = people.compactMap { dict in
+                guard let name = dict["Name"] as? String, !name.isEmpty else { return nil }
+                return FNOSPerson(
+                    id: dict["Id"] as? String,
+                    name: name,
+                    role: dict["Role"] as? String,
+                    type: dict["Type"] as? String,
+                    imageTag: dict["PrimaryImageTag"] as? String
+                )
+            }
+            print("FNOSℹ️ 演员/制作 \(detail.people.count) 人")
+        }
+
+        return detail
     }
 
     /// 条目播放源（fnOS 硬性要求：stream 的 MediaSourceId 必须传真实值，空值一律 400）
     func playbackSource(itemID: String, userID: String) async throws -> (mediaSourceID: String, container: String?) {
-        let info = try await fetchPlaybackInfo(itemID: itemID, userID: userID)
-        guard let source = info.MediaSources?.first,
-              let id = source.Id, !id.isEmpty
-        else {
+        let detail = try await fetchItemDetail(itemID: itemID, userID: userID)
+        guard let id = detail.mediaSourceID, !id.isEmpty else {
             throw FNOSDirectError("该条目没有可用的媒体源")
         }
-        return (id, source.Container ?? source.Path)
+        return (id, detail.container)
+    }
+
+    /// 演员头像 URL
+    func personImageURL(personID: String, tag: String?, maxWidth: Int = 300) -> URL? {
+        guard let tag, !tag.isEmpty else { return nil }
+        return try? url(
+            path: "Items/\(personID)/Images/Primary",
+            query: ["maxWidth": String(maxWidth), "quality": "85", "tag": tag]
+        )
     }
 
     /// 播放直链（static=true 原始流；容器可能是 MKV，由 KSPlayer 引擎分流处理）

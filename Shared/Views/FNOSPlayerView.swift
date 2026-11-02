@@ -239,24 +239,29 @@ struct FNOSPlayerContainerView: View {
             print("FNOSℹ️滑动手势已挂载")
 
             FNOSPanBridge.shared.onPan = { gesture in
+                // 焦点门控：只有焦点在进度条上时，滑动/转动转盘才拖动进度；
+                // 焦点在按钮上时无论多快都只用于移动焦点
                 switch gesture.state {
                 case .began:
-                    revealControls()
+                    if focus == .scrubber {
+                        scrubActive = true
+                        scrubValue = Double(coordinator.timemodel.currentTime)
+                    } else if !controlsVisible {
+                        revealControls()
+                    }
                 case .changed:
+                    guard focus == .scrubber, scrubActive else { return }
                     let translation = gesture.translation(in: gesture.view)
                     gesture.setTranslation(.zero, in: gesture.view)
-                    // 速度门控：慢速滑动=移动焦点（不拖进度）；快速滑动/转盘旋转=拖动进度
-                    // 一旦进入拖动就保持到松手（粘滞），方便快滑后减速微调
-                    let vx = gesture.velocity(in: gesture.view).x
-                    if !scrubActive, abs(vx) < 1600 { return }
+                    // 滑动灵敏度：1px ≈ 0.2s（转盘快速滚动可快速拖动）
                     let delta = Double(translation.x) * 0.2
                     let total = Double(max(coordinator.timemodel.totalTime, 1))
-                    let base = scrubActive ? scrubValue : Double(coordinator.timemodel.currentTime)
-                    scrubActive = true
-                    scrubValue = min(max(base + delta, 0), total)
+                    scrubValue = min(max(scrubValue + delta, 0), total)
                     scheduleScrubCommit()
                 case .ended, .cancelled:
-                    commitScrubIfNeeded()
+                    if focus == .scrubber {
+                        commitScrubIfNeeded()
+                    }
                 default:
                     break
                 }

@@ -18,5 +18,5 @@ enum FNOSAdapterBuild {
     static let version = "v17"
 
     /// 本版主要变更摘要
-    static let changes = "选中高亮去材质防焦点镜头板；转盘加速度门控（快滑拉进度/慢滑切按钮）"
+    static let changes = "焦点在进度条上时滑动/转动拉进度，按钮间快速切换不误触"
 }

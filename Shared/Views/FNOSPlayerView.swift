@@ -46,6 +46,8 @@ extension FNOSDirectClient {
         var people: [FNOSPerson] = []
         /// 原始响应里出现过的键名（诊断用：确认 People 等字段服务端到底给不给）
         var rawKeys: [String] = []
+        /// People 字段原始内容片段（诊断用）
+        var peopleRaw: String = ""
     }
 
     struct FNOSPerson {
@@ -89,21 +91,49 @@ extension FNOSDirectClient {
             print("FNOS⚠️ 条目详情 \(itemID) 无 MediaSources")
         }
 
+        if let peopleDict = root["People"] {
+            detail.peopleRaw = String(describing: peopleDict).prefix(80).description
+        } else {
+            detail.peopleRaw = "nil(无该键)"
+        }
+
         if let people = root["People"] as? [[String: Any]] {
-            detail.people = people.compactMap { dict in
-                guard let name = dict["Name"] as? String, !name.isEmpty else { return nil }
-                return FNOSPerson(
-                    id: dict["Id"] as? String,
-                    name: name,
-                    role: dict["Role"] as? String,
-                    type: dict["Type"] as? String,
-                    imageTag: dict["PrimaryImageTag"] as? String
-                )
+            detail.people = Self.parsePeople(people)
+            print("FNOSℹ️ 演员/制作 \(detail.people.count) 人（Items/{id}）")
+        }
+
+        // People 键存在但为空：换 Items/{id} 路径 + UserId 再试一次
+        if detail.people.isEmpty {
+            if let altData = try? await get(
+                path: "Items/\(itemID)",
+                query: ["UserId": userID, "Fields": "People"]
+            ),
+                let altRoot = try? JSONSerialization.jsonObject(with: altData) as? [String: Any]
+            {
+                if let people = altRoot["People"] as? [[String: Any]] {
+                    detail.people = Self.parsePeople(people)
+                    print("FNOSℹ️ 演员(备用端点 Items/{id}) \(detail.people.count) 人")
+                } else {
+                    print("FNOS⚠️ 演员备用端点无 People 键")
+                    detail.peopleRaw += " | 备用: 无People键"
+                }
             }
-            print("FNOSℹ️ 演员/制作 \(detail.people.count) 人")
         }
 
         return detail
+    }
+
+    static func parsePeople(_ people: [[String: Any]]) -> [FNOSPerson] {
+        people.compactMap { dict in
+            guard let name = dict["Name"] as? String, !name.isEmpty else { return nil }
+            return FNOSPerson(
+                id: dict["Id"] as? String,
+                name: name,
+                role: dict["Role"] as? String,
+                type: dict["Type"] as? String,
+                imageTag: dict["PrimaryImageTag"] as? String
+            )
+        }
     }
 
     /// 条目播放源（fnOS 硬性要求：stream 的 MediaSourceId 必须传真实值，空值一律 400）
@@ -174,6 +204,10 @@ struct FNOSPlayerContainerView: View {
     let userID: String
     /// 单集所属剧名（弹幕按剧名+集数匹配；item.SeriesName 缺失时用这个兜底）
     var seriesName: String? = nil
+    /// 同剧全部分集（进度条下方换集条；电影为空即不显示）
+    var episodes: [FNOSItem] = []
+    /// 点击换集回调（由详情页重建播放目标实现切集）
+    var onSelectEpisode: ((FNOSItem) -> Void)? = nil
 
     @Environment(\.dismiss)
     private var dismiss
@@ -199,6 +233,8 @@ struct FNOSPlayerContainerView: View {
     @State private var isSheetPresented = false
     @State private var audioSheetPresented = false
     @FocusState private var focus: Control?
+    // 换集条焦点
+    @FocusState private var focusedChip: String?
 
     private enum Control: Hashable {
         case rewind, playPause, forward, rate, danmu, danmuSettings, audio, scrubber
@@ -404,6 +440,11 @@ struct FNOSPlayerContainerView: View {
                     .font(.caption.monospacedDigit())
                     .foregroundColor(.white)
             }
+
+            // 换集条（紧贴进度条下方，播放中随时切换）
+            if !episodes.isEmpty {
+                episodeStrip
+            }
         }
         .padding(.horizontal, 90)
         .padding(.bottom, 48)
@@ -424,6 +465,60 @@ struct FNOSPlayerContainerView: View {
                 commitScrubIfNeeded()
             }
             scheduleHide()
+        }
+    }
+
+    /// 进度条下方的换集条：缩略图横排，当前集描边高亮，点选即切集
+    private var episodeStrip: some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 14) {
+                    ForEach(episodes) { ep in
+                        let isCurrent = ep.Id == item.Id
+                        let isFocused = focusedChip == ep.Id
+                        Button {
+                            guard !isCurrent else { return }
+                            onSelectEpisode?(ep)
+                        } label: {
+                            VStack(spacing: 6) {
+                                FNOSAsyncImage(
+                                    url: client.episodeStillURL(item: ep, maxWidth: 320),
+                                    headers: client.mediaHeaders,
+                                    contentMode: .fill
+                                )
+                                .frame(width: 168, height: 94)
+                                .clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        .stroke(Color.white, lineWidth: isCurrent ? 2 : 0)
+                                )
+
+                                Text("第 \(ep.IndexNumber ?? 0) 集")
+                                    .font(.system(size: 13, weight: isCurrent ? .bold : .medium))
+                                    .foregroundColor(isCurrent ? .white : .white.opacity(0.7))
+                            }
+                            .padding(7)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(isFocused ? Color.white.opacity(0.22) : Color.clear)
+                            )
+                        }
+                        .buttonStyle(FNOSBareButtonStyle())
+                        .focusEffectDisabled()
+                        .focused($focusedChip, equals: ep.Id)
+                        .id(ep.Id)
+                    }
+                }
+                .padding(.vertical, 4)
+            }
+            .frame(height: 146)
+            .onAppear {
+                proxy.scrollTo(item.Id, anchor: .center)
+            }
+        }
+        .onChange(of: focusedChip) { _ in
+            revealControls()
         }
     }
 

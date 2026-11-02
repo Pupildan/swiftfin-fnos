@@ -103,21 +103,12 @@ struct FNOSItemDetailView: View {
         }
     }
 
-    /// 时长文案：RunTimeTicks 按量级归一化（>=6e8 标准 100ns；120~86400 视为秒）
+    /// 时长文案：优先详情接口的 ticks，走统一单位判定
     private var durationString: String? {
-        guard var ticks = runtimeTicks ?? item.RunTimeTicks, ticks > 0 else { return nil }
-        if ticks < 600_000_000 {
-            guard ticks >= 120, ticks <= 24 * 3600 else { return nil }
-            ticks *= 10_000_000
-        }
-        let seconds = ticks / 10_000_000
-        guard seconds > 0 else { return nil }
-        let hours = seconds / 3600
-        let minutes = (seconds % 3600) / 60
-        if hours > 0 {
-            return minutes > 0 ? "\(hours) 小时 \(minutes) 分钟" : "\(hours) 小时"
-        }
-        return "\(minutes) 分钟"
+        FNOSItem.durationText(
+            ticks: runtimeTicks ?? item.RunTimeTicks,
+            isEpisode: item.type == "Episode"
+        )
     }
 
     private var genreLine: String {
@@ -202,7 +193,17 @@ struct FNOSItemDetailView: View {
                 item: target.item,
                 client: target.client,
                 userID: target.userID,
-                seriesName: target.seriesName
+                seriesName: target.seriesName,
+                episodes: target.item.type == "Episode" ? episodes : [],
+                onSelectEpisode: { ep in
+                    // 换集：重建播放目标（新 id → 全屏播放器重建，重新拉流与弹幕）
+                    playbackTarget = FNOSPlaybackTarget(
+                        item: ep,
+                        client: target.client,
+                        userID: userID,
+                        seriesName: target.seriesName ?? item.Name
+                    )
+                }
             )
         }
     }
@@ -684,7 +685,7 @@ struct FNOSItemDetailView: View {
                 fetchedBackdropTags = tags
             }
             let peopleKey = detail.rawKeys.contains("People")
-            debugLines.append("详情: 演员\(detail.people.count) 源\(detail.mediaSourceID == nil ? "无" : "有") People键=\(peopleKey ? "有" : "无")")
+            debugLines.append("详情: 演员\(detail.people.count) 源\(detail.mediaSourceID == nil ? "无" : "有") People键=\(peopleKey ? "有" : "无") 原始[\(detail.peopleRaw)]")
             print("FNOSℹ️详情 \(item.Name ?? "?") 时长ticks=\(runtimeTicks ?? -1) 源=\(mediaSourceID ?? "nil") 演员=\(people.count) 字段=\(detail.rawKeys)")
         } catch {
             debugLines.append("详情失败: \(error.localizedDescription)")

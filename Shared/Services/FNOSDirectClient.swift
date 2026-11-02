@@ -180,30 +180,40 @@ struct FNOSItem: Decodable, Identifiable {
 }
 
 extension FNOSItem {
-    /// 归一化时长（100ns 单位）。飞牛分集接口的 RunTimeTicks 有时给秒、有时给 0，
-    /// 按量级判定：>=6e8 视为标准 100ns；120~86400 视为秒；其它视为无效。
-    var normalizedTicks: Int64? {
-        guard let ticks = RunTimeTicks, ticks > 0 else { return nil }
-        if ticks >= 600_000_000 { return ticks }
-        if ticks >= 120, ticks <= 24 * 3600 { return ticks * 10_000_000 }
+    /// 时长秒数（飞牛 RunTimeTicks 单位不统一：标准 100ns / 微秒 / 秒都见过）。
+    /// 按候选单位换算，取第一个落在合理区间的结果：剧集 20 分钟~4 小时，电影 5 分钟~4 小时。
+    static func plausibleSeconds(ticks: Int64?, isEpisode: Bool) -> Double? {
+        guard let ticks, ticks > 0 else { return nil }
+        let lower: Double = isEpisode ? 20 * 60 : 5 * 60
+        let upper: Double = 4 * 3600
+        for factor in [10_000_000.0, 1_000_000.0, 1_000.0, 1.0] {
+            let seconds = Double(ticks) / factor
+            if seconds >= lower, seconds <= upper { return seconds }
+        }
         return nil
     }
 
-    /// 时长展示文案（RunTimeTicks 单位为 100 纳秒）
-    var durationString: String? {
-        guard let ticks = normalizedTicks else { return nil }
-        let seconds = ticks / 10_000_000
+    static func durationText(ticks: Int64?, isEpisode: Bool) -> String? {
+        guard let secondsDouble = plausibleSeconds(ticks: ticks, isEpisode: isEpisode) else { return nil }
+        let seconds = Int(secondsDouble)
         let hours = seconds / 3600
         let minutes = (seconds % 3600) / 60
         if hours > 0 {
             return minutes > 0 ? "\(hours) 小时 \(minutes) 分钟" : "\(hours) 小时"
-        } else {
-            return "\(minutes) 分钟"
         }
+        return "\(minutes) 分钟"
+    }
+
+    var plausibleSeconds: Double? {
+        Self.plausibleSeconds(ticks: RunTimeTicks, isEpisode: type == "Episode")
+    }
+
+    /// 时长展示文案
+    var durationString: String? {
+        Self.durationText(ticks: RunTimeTicks, isEpisode: type == "Episode")
     }
 
     /// 卡片角标用的紧凑时长（"54分钟" / "1小时6分钟"）
-    /// 归一化后仍不足 1 分钟视为无效、不显示
     var compactDuration: String? {
         durationString?.replacingOccurrences(of: " ", with: "")
     }

@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v47"
+    static let version = "v48"
 
     /// 本版主要变更摘要
-    static let changes = "弹幕改为剧名+集数匹配(match多命名→search按集号→原标题兜底)；时长按量级归一化不再显示0分钟；诊断行精简为关键结论"
+    static let changes = "播放页进度条下方新增换集条(缩略图横排+当前集描边)；时长按内容类型判定单位(剧集4.2e9→70分钟)；演员加 Items/{id} 备用端点+原始值诊断"
 }

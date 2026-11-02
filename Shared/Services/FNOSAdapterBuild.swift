@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v40"
+    static let version = "v41"
 
     /// 本版主要变更摘要
-    static let changes = "回退播放源为 GET Items/{id} 并改宽松解析(修复播放失败)；Hero 按钮改为与详情页同款视觉(独立实现)；详情页新增演员阵容(飞牛数据)；详情页背景按海报自动取色生成动态渐变"
+    static let changes = "修复详情页播放失败(播放器改在详情页内打开，避免 cover 竞态取消请求)；详情页背景剧照每2秒轮播；删除关于区块；演员卡片加高显示完整角色名；Hero 按钮去掉外描边"
 }

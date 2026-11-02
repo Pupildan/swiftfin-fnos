@@ -14,9 +14,16 @@ struct FNOSItemDetailView: View {
     let item: FNOSItem
     let client: FNOSDirectClient?
     let userID: String
-    let onPlay: (String) -> Void
+    /// 剧集：交给外层弹选集面板
+    let onEpisodes: (FNOSItem) -> Void
 
     @Environment(\.dismiss) private var dismiss
+
+    /// 播放器在本页内打开（不先关详情页），避免 fullScreenCover 竞态导致请求被取消
+    @State private var playbackTarget: FNOSPlaybackTarget?
+
+    /// 详情页背景图轮播索引
+    @State private var backdropIndex = 0
 
     // 详情数据（媒体源、时长、演员）
     @State private var mediaSourceID: String?
@@ -30,18 +37,52 @@ struct FNOSItemDetailView: View {
     private enum DetailButton { case play, plus, info }
     @FocusState private var focusedButton: DetailButton?
 
+    /// 全部可用背景图（多张 Backdrop 用于轮播；没有横图时退化为竖版海报）
+    private var backdropURLs: [URL] {
+        guard let client else { return [] }
+        var urls: [URL] = []
+
+        if let tags = item.BackdropImageTags, !tags.isEmpty {
+            for (index, tag) in tags.enumerated() where !tag.isEmpty {
+                if let url = try? client.url(
+                    path: "Items/\(item.Id)/Images/Backdrop/\(index)",
+                    query: ["maxWidth": "1920", "quality": "90", "tag": tag]
+                ) {
+                    urls.append(url)
+                }
+            }
+        }
+
+        if urls.isEmpty, let primary = item.ImageTags?["Primary"], !primary.isEmpty {
+            if let url = try? client.url(
+                path: "Items/\(item.Id)/Images/Primary",
+                query: ["maxWidth": "1920", "quality": "90", "tag": primary]
+            ) {
+                urls.append(url)
+            }
+        }
+
+        return urls
+    }
+
+    /// 当前展示的背景图
     private var backdropURL: URL? {
-        guard let client else { return nil }
-        let hasBackdrop = item.BackdropImageTags?.isEmpty == false
-        let tag = hasBackdrop ? item.BackdropImageTags?.first : item.ImageTags?["Primary"]
-        guard let tag, !tag.isEmpty else { return nil }
-        let path = hasBackdrop
-            ? "Items/\(item.Id)/Images/Backdrop"
-            : "Items/\(item.Id)/Images/Primary"
-        return try? client.url(
-            path: path,
-            query: ["maxWidth": "1920", "quality": "90", "tag": tag]
-        )
+        guard !backdropURLs.isEmpty else { return nil }
+        return backdropURLs[min(backdropIndex, backdropURLs.count - 1)]
+    }
+
+    /// 每 2 秒切换到下一张剧照（只有 1 张时不动）
+    @MainActor
+    private func rotateBackdrops() async {
+        let count = backdropURLs.count
+        guard count > 1 else { return }
+        while !Task.isCancelled {
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeInOut(duration: 0.7)) {
+                backdropIndex = (backdropIndex + 1) % count
+            }
+        }
     }
 
     /// 时长文案：优先 PlaybackInfo 的 RunTimeTicks（Jellyfin 单位 100ns）
@@ -123,6 +164,16 @@ struct FNOSItemDetailView: View {
         .task {
             await loadDetail()
         }
+        .task(id: item.Id) {
+            await rotateBackdrops()
+        }
+        .fullScreenCover(item: $playbackTarget) { target in
+            FNOSPlayerContainerView(
+                item: target.item,
+                client: target.client,
+                userID: target.userID
+            )
+        }
     }
 
     // MARK: - 顶部全屏 Hero
@@ -136,6 +187,7 @@ struct FNOSItemDetailView: View {
             )
             .frame(width: size.width, height: size.height)
             .clipped()
+            .animation(.easeInOut(duration: 0.7), value: backdropIndex)
 
             LinearGradient(
                 stops: [
@@ -313,25 +365,6 @@ struct FNOSItemDetailView: View {
                 castSection
             }
 
-            if let overview = item.Overview, !overview.isEmpty {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("关于")
-                        .font(.system(size: 26, weight: .bold))
-                        .foregroundColor(.white)
-
-                    Text(overview)
-                        .font(.system(size: 19))
-                        .foregroundColor(.white.opacity(0.8))
-                        .fixedSize(horizontal: false, vertical: true)
-                        .padding(28)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(
-                            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                                .fill(Color.white.opacity(0.09))
-                        )
-                }
-            }
-
             VStack(alignment: .leading, spacing: 16) {
                 Text("信息")
                     .font(.system(size: 26, weight: .bold))
@@ -360,7 +393,7 @@ struct FNOSItemDetailView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 28) {
                     ForEach(Array(people.enumerated()), id: \.offset) { _, person in
-                        VStack(spacing: 10) {
+                        VStack(spacing: 8) {
                             FNOSAsyncImage(
                                 url: person.id.flatMap { id in
                                     client?.personImageURL(personID: id, tag: person.imageTag)
@@ -368,23 +401,21 @@ struct FNOSItemDetailView: View {
                                 headers: client?.mediaHeaders ?? [:],
                                 contentMode: .fill
                             )
-                            .frame(width: 132, height: 132)
+                            .frame(width: 124, height: 124)
                             .clipShape(Circle())
                             .overlay(Circle().stroke(Color.white.opacity(0.12), lineWidth: 1))
 
                             Text(person.name)
-                                .font(.system(size: 17, weight: .semibold))
+                                .font(.system(size: 16, weight: .semibold))
                                 .foregroundColor(.white)
                                 .lineLimit(1)
 
-                            if let role = person.role, !role.isEmpty, role != person.name {
-                                Text(role)
-                                    .font(.system(size: 15))
-                                    .foregroundColor(.white.opacity(0.55))
-                                    .lineLimit(1)
-                            }
+                            Text(person.role ?? " ")
+                                .font(.system(size: 14))
+                                .foregroundColor(.white.opacity(0.55))
+                                .lineLimit(1)
                         }
-                        .frame(width: 156)
+                        .frame(width: 150)
                     }
                 }
                 .padding(.vertical, 4)
@@ -440,14 +471,16 @@ struct FNOSItemDetailView: View {
 
     private func playNow() {
         if item.type == "Series" {
-            onPlay("")
+            onEpisodes(item)
             return
         }
-        guard let mediaSourceID else {
-            loadError = "尚未获取到媒体源，请稍后重试"
+        guard let client else {
+            loadError = "客户端未初始化"
             return
         }
-        onPlay(mediaSourceID)
+        loadError = nil
+        // 在本页内打开播放器（详情页不关闭），彻底避免 cover 竞态导致请求被取消
+        playbackTarget = FNOSPlaybackTarget(item: item, client: client, userID: userID)
     }
 
     @AppStorage("fnos.watchlater") private var watchLaterIDs = ""

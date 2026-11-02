@@ -57,7 +57,12 @@ extension FNOSDirectClient {
     /// 实测：这个端点会返回 MediaSources / People / RunTimeTicks（之前能播放正是靠它）。
     /// 解析一律走 JSONSerialization 手动取值，避免模型字段不匹配导致整体解码失败。
     func fetchItemDetail(itemID: String, userID: String) async throws -> FNOSItemDetail {
-        let data = try await get(path: "Users/\(userID)/Items/\(itemID)")
+        // 显式声明需要的字段，尽量让服务端返回完整的 People / MediaSources
+        let fields = "People,MediaSources,MediaStreams,Overview,Genres,OfficialRating,RunTimeTicks,ProductionYear,BackdropImageTags"
+        let data = try await get(
+            path: "Users/\(userID)/Items/\(itemID)",
+            query: ["Fields": fields]
+        )
 
         guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             let raw = String(data: data.prefix(300), encoding: .utf8) ?? "(非文本)"

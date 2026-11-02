@@ -344,7 +344,7 @@ struct FNOSHeroBanner: View {
                             .font(.system(size: 21, weight: .semibold))
                     }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(FNOSBareButtonStyle())
                 .focusEffectDisabled()
                 .focused($focusedButton, equals: .play)
                 .onMoveCommand { direction in
@@ -367,7 +367,7 @@ struct FNOSHeroBanner: View {
                             .font(.system(size: 22, weight: .semibold))
                     }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(FNOSBareButtonStyle())
                 .focusEffectDisabled()
                 .focused($focusedButton, equals: .plus)
                 .onMoveCommand { direction in
@@ -385,7 +385,7 @@ struct FNOSHeroBanner: View {
                             .font(.system(size: 22, weight: .semibold))
                     }
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(FNOSBareButtonStyle())
                 .focusEffectDisabled()
                 .focused($focusedButton, equals: .detail)
                 .onMoveCommand { direction in
@@ -417,6 +417,7 @@ struct FNOSHeroBanner: View {
         @ViewBuilder label: () -> L
     ) -> some View {
         let isFocused = focusedButton == id
+        // 与详情页同一套视觉：无外描边，未聚焦半透明黑胶囊，聚焦纯白胶囊
         label()
             .foregroundColor(isFocused ? .black : .white)
             .padding(.horizontal, isPrimary ? 34 : 0)
@@ -425,13 +426,6 @@ struct FNOSHeroBanner: View {
             .background(
                 Capsule()
                     .fill(isFocused ? Color.white : Color.black.opacity(0.35))
-            )
-            .overlay(
-                Capsule()
-                    .strokeBorder(
-                        Color.white.opacity(isFocused ? 0 : 0.25),
-                        lineWidth: 1
-                    )
             )
             .scaleEffect(isFocused ? 1.06 : 1.0)
             .animation(.easeOut(duration: 0.16), value: isFocused)

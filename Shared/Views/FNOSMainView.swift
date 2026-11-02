@@ -160,16 +160,11 @@ struct FNOSMainView: View {
                 item: item,
                 client: client,
                 userID: userID,
-                onPlay: { _ in
+                onEpisodes: { series in
+                    // 剧集才需要回主页弹选集面板；电影在详情页内直接播放
                     detailItem = nil
-                    if item.type == "Series" {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                            seriesItem = item
-                        }
-                    } else {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                            openPlayback(item: item)
-                        }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        seriesItem = series
                     }
                 }
             )

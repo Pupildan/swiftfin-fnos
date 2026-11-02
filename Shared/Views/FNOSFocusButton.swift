@@ -34,13 +34,6 @@ struct FNOSFocusButtonLabel: View {
                 Capsule()
                     .fill(isFocused ? Color.white : Color.black.opacity(0.35))
             )
-            .overlay(
-                Capsule()
-                    .strokeBorder(
-                        Color.white.opacity(isFocused ? 0 : 0.25),
-                        lineWidth: 1
-                    )
-            )
             .scaleEffect(isFocused ? 1.06 : 1.0)
             .animation(.easeOut(duration: 0.16), value: isFocused)
     }

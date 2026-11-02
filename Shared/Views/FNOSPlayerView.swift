@@ -77,10 +77,8 @@ extension View {
     func fnosGlass(_ active: Bool, in shape: some Shape) -> some View {
         if active {
             self
-                .background(.ultraThinMaterial, in: shape)
-                .overlay(Color.white.opacity(0.14).clipShape(shape))
-                .overlay(shape.stroke(.white.opacity(0.5), lineWidth: 1.5))
-                .shadow(color: .black.opacity(0.4), radius: 12, y: 2)
+                .background(Color.white.opacity(0.10), in: shape)
+                .overlay(shape.stroke(.white.opacity(0.45), lineWidth: 1.5))
         } else {
             self
         }
@@ -247,7 +245,10 @@ struct FNOSPlayerContainerView: View {
                 case .changed:
                     let translation = gesture.translation(in: gesture.view)
                     gesture.setTranslation(.zero, in: gesture.view)
-                    // 滑动灵敏度：1px ≈ 0.2s（转盘快速滚动可快速拖动）
+                    // 速度门控：慢速滑动=移动焦点（不拖进度）；快速滑动/转盘旋转=拖动进度
+                    // 一旦进入拖动就保持到松手（粘滞），方便快滑后减速微调
+                    let vx = gesture.velocity(in: gesture.view).x
+                    if !scrubActive, abs(vx) < 1600 { return }
                     let delta = Double(translation.x) * 0.2
                     let total = Double(max(coordinator.timemodel.totalTime, 1))
                     let base = scrubActive ? scrubValue : Double(coordinator.timemodel.currentTime)

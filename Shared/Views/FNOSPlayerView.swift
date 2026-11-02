@@ -24,32 +24,62 @@ private let fnosAVHTTPHeaderFieldsKey = "AVURLAssetHTTPHeaderFieldsKey"
 
 extension FNOSDirectClient {
 
-    /// 条目播放源（fnOS 硬性要求：stream 的 MediaSourceId 必须传真实值，空值一律 400）
-    func playbackSource(itemID: String, userID: String) async throws -> (mediaSourceID: String, container: String?) {
-        let data = try await get(path: "Users/\(userID)/Items/\(itemID)")
+    /// PlaybackInfo 响应（Jellyfin/Emby 标准：POST Items/{id}/PlaybackInfo）
+    struct FNOSPlaybackInfo: Decodable {
+        let MediaSources: [FNOSPlaybackMediaSource]?
 
-        struct Detail: Decodable {
-            let MediaSources: [FNOSMediaSource]?
-        }
-        struct FNOSMediaSource: Decodable {
-            let Id: String
+        struct FNOSPlaybackMediaSource: Decodable {
+            let Id: String?
             let Container: String?
             let Path: String?
+            let RunTimeTicks: Int64?
+            let Name: String?
         }
+    }
 
-        let detail: Detail
+    /// 请求播放信息。
+    /// 注意：飞牛的 GET /Users/{uid}/Items/{id} **不返回 MediaSources**，
+    /// 必须走 POST Items/{id}/PlaybackInfo?UserId=，否则拿不到真实 MediaSourceId（stream 空值一律 400）。
+    func fetchPlaybackInfo(itemID: String, userID: String) async throws -> FNOSPlaybackInfo {
+        let requestURL = try url(path: "Items/\(itemID)/PlaybackInfo", query: ["UserId": userID])
+        var request = URLRequest(url: requestURL)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 20
+        request.httpBody = Data("{}".utf8)
+        for (key, value) in requestHeaders {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else {
+            throw FNOSDirectError("PlaybackInfo 非 HTTP 响应")
+        }
+        guard (200..<300).contains(http.statusCode) else {
+            let body = String(data: data.prefix(300), encoding: .utf8) ?? "(二进制)"
+            print("FNOS❗️PlaybackInfo HTTP \(http.statusCode): \(body)")
+            throw FNOSDirectError("获取播放源失败 HTTP \(http.statusCode)")
+        }
         do {
-            detail = try JSONDecoder().decode(Detail.self, from: data)
+            let info = try JSONDecoder().decode(FNOSPlaybackInfo.self, from: data)
+            print("FNOS✅ PlaybackInfo \(itemID) → \(info.MediaSources?.count ?? 0) 个媒体源")
+            return info
         } catch {
             let raw = String(data: data.prefix(300), encoding: .utf8) ?? "(非文本)"
-            print("FNOS❗️解析条目详情失败: \(error) 原文: \(raw)")
-            throw FNOSDirectError("解析条目详情失败: \(error.localizedDescription)")
+            print("FNOS❗️PlaybackInfo 解析失败: \(error) 原文: \(raw)")
+            throw FNOSDirectError("解析播放源失败: \(error.localizedDescription)")
         }
+    }
 
-        guard let source = detail.MediaSources?.first, !source.Id.isEmpty else {
-            throw FNOSDirectError("条目缺少 MediaSources，无法取播放源")
+    /// 条目播放源（fnOS 硬性要求：stream 的 MediaSourceId 必须传真实值，空值一律 400）
+    func playbackSource(itemID: String, userID: String) async throws -> (mediaSourceID: String, container: String?) {
+        let info = try await fetchPlaybackInfo(itemID: itemID, userID: userID)
+        guard let source = info.MediaSources?.first,
+              let id = source.Id, !id.isEmpty
+        else {
+            throw FNOSDirectError("该条目没有可用的媒体源")
         }
-        return (source.Id, source.Container ?? source.Path)
+        return (id, source.Container ?? source.Path)
     }
 
     /// 播放直链（static=true 原始流；容器可能是 MKV，由 KSPlayer 引擎分流处理）

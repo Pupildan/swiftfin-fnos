@@ -90,7 +90,8 @@ struct FNOSMainView: View {
                                         client: heroClient,
                                         userID: userID,
                                         onPlay: { item in
-                                            open(item: item)
+                                            // Hero 播放 = 立即播放，不跳详情页
+                                            playDirectly(item: item)
                                         },
                                         onDetail: { item in
                                             open(item: item)
@@ -158,7 +159,8 @@ struct FNOSMainView: View {
             FNOSItemDetailView(
                 item: item,
                 client: client,
-                onPlay: {
+                userID: userID,
+                onPlay: { _ in
                     detailItem = nil
                     if item.type == "Series" {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
@@ -323,9 +325,18 @@ struct FNOSMainView: View {
 
     // MARK: - 导航
 
+    /// 详情页入口（海报墙点击）
     private func open(item: FNOSItem) {
-        // 统一进入详情页，详情页里的播放按钮再决定是直播还是选集
         detailItem = item
+    }
+
+    /// Hero 播放入口：直接开始播放，不经过详情页
+    private func playDirectly(item: FNOSItem) {
+        if item.type == "Series" {
+            seriesItem = item
+        } else {
+            openPlayback(item: item)
+        }
     }
 
     private func openPlayback(item: FNOSItem) {

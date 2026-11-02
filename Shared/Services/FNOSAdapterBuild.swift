@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v38"
+    static let version = "v39"
 
     /// 本版主要变更摘要
-    static let changes = "新增影视详情页(1:1 复刻 Apple TV+)；修复 Hero 一直拿不到横版大图的 bug(Backdrop tag 在 BackdropImageTags 数组)；海报改后台解码消除切换卡顿；去掉无效的液态玻璃高光"
+    static let changes = "修复详情页播放源获取失败(改用 POST PlaybackInfo)；修复时长错误；详情页按钮焦点白底/玻璃底切换、下键滚动、间距加大；Hero 播放改为直接播放不跳详情页"
 }

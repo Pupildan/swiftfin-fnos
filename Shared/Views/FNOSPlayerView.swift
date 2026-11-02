@@ -77,8 +77,8 @@ extension View {
     func fnosGlass(_ active: Bool, in shape: some Shape) -> some View {
         if active {
             self
-                .background(Color.white.opacity(0.10), in: shape)
-                .overlay(shape.stroke(.white.opacity(0.45), lineWidth: 1.5))
+                .background(Color.black.opacity(0.3), in: shape)
+                .glassEffect(.clear, in: shape)
         } else {
             self
         }
@@ -239,8 +239,7 @@ struct FNOSPlayerContainerView: View {
             print("FNOSℹ️滑动手势已挂载")
 
             FNOSPanBridge.shared.onPan = { gesture in
-                // 焦点门控：只有焦点在进度条上时，滑动/转动转盘才拖动进度；
-                // 焦点在按钮上时无论多快都只用于移动焦点
+                // 门控：只有进度条聚焦时滑动才拖进度，否则转盘滑动用于移动焦点
                 switch gesture.state {
                 case .began:
                     if focus == .scrubber {
@@ -366,7 +365,8 @@ struct FNOSPlayerContainerView: View {
                     .fill(.white)
                     .frame(width: max(0, geo.size.width * displayFraction))
             }
-            .frame(height: 6)
+            .frame(height: focus == .scrubber ? 14 : 6)
+            .animation(.easeOut(duration: 0.15), value: focus == .scrubber)
             .contentShape(Rectangle())
         }
         .frame(height: 28)
@@ -628,7 +628,7 @@ struct FNOSDanmuSettingsSheet: View {
                     .frame(width: 260, height: 56)
             }
             .buttonStyle(.plain)
-            .fnosGlass(true, in: Capsule())
+            .glassEffect(.regular, in: Capsule())
         }
         .padding(60)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -651,7 +651,7 @@ struct FNOSDanmuSettingsSheet: View {
                     .frame(width: 72, height: 48)
             }
             .buttonStyle(.plain)
-            .fnosGlass(true, in: Capsule())
+            .glassEffect(.regular, in: Capsule())
             Text(text)
                 .font(.title3.monospacedDigit())
                 .frame(width: 140)
@@ -660,7 +660,7 @@ struct FNOSDanmuSettingsSheet: View {
                     .frame(width: 72, height: 48)
             }
             .buttonStyle(.plain)
-            .fnosGlass(true, in: Capsule())
+            .glassEffect(.regular, in: Capsule())
         }
     }
 }
@@ -702,7 +702,7 @@ struct FNOSAudioTracksSheet: View {
                                 .padding(.vertical, 16)
                             }
                             .buttonStyle(.plain)
-                            .fnosGlass(true, in: Capsule())
+                            .glassEffect(.regular, in: Capsule())
                         }
                     }
                     .padding(.horizontal, 60)
@@ -716,7 +716,7 @@ struct FNOSAudioTracksSheet: View {
                     .frame(width: 260, height: 56)
             }
             .buttonStyle(.plain)
-            .fnosGlass(true, in: Capsule())
+            .glassEffect(.regular, in: Capsule())
         }
         .padding(60)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v17"
+    static let version = "v16"
 
     /// 本版主要变更摘要
-    static let changes = "焦点在进度条上时滑动/转动拉进度，按钮间快速切换不误触"
+    static let changes = "修复选中白框与进度误动，弹幕渲染改位图缓存消除卡顿"
 }

@@ -44,6 +44,8 @@ final class FNOSNativeClient {
         var episodeDurations: [Int: Int] = [:]
         /// 电影/单集的时长（秒）
         var durationSeconds: Int?
+        /// 第一个季的 guid（分集接口要的是季 guid，不是剧集 guid）
+        var seasonGuid: String?
         var debug: [String] = []
     }
 
@@ -125,12 +127,23 @@ final class FNOSNativeClient {
         result.guid = hit.guid
         result.durationSeconds = hit.duration > 0 ? hit.duration : nil
 
-        // 2) 演员
-        result.persons = await fetchPersons(guid: hit.guid, log: log)
+        // 2) 演员（剧集 → 条目 guid；为空时下面再退季 guid / 条目详情）
+        result.persons = await fetchPersons(guid: hit.guid, log: log, label: "条目")
 
-        // 3) 剧集：逐集时长
+        // 3) 剧集：先拿季，再逐季取分集（飞牛 episode/list 必须传**季** guid）
         if isSeries {
-            result.episodeDurations = await fetchEpisodeDurations(guid: hit.guid, log: log)
+            let episodes = await fetchEpisodeDurations(tvGuid: hit.guid, log: log)
+            result.episodeDurations = episodes.durations
+            result.seasonGuid = episodes.firstSeasonGuid
+
+            if result.persons.isEmpty, let seasonGuid = episodes.firstSeasonGuid, seasonGuid != hit.guid {
+                result.persons = await fetchPersons(guid: seasonGuid, log: log, label: "季")
+            }
+        }
+
+        // 4) 演员最后一招：条目详情里可能带 cast
+        if result.persons.isEmpty {
+            result.persons = await fetchPersonsFromItemDetail(guid: hit.guid, log: log)
         }
 
         result.debug = log.lines
@@ -198,74 +211,112 @@ final class FNOSNativeClient {
 
     // MARK: - 演员
 
-    private func fetchPersons(guid: String, log: DebugLog) async -> [Person] {
+    private func fetchPersons(guid: String, log: DebugLog, label: String) async -> [Person] {
         do {
             let json = try await post(path: "api/v1/person/list/\(guid)", body: #"{"page":1,"page_size":200}"#)
             let list = Self.extractList(json["data"])
-            log.add("原生演员结构: \(Self.describeStructure(json["data"])) → \(list.count) 条")
-            let people: [Person] = list.compactMap { dict in
-                guard let name = dict["name"] as? String, !name.isEmpty else { return nil }
-                return Person(
-                    name: name,
-                    role: dict["role"] as? String,
-                    job: dict["job"] as? String,
-                    profilePath: dict["profile_path"] as? String
-                )
+            let total = Self.totalCount(json["data"])
+            log.add("原生演员(\(label)): \(Self.describeStructure(json["data"])) total=\(total) → \(list.count) 条")
+            let people = Self.parsePersons(list)
+            if !people.isEmpty {
+                log.add("原生演员(\(label)): \(people.count) 人")
+                print("FNOSℹ️原生演员(\(label)) \(people.count) 人")
+                return people
             }
-            log.add("原生演员: \(people.count) 人")
-            print("FNOSℹ️原生演员 \(people.count) 人")
-            if !people.isEmpty { return people }
-        } catch {
-            log.add("原生演员失败: \(short(error))")
-        }
-
-        // 兜底：部分版本 person/list 走 body 传 item_guid
-        do {
-            let body = "{\"item_guid\":\"\(Self.escape(guid))\",\"page\":1,\"page_size\":200}"
-            let json = try await post(path: "api/v1/person/list", body: body)
-            let list = Self.extractList(json["data"])
-            let people: [Person] = list.compactMap { dict in
-                guard let name = dict["name"] as? String, !name.isEmpty else { return nil }
-                return Person(
-                    name: name,
-                    role: dict["role"] as? String,
-                    job: dict["job"] as? String,
-                    profilePath: dict["profile_path"] as? String
-                )
+            // total > 0 但 list 为空 → 多半是 page_size 超出上限，用小页重试
+            if total > 0 {
+                let retry = try await post(path: "api/v1/person/list/\(guid)", body: #"{"page":1,"page_size":30}"#)
+                let retryList = Self.extractList(retry["data"])
+                let retryPeople = Self.parsePersons(retryList)
+                log.add("原生演员(\(label))小页重试: \(retryList.count) 条 → \(retryPeople.count) 人")
+                return retryPeople
             }
-            log.add("原生演员(body形式): \(Self.describeStructure(json["data"])) → \(people.count) 人")
-            return people
+            return []
         } catch {
-            log.add("原生演员(body)失败: \(short(error))")
+            log.add("原生演员(\(label))失败: \(short(error))")
             return []
         }
     }
 
-    // MARK: - 逐集时长
-
-    private func fetchEpisodeDurations(guid: String, log: DebugLog) async -> [Int: Int] {
+    /// 条目详情里可能带 cast/actors（不同版本字段名不同）
+    private func fetchPersonsFromItemDetail(guid: String, log: DebugLog) async -> [Person] {
         do {
-            let json = try await get(path: "api/v1/episode/list/\(guid)")
-            let list = Self.extractList(json["data"])
-            log.add("原生分集结构: \(Self.describeStructure(json["data"])) → \(list.count) 条")
-            var map: [Int: Int] = [:]
-            for dict in list {
-                let number = (dict["episode_number"] as? NSNumber)?.intValue
-                    ?? (dict["episode"] as? NSNumber)?.intValue
-                guard let number else { continue }
-                var seconds = (dict["duration"] as? NSNumber)?.intValue ?? 0
-                // runtime 单位是分钟
-                if seconds <= 0, let minutes = (dict["runtime"] as? NSNumber)?.intValue, minutes > 0 {
-                    seconds = minutes * 60
-                }
-                if seconds > 0 { map[number] = seconds }
+            let json = try await get(path: "api/v1/item/\(guid)")
+            guard let data = json["data"] as? [String: Any] else {
+                log.add("原条目详情: data 非对象")
+                return []
             }
-            log.add("原生分集时长: \(map.count) 集")
-            return map
+            log.add("原条目详情 keys[\(data.keys.sorted().joined(separator: ","))]")
+            for key in ["persons", "actors", "cast", "peoples", "credits"] {
+                if let list = data[key] as? [[String: Any]], !list.isEmpty {
+                    let people = Self.parsePersons(list)
+                    if !people.isEmpty {
+                        log.add("详情演员(\(key)): \(people.count) 人")
+                        return people
+                    }
+                }
+            }
+            return []
         } catch {
-            log.add("原生分集失败: \(short(error))")
-            return [:]
+            log.add("原条目详情失败: \(short(error))")
+            return []
         }
+    }
+
+    private static func parsePersons(_ list: [[String: Any]]) -> [Person] {
+        list.compactMap { dict in
+            guard let name = dict["name"] as? String, !name.isEmpty else { return nil }
+            return Person(
+                name: name,
+                role: dict["role"] as? String,
+                job: dict["job"] as? String,
+                profilePath: dict["profile_path"] as? String
+            )
+        }
+    }
+
+    // MARK: - 逐集时长（飞牛：先 season/list 拿季 guid，再 episode/list 取集）
+
+    private func fetchEpisodeDurations(
+        tvGuid: String,
+        log: DebugLog
+    ) async -> (durations: [Int: Int], firstSeasonGuid: String?) {
+        var seasonGuids: [String] = []
+        do {
+            let json = try await get(path: "api/v1/season/list/\(tvGuid)")
+            let list = Self.extractList(json["data"])
+            log.add("原生季列表: \(Self.describeStructure(json["data"])) → \(list.count) 季")
+            seasonGuids = list.compactMap { $0["guid"] as? String }.filter { !$0.isEmpty }
+        } catch {
+            log.add("原生季列表失败: \(short(error))")
+        }
+
+        // 没有季数据时，退回直接用剧集 guid 试一次
+        if seasonGuids.isEmpty { seasonGuids = [tvGuid] }
+
+        var map: [Int: Int] = [:]
+        for (index, seasonGuid) in seasonGuids.enumerated() {
+            do {
+                let json = try await get(path: "api/v1/episode/list/\(seasonGuid)")
+                let list = Self.extractList(json["data"])
+                log.add("原生分集(\(index + 1)/\(seasonGuids.count)): \(Self.describeStructure(json["data"])) total=\(Self.totalCount(json["data"])) → \(list.count) 条")
+                for dict in list {
+                    let number = (dict["episode_number"] as? NSNumber)?.intValue
+                        ?? (dict["episode"] as? NSNumber)?.intValue
+                    guard let number else { continue }
+                    var seconds = (dict["duration"] as? NSNumber)?.intValue ?? 0
+                    // runtime 单位是分钟
+                    if seconds <= 0, let minutes = (dict["runtime"] as? NSNumber)?.intValue, minutes > 0 {
+                        seconds = minutes * 60
+                    }
+                    if seconds > 0 { map[number] = seconds }
+                }
+            } catch {
+                log.add("原生分集(\(index + 1))失败: \(short(error))")
+            }
+        }
+        log.add("原生分集时长: \(map.count) 集")
+        return (map, seasonGuids.first)
     }
 
     // MARK: - HTTP
@@ -326,6 +377,11 @@ final class FNOSNativeClient {
             }
         }
         return []
+    }
+
+    /// data 里的 total（用于判断「有总数但列表为空」的分页异常）
+    private static func totalCount(_ data: Any?) -> Int {
+        (data as? [String: Any]).flatMap { ($0["total"] as? NSNumber)?.intValue } ?? -1
     }
 
     /// 诊断用：data 的真实形状

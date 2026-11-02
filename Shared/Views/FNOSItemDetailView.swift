@@ -955,7 +955,8 @@ struct FNOSItemDetailView: View {
 
         let probe = episodes.first
         let probeSeconds = FNOSItem.plausibleSeconds(ticks: probe?.RunTimeTicks, isEpisode: probe?.type == "Episode")
-        debugLines.append("结论: 共 \(episodes.count) 集，分 \(episodeTabs.count) 组；ticks=\(probe?.RunTimeTicks ?? -1) 类型=\(probe?.type ?? "nil") 秒=\(probeSeconds.map { String(Int($0)) } ?? "nil") 角标=\(probe?.compactDuration ?? "nil")")
+        let div = (probe?.RunTimeTicks).map { String(Int(Double($0) / 1_000_000)) } ?? "nil"
+        debugLines.append("结论: 共 \(episodes.count) 集 分 \(episodeTabs.count) 组；ticks=\(probe?.RunTimeTicks ?? -1) ÷1e6=\(div) 秒=\(probeSeconds.map { String(Int($0)) } ?? "nil") 角标=\(probe?.compactDuration ?? "nil")")
         print("FNOSℹ️剧集 \(item.Name ?? "?") 共 \(episodes.count) 集，分 \(episodeTabs.count) 组")
     }
 

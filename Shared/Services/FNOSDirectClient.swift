@@ -204,8 +204,11 @@ extension FNOSItem {
     static func plausibleSeconds(ticks: Int64?, isEpisode: Bool) -> Double? {
         guard let ticks, ticks > 0 else { return nil }
         let lower: Double = isEpisode ? 20 * 60 : 5 * 60
-        let upper: Double = 4 * 3600
-        for factor in [10_000_000.0, 1_000_000.0, 1_000.0, 1.0] {
+        let upper: Double = 6 * 3600
+        // 飞牛兼容层实测单位是**微秒**（4.2e9 → 4200 秒 = 70 分钟），所以 1e6 排第一；
+        // 标准 Jellyfin 是 100ns，放到第二档；再退毫秒/秒。
+        // 上限 6 小时是为了让 100ns 的值（4.2e10）不会在 /1e6 时被误判成 11 小时。
+        for factor in [1_000_000.0, 10_000_000.0, 1_000.0, 1.0] {
             let seconds = Double(ticks) / factor
             if seconds >= lower, seconds <= upper { return seconds }
         }

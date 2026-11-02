@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v51"
+    static let version = "v52"
 
     /// 本版主要变更摘要
-    static let changes = "原生API结构自适应(data.list/数组/body形式)+响应结构诊断；时长换算中间值诊断；演员body兜底"
+    static let changes = "分集改走季guid(season/list->episode/list)；演员多级兜底(条目/季/条目详情)+分页自愈；时长换算微秒优先；移除501的body形式"
 }

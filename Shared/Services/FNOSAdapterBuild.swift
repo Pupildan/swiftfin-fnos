@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v32"
+    static let version = "v33"
 
     /// 本版主要变更摘要
-    static let changes = "刷新媒体库=强制重抽Hero+清空全部图片缓存；Hero保留Backdrop高清横图"
+    static let changes = "修复Hero图文错位(文案随翻页动画同步/图片复用清空/刷新清旧数据)；修复焦点离开Hero后预告仍在播放；修复媒体库返回Hero闪退(每次预告用全新Coordinator)；设置新增Hero图源切换(横图/竖版海报)"
 }

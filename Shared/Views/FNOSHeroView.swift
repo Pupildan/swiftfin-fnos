@@ -17,10 +17,22 @@ private let fnosHeroAVHTTPKey = "AVURLAssetHTTPHeaderFieldsKey"
 
 extension FNOSDirectClient {
 
-    /// Hero 大图 URL：优先 Backdrop（16:9 高清横图），退化用 Primary 海报
-    func heroImageURL(item: FNOSItem, maxWidth: Int = 1920) -> URL? {
+    /// Hero 大图 URL。
+    /// - preferBackdrop = true：优先 Backdrop（16:9 高清横图）
+    /// - preferBackdrop = false：强制 Primary 海报（当飞牛刮削的 Backdrop 挂错电影时可切换规避）
+    func heroImageURL(item: FNOSItem, maxWidth: Int = 1920, preferBackdrop: Bool = true) -> URL? {
         let tags = item.ImageTags ?? [:]
-        let imageType = tags["Backdrop"] != nil ? "Backdrop" : "Primary"
+        let imageType: String
+        if preferBackdrop, tags["Backdrop"] != nil {
+            imageType = "Backdrop"
+        } else if tags["Primary"] != nil {
+            imageType = "Primary"
+        } else if tags["Backdrop"] != nil {
+            imageType = "Backdrop"
+        } else {
+            print("FNOS❗️Hero 无可用图片: \(item.Name ?? "?")")
+            return nil
+        }
         guard let tag = tags[imageType], !tag.isEmpty else {
             print("FNOS❗️Hero 无可用图片: \(item.Name ?? "?")")
             return nil
@@ -51,13 +63,19 @@ struct FNOSHeroBanner: View {
     let onDetail: (FNOSItem) -> Void
     let onDownToShelf: () -> Void
 
+    /// 轮播目标索引（驱动 HStack 横向偏移 + 动画）
     @State private var currentIndex = 0
+    /// 文案索引（延迟到翻页动画结束才跟随 currentIndex）
+    /// 根因：动画 0.35s 期间旧海报仍在屏幕中央，若文案瞬时切换就会「图文不匹配」。
+    @State private var displayedIndex = 0
 
     // 智能预告状态（AVPlayer 播 mp4/m3u8；MKV 等用第二个独立 KSPlayer 实例，与正片完全隔离）
     @State private var previewPlayer: AVPlayer?
     @State private var previewItemID: String?
     @State private var previewVisible = false
-    @StateObject private var previewKSCoordinator = KSVideoPlayer.Coordinator()
+    // 每次预告新建一个 Coordinator（@State 可替换）：绝不在旧实例上重建 KSMEPlayer，
+    // 这是「媒体库切回 Hero 闪退」的根因（旧 FFmpeg 实例尚未销毁就被复用）。
+    @State private var previewKSCoordinator: KSVideoPlayer.Coordinator?
     @State private var previewUsesKS = false
     @State private var previewKSURL: URL?
     @State private var previewKSOptions: KSOptions?
@@ -70,9 +88,29 @@ struct FNOSHeroBanner: View {
     // 「稍后观看」本地标记（加号按钮）
     @AppStorage("fnos.watchlater") private var watchLaterIDs = ""
 
+    // Hero 图源偏好：backdrop（默认，16:9 横图）/ primary（2:3 海报）
+    // 若飞牛刮削把 Backdrop 挂错电影，可在此切到 Primary 规避（设置面板里可切换）
+    @AppStorage("fnos.hero.imageSource") private var heroImageSource = "backdrop"
+
+    /// 文案/圆点使用的条目：跟随 displayedIndex，与屏幕上的海报同步
     private var current: FNOSItem? {
+        guard items.indices.contains(displayedIndex) else { return nil }
+        return items[displayedIndex]
+    }
+
+    /// 当前页索引对应的条目（预告启动用，不等动画）
+    private var itemAtCurrentIndex: FNOSItem? {
         guard items.indices.contains(currentIndex) else { return nil }
         return items[currentIndex]
+    }
+
+    /// 焦点是否在 Hero 的三个按钮内（只有此时才允许播放静音预告）
+    private var isHeroFocused: Bool { focusedButton != nil }
+
+    /// 预告任务触发键：页索引变化，或焦点进出 Hero（有/无）时重估。
+    /// 焦点在三个按钮之间移动不会打断已开始的预告，只有离开 Hero 才停播。
+    private var previewTriggerKey: String {
+        "\(currentIndex)-\(isHeroFocused ? "in" : "out")"
     }
 
     var body: some View {
@@ -95,28 +133,34 @@ struct FNOSHeroBanner: View {
                 .ignoresSafeArea()
 
                 // ---- 智能预告视频层（海报之上、遮罩之下）----
-                if previewVisible, !previewUsesKS, previewItemID == current?.Id, let player = previewPlayer {
+                if previewVisible, !previewUsesKS, previewItemID == itemAtCurrentIndex?.Id, let player = previewPlayer {
                     FNOSPreviewPlayerView(player: player)
                         .ignoresSafeArea()
                         .transition(.opacity)
                 }
-                if previewVisible, previewUsesKS, previewItemID == current?.Id, let url = previewKSURL {
-                    KSVideoPlayer(coordinator: previewKSCoordinator, url: url, options: previewKSOptions ?? KSOptions())
+                if previewVisible, previewUsesKS, previewItemID == itemAtCurrentIndex?.Id,
+                   let url = previewKSURL, let coord = previewKSCoordinator
+                {
+                    KSVideoPlayer(coordinator: coord, url: url, options: previewKSOptions ?? KSOptions())
                         .onStateChanged { _, state in
-                            guard previewUsesKS, previewVisible else { return }
                             // 只在缓冲完成这一时机做一次：静音 + 定位正片中间 + 播放
-                            guard state == .bufferFinished, !previewKSSeeked else { return }
+                            guard state == .bufferFinished else { return }
                             Task { @MainActor in
-                                guard previewUsesKS, previewVisible, !previewKSSeeked else { return }
+                                // 双重守卫：Coordinator 已被换掉（预告已停）就什么都不做
+                                guard previewUsesKS,
+                                      previewVisible,
+                                      !previewKSSeeked,
+                                      previewKSCoordinator === coord
+                                else { return }
                                 previewKSSeeked = true
-                                previewKSCoordinator.isMuted = true
-                                previewKSCoordinator.isScaleAspectFill = true
+                                coord.isMuted = true
+                                coord.isScaleAspectFill = true
                                 // 总时长从 KSPlayer 拿（AVAsset 读不了 MKV）
-                                let total = Double(previewKSCoordinator.timemodel.totalTime)
+                                let total = Double(coord.timemodel.totalTime)
                                 if total > 60 {
-                                    previewKSCoordinator.seek(time: total / 2)
+                                    coord.seek(time: total / 2)
                                 }
-                                previewKSCoordinator.playerLayer?.play()
+                                coord.playerLayer?.play()
                             }
                         }
                         .ignoresSafeArea()
@@ -164,7 +208,7 @@ struct FNOSHeroBanner: View {
                 HStack(spacing: 10) {
                     ForEach(items.indices, id: \.self) { index in
                         Circle()
-                            .fill(Color.white.opacity(index == currentIndex ? 1 : 0.35))
+                            .fill(Color.white.opacity(index == displayedIndex ? 1 : 0.35))
                             .frame(width: 8, height: 8)
                     }
                 }
@@ -181,13 +225,25 @@ struct FNOSHeroBanner: View {
                     focusedButton = .play
                 }
             }
+            .onChange(of: items.count) { _, newCount in
+                // 刷新媒体库后快照变短：索引越界会让 current 为 nil、HStack 偏移指向不存在页
+                stopPreview()
+                if newCount == 0 {
+                    currentIndex = 0
+                    displayedIndex = 0
+                } else {
+                    if currentIndex >= newCount { currentIndex = newCount - 1 }
+                    if displayedIndex >= newCount { displayedIndex = newCount - 1 }
+                }
+            }
         }
-        .task(id: currentIndex) {
-            // 智能预告：3 秒无操作 → 正片中间 30 秒静音预览；滑动立即打断
+        .task(id: previewTriggerKey) {
+            // 智能预告：Hero 按钮持焦 + 5 秒无操作 → 正片中间 30 秒静音预览。
+            // 焦点一旦离开 Hero（去媒体库/设置），trigger 变化 → 本 task 重跑 → 直接停止。
             stopPreview()
-            guard let item = current else { return }
+            guard isHeroFocused, let item = itemAtCurrentIndex else { return }
             try? await Task.sleep(for: .seconds(5))
-            guard !Task.isCancelled else { return }
+            guard !Task.isCancelled, isHeroFocused else { return }
             await startPreview(item: item)
             // 播 30 秒后淡出回海报
             try? await Task.sleep(for: .seconds(30))
@@ -203,7 +259,10 @@ struct FNOSHeroBanner: View {
 
     private func heroBackdrop(item: FNOSItem, index: Int, size: CGSize) -> some View {
         FNOSAsyncImage(
-            url: client.heroImageURL(item: item),
+            url: client.heroImageURL(
+                item: item,
+                preferBackdrop: heroImageSource != "primary"
+            ),
             headers: client.mediaHeaders
         )
         // 106% 过扫描后裁到本页：任何容器/舍入情况下四边都不露黑边
@@ -330,13 +389,24 @@ struct FNOSHeroBanner: View {
 
     private func pagePrevious() {
         guard currentIndex > 0 else { return }
-        withAnimation(.easeInOut(duration: 0.35)) { currentIndex -= 1 }
+        let target = currentIndex - 1
+        withAnimation(.easeInOut(duration: 0.35)) {
+            currentIndex = target
+        } completion: {
+            // 海报滑到位后再切文案，避免动画期间「屏幕上是上一部、标题已是下一部」
+            displayedIndex = target
+        }
         focusedButton = .play
     }
 
     private func pageNext() {
         guard currentIndex < items.count - 1 else { return }
-        withAnimation(.easeInOut(duration: 0.35)) { currentIndex += 1 }
+        let target = currentIndex + 1
+        withAnimation(.easeInOut(duration: 0.35)) {
+            currentIndex = target
+        } completion: {
+            displayedIndex = target
+        }
         focusedButton = .detail
     }
 
@@ -349,6 +419,8 @@ struct FNOSHeroBanner: View {
 
         do {
             let source = try await client.playbackSource(itemID: item.Id, userID: userID)
+            // 网络等待期间焦点可能已离开 Hero / 已翻页：任务取消则绝不再起播放
+            guard !Task.isCancelled else { return }
             let container = (source.container ?? "").lowercased()
             guard let url = client.streamURL(itemID: item.Id, mediaSourceID: source.mediaSourceID) else { return }
 
@@ -367,8 +439,11 @@ struct FNOSHeroBanner: View {
                 previewPlayer = nil
                 previewUsesKS = true
                 previewKSSeeked = false
-                // 非全屏比例的片源也填充到全屏（官方 isScaleAspectFill 开关）
-                previewKSCoordinator.isScaleAspectFill = true
+                // 每次预告全新 Coordinator：不复用旧实例，避免旧 FFmpeg 未销毁就被重建（闪退根因）
+                let coord = KSVideoPlayer.Coordinator()
+                coord.isScaleAspectFill = true
+                coord.isMuted = true
+                previewKSCoordinator = coord
                 previewKSURL = url
                 previewKSOptions = options
                 previewItemID = item.Id
@@ -378,7 +453,8 @@ struct FNOSHeroBanner: View {
                 // 视图插入后立即补设填充模式，避免第一帧按原比例闪现约 1 秒
                 Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(80))
-                    previewKSCoordinator.isScaleAspectFill = true
+                    guard previewKSCoordinator === coord else { return }
+                    coord.isScaleAspectFill = true
                 }
                 return
             }
@@ -386,6 +462,7 @@ struct FNOSHeroBanner: View {
             let asset = AVURLAsset(url: url, options: [fnosHeroAVHTTPKey: client.mediaHeaders])
             // 取总时长，定位正片中间
             let total = try await asset.load(.duration).seconds
+            guard !Task.isCancelled else { return }
             guard total.isFinite, total > 60 else {
                 print("FNOSℹ️Hero 预告跳过（时长异常 \(total)）")
                 return
@@ -414,12 +491,15 @@ struct FNOSHeroBanner: View {
     private func stopPreview() {
         previewPlayer?.pause()
         previewPlayer = nil
-        if previewUsesKS {
-            previewKSCoordinator.playerLayer?.pause()
-        }
+        // 先暂停再丢引用：视图随 previewUsesKS/previewVisible 变 false 而移除，
+        // 旧 Coordinator 与其 KSMEPlayer 会被整体释放，下一次预告用全新实例。
+        previewKSCoordinator?.playerLayer?.pause()
+        previewKSCoordinator = nil
         previewUsesKS = false
         previewKSURL = nil
+        previewKSOptions = nil
         previewItemID = nil
+        previewKSSeeked = false
         if previewVisible {
             withAnimation(.easeOut(duration: 0.2)) {
                 previewVisible = false

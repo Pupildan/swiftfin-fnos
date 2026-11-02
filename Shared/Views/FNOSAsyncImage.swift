@@ -111,6 +111,10 @@ struct FNOSAsyncImage: View {
         }
         .animation(.easeOut(duration: 0.25), value: phase)
         .task(id: url) {
+            // 关键：url 变化（翻页 / 刷新媒体库 / 视图被复用）先清空旧图，
+            // 否则新条目会短暂显示上一部电影的海报 = 图文错位。
+            image = nil
+            phase = .loading
             await load()
         }
     }
@@ -121,8 +125,11 @@ struct FNOSAsyncImage: View {
             return
         }
 
+        // 注意：SwiftUI View 是值类型，异步返回后 self.url 仍是调用时的快照，
+        // 判断「URL 是否已变」只能靠 .task(id: url) 的取消机制（Task.isCancelled）。
         let key = url.absoluteString as NSString
         if let cached = FNOSImageCache.shared.memory.object(forKey: key) {
+            guard !Task.isCancelled else { return }
             image = cached
             phase = .loaded
             return
@@ -149,9 +156,12 @@ struct FNOSAsyncImage: View {
             }
 
             FNOSImageCache.shared.memory.setObject(decoded, forKey: key)
+            // 过期结果丢弃：url 已变（.task 被取消）时不要覆盖当前视图
+            guard !Task.isCancelled else { return }
             image = decoded
             phase = .loaded
         } catch {
+            guard !Task.isCancelled else { return }
             // 图片失败不阻塞界面：显示占位符，报错走 print 可查
             print("FNOS❗️海报加载失败: \(error.localizedDescription)")
             phase = .failed

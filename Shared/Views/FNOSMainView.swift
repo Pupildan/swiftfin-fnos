@@ -162,6 +162,13 @@ struct FNOSMainView: View {
                     // 清全部图片缓存（内存图 + URL 缓存），排除缓存导致的错图
                     FNOSImageCache.shared.memory.removeAllObjects()
                     URLCache.shared.removeAllCachedResponses()
+                    // 关键：旧 sections / heroSnapshot 必须清空。
+                    // 否则新库数据回来前，Hero 仍按旧快照渲染，新数据到达后
+                    // 索引与页面错位 → 标题与海报不是同一部（图文错位）。
+                    sections = []
+                    heroSnapshot = []
+                    // 立即进入加载态：避免清空数据到新数据回来之间闪一下「暂无内容」
+                    isLoading = true
                     didBootstrap = false
                     Task { await bootstrapIfNeeded() }
                 },
@@ -309,6 +316,8 @@ struct FNOSMainView: View {
     @MainActor
     private func bootstrap() async {
         print("FNOSℹ️启动 v\(FNOSAdapterBuild.version)")
+        // 从零重建：清空 Hero 快照，避免刷新过程中新旧条目混排
+        heroSnapshot = []
 
         let baseURL = credentials.serverURL
         let token = credentials.token
@@ -391,6 +400,10 @@ struct FNOSHomeSettingsView: View {
 
     @Environment(\.dismiss) private var dismiss
 
+    // Hero 图源：backdrop（横图，默认）/ primary（海报）
+    // 若发现某些电影 Hero 图文对不上，多为飞牛刮削把 Backdrop 挂错条目，切到海报可规避。
+    @AppStorage("fnos.hero.imageSource") private var heroImageSource = "backdrop"
+
     var body: some View {
         NavigationStack {
             Form {
@@ -410,6 +423,30 @@ struct FNOSHomeSettingsView: View {
                     }
                 } header: {
                     Text("操作")
+                }
+
+                Section {
+                    Button {
+                        heroImageSource = "backdrop"
+                    } label: {
+                        Label(
+                            "Hero 横版大图（推荐）",
+                            systemImage: heroImageSource == "backdrop" ? "checkmark.circle.fill" : "circle"
+                        )
+                    }
+
+                    Button {
+                        heroImageSource = "primary"
+                    } label: {
+                        Label(
+                            "Hero 竖版海报（图文对不上时切换）",
+                            systemImage: heroImageSource == "primary" ? "checkmark.circle.fill" : "circle"
+                        )
+                    }
+                } header: {
+                    Text("Hero 图源")
+                } footer: {
+                    Text("若 Hero 标题与画面不一致，通常是飞牛刮削的横图挂错了电影，切换到竖版海报即可规避。")
                 }
 
                 Section {

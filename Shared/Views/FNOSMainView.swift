@@ -45,6 +45,10 @@ struct FNOSMainView: View {
     @State private var playbackTarget: FNOSPlaybackTarget?
     @State private var seriesItem: FNOSItem?
 
+    // Hero 每日随机抽选（每天首次进入重新抽 6 部电影）
+    @AppStorage("fnos.hero.date") private var heroDate = ""
+    @AppStorage("fnos.hero.ids") private var heroIDs = 
+
     private let cardWidth: CGFloat = 300
 
     // MARK: - Body
@@ -147,17 +151,50 @@ struct FNOSMainView: View {
         .ignoresSafeArea()
     }
 
-    // MARK: - Hero Banner 数据：全部媒体库条目按序取前 6 个（须有海报）
+    // MARK: - Hero Banner 数据：只抓电影（排除剧集），按当天抽选结果展示
 
     private var heroItems: [FNOSItem] {
-        sections
+        let movies = sections
             .flatMap(\.items)
             .filter { item in
-                guard let tags = item.ImageTags else { return false }
+                guard item.type == "Movie", let tags = item.ImageTags else { return false }
                 return !tags.isEmpty
             }
-            .prefix(6)
-            .map { $0 }
+        guard !movies.isEmpty else { return [] }
+
+        // 按当日抽选的 id 顺序取
+        let ids = heroIDs.split(separator: ",").map(String.init)
+        var picked: [FNOSItem] = []
+        for id in ids {
+            if let movie = movies.first(where: { $0.Id == id }) {
+                picked.append(movie)
+            }
+        }
+        // 库变化导致抽选结果大部分失效时兜底重抽（不写回，避免频繁变更）
+        if picked.count >= min(3, movies.count) {
+            return Array(picked.prefix(6))
+        }
+        return Array(movies.shuffled().prefix(6))
+    }
+
+    /// 每天首次进入时重新随机抽 6 部电影
+    @MainActor
+    private func rollHeroIfNeeded() {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        let today = formatter.string(from: Date())
+        guard heroDate != today else { return }
+        heroDate = today
+
+        let movies = sections
+            .flatMap(\.items)
+            .filter { item in
+                guard item.type == "Movie", let tags = item.ImageTags else { return false }
+                return !tags.isEmpty
+            }
+        guard !movies.isEmpty else { return }
+        heroIDs = movies.shuffled().prefix(6).map(\.Id).joined(separator: ",")
+        print("FNOSℹ️Hero 今日抽选: \(heroIDs)")
     }
 
     // MARK: - 海报墙（每行一个媒体库，横向滚动）
@@ -260,6 +297,7 @@ struct FNOSMainView: View {
             }
 
             isLoading = false
+            rollHeroIfNeeded()
         } catch {
             isLoading = false
             print("FNOS❗️加载媒体库失败: \(error)")

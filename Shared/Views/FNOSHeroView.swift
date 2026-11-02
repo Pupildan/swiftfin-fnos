@@ -64,6 +64,8 @@ struct FNOSHeroBanner: View {
 
     // 海报聚焦翻页
     @FocusState private var imageFocused: Bool
+    // 播放按钮焦点（海报按下键直达）
+    @FocusState private var playButtonFocused: Bool
 
     // 「稍后观看」本地标记（加号按钮）
     @AppStorage("fnos.watchlater") private var watchLaterIDs = ""
@@ -208,9 +210,15 @@ struct FNOSHeroBanner: View {
             case .left:
                 guard currentIndex > 0 else { return }
                 withAnimation(.easeInOut(duration: 0.35)) { currentIndex -= 1 }
+                // 翻页后旧海报被 disabled，焦点会掉进真空，必须立即拉回新海报
+                DispatchQueue.main.async { imageFocused = true }
             case .right:
                 guard currentIndex < items.count - 1 else { return }
                 withAnimation(.easeInOut(duration: 0.35)) { currentIndex += 1 }
+                DispatchQueue.main.async { imageFocused = true }
+            case .down:
+                // 下键直达按钮组
+                playButtonFocused = true
             default:
                 break
             }
@@ -269,6 +277,7 @@ struct FNOSHeroBanner: View {
                 #if os(tvOS)
                     .buttonStyle(.card)
                 #endif
+                .focused($playButtonFocused)
 
                 // + 稍后观看
                 Button {

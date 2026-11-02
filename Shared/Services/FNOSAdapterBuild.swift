@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v25"
+    static let version = "v26"
 
     /// 本版主要变更摘要
-    static let changes = "自绘轮播替换TabView根治黑边；KS预告回调主线程化+单次触发防闪退"
+    static let changes = "Hero每日随机抽6部电影(排除剧集)；修复翻页后焦点丢失与下键导航"
 }

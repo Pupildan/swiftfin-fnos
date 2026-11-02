@@ -73,15 +73,12 @@ extension FNOSDirectClient {
 // MARK: - 液态玻璃辅助（tvOS26，选中才挂；.clear 更透明，底部压暗保证可读）
 
 extension View {
-    @ViewBuilder
+    /// 选中背景：纯色半透明 + 自定义放大动画（阻断焦点引擎对材质的识别，无系统默认高亮底色）
     func fnosGlass(_ active: Bool, in shape: some Shape) -> some View {
-        if active {
-            self
-                .background(Color.black.opacity(0.3), in: shape)
-                .glassEffect(.clear, in: shape)
-        } else {
-            self
-        }
+        self
+            .background(active ? Color.black.opacity(0.4) : Color.clear, in: shape)
+            .scaleEffect(active ? 1.12 : 1.0)
+            .animation(.easeOut(duration: 0.15), value: active)
     }
 }
 
@@ -123,6 +120,7 @@ struct FNOSPlayerContainerView: View {
     @State private var scrubActive = false
     @State private var scrubValue: Double = 0
     @State private var scrubStep: Double = 10
+    @State private var scrubLevel = 0
     @State private var lastScrubMove: Date?
     @State private var isSheetPresented = false
     @State private var audioSheetPresented = false
@@ -436,15 +434,17 @@ struct FNOSPlayerContainerView: View {
         return min(max(displayTime / total, 0), 1)
     }
 
-    /// 方向键步进：0.45 秒内连续触发视为"长按/转盘滚动"，步长逐级加速（10s→180s）
+    /// 方向键步进：0.2 秒内连续触发加速一档（10s→30s→60s→120s），停顿重置 10s。
+    /// 拖动期间仅实时更新进度条位置与时间文本，停止后由 scheduleScrubCommit 执行一次 seek。
     private func scrub(by direction: Double) {
         let now = Date()
-        if let last = lastScrubMove, now.timeIntervalSince(last) < 0.45 {
-            scrubStep = min(scrubStep * 1.6, 180)
+        if let last = lastScrubMove, now.timeIntervalSince(last) < 0.2 {
+            scrubLevel = min(scrubLevel + 1, Self.scrubLadder.count - 1)
         } else {
-            scrubStep = 10
+            scrubLevel = 0
         }
         lastScrubMove = now
+        scrubStep = Self.scrubLadder[scrubLevel]
 
         let total = Double(max(coordinator.timemodel.totalTime, 1))
         let base = scrubActive ? scrubValue : Double(coordinator.timemodel.currentTime)
@@ -452,6 +452,8 @@ struct FNOSPlayerContainerView: View {
         scrubValue = min(max(base + direction * scrubStep, 0), total)
         scheduleScrubCommit()
     }
+
+    private static let scrubLadder: [Double] = [10, 30, 60, 120]
 
     private func scheduleScrubCommit() {
         scrubCommitTask?.cancel()
@@ -628,7 +630,7 @@ struct FNOSDanmuSettingsSheet: View {
                     .frame(width: 260, height: 56)
             }
             .buttonStyle(.plain)
-            .glassEffect(.regular, in: Capsule())
+            .background(Color.black.opacity(0.4), in: Capsule())
         }
         .padding(60)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -651,7 +653,7 @@ struct FNOSDanmuSettingsSheet: View {
                     .frame(width: 72, height: 48)
             }
             .buttonStyle(.plain)
-            .glassEffect(.regular, in: Capsule())
+            .background(Color.black.opacity(0.4), in: Capsule())
             Text(text)
                 .font(.title3.monospacedDigit())
                 .frame(width: 140)
@@ -660,7 +662,7 @@ struct FNOSDanmuSettingsSheet: View {
                     .frame(width: 72, height: 48)
             }
             .buttonStyle(.plain)
-            .glassEffect(.regular, in: Capsule())
+            .background(Color.black.opacity(0.4), in: Capsule())
         }
     }
 }
@@ -702,7 +704,7 @@ struct FNOSAudioTracksSheet: View {
                                 .padding(.vertical, 16)
                             }
                             .buttonStyle(.plain)
-                            .glassEffect(.regular, in: Capsule())
+                            .background(Color.black.opacity(0.4), in: Capsule())
                         }
                     }
                     .padding(.horizontal, 60)
@@ -716,7 +718,7 @@ struct FNOSAudioTracksSheet: View {
                     .frame(width: 260, height: 56)
             }
             .buttonStyle(.plain)
-            .glassEffect(.regular, in: Capsule())
+            .background(Color.black.opacity(0.4), in: Capsule())
         }
         .padding(60)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

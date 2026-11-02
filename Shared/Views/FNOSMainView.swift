@@ -131,6 +131,22 @@ struct FNOSMainView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView {
+                // Apple TV+ 式全屏 Hero Banner（媒体库前 6 个条目）
+                if !heroItems.isEmpty, let heroClient = client {
+                    FNOSHeroBanner(
+                        items: Array(heroItems),
+                        client: heroClient,
+                        userID: userID,
+                        onPlay: { item in
+                            open(item: item)
+                        },
+                        onDetail: { item in
+                            open(item: item)
+                        }
+                    )
+                    .frame(height: 640)
+                }
+
                 LazyVStack(alignment: .leading, spacing: 36) {
                     ForEach(sections) { section in
                         shelf(section)
@@ -139,6 +155,18 @@ struct FNOSMainView: View {
                 .padding(.vertical, 24)
             }
         }
+    }
+
+    /// Hero Banner 数据：全部媒体库条目按序取前 6 个（须有海报）
+    private var heroItems: [FNOSItem] {
+        sections
+            .flatMap(\.items)
+            .filter { item in
+                guard let tags = item.ImageTags else { return false }
+                return !tags.isEmpty
+            }
+            .prefix(6)
+            .map { $0 }
     }
 
     private func shelf(_ section: FNOSLibrarySection) -> some View {

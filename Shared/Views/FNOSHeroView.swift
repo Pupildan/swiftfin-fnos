@@ -17,7 +17,7 @@ private let fnosHeroAVHTTPKey = "AVURLAssetHTTPHeaderFieldsKey"
 
 extension FNOSDirectClient {
 
-    /// Hero 大图 URL：优先 Backdrop（16:9 横图），退化用 Primary 海报
+    /// Hero 大图 URL：优先 Backdrop（16:9 高清横图），退化用 Primary 海报
     func heroImageURL(item: FNOSItem, maxWidth: Int = 1920) -> URL? {
         let tags = item.ImageTags ?? [:]
         let imageType = tags["Backdrop"] != nil ? "Backdrop" : "Primary"

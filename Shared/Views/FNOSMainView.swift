@@ -157,6 +157,11 @@ struct FNOSMainView: View {
         .sheet(isPresented: $showSettings) {
             FNOSHomeSettingsView(
                 onRefresh: {
+                    // 清掉当日抽选标记 → 刷新后 Hero 强制重新随机抽选
+                    heroDate = ""
+                    // 清全部图片缓存（内存图 + URL 缓存），排除缓存导致的错图
+                    FNOSImageCache.shared.memory.removeAllObjects()
+                    URLCache.shared.removeAllCachedResponses()
                     didBootstrap = false
                     Task { await bootstrapIfNeeded() }
                 },

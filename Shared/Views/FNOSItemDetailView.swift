@@ -24,10 +24,6 @@ struct FNOSItemDetailView: View {
 
     /// 详情页背景图轮播索引
     @State private var backdropIndex = 0
-    /// 液态玻璃流动相位
-    @State private var flowPhase: CGFloat = 0
-    /// 进入动画（缩放淡入）
-    @State private var appeared = false
 
     // 详情数据（媒体源、时长、演员）
     @State private var mediaSourceID: String?
@@ -128,29 +124,16 @@ struct FNOSItemDetailView: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
-                // 动态液态玻璃背景：取色 → 高斯模糊 → 缓慢流动
+                // 动态液态玻璃背景：从海报自动取色，向下逐渐过渡到纯黑
                 ZStack {
                     Color.black
                     if let themeColor {
-                        // 第一团色块（缓慢上下漂移）
-                        Ellipse()
-                            .fill(themeColor.opacity(0.55))
-                            .frame(width: geo.size.width * 1.15, height: geo.size.height * 0.85)
-                            .blur(radius: 140)
-                            .offset(
-                                x: sin(flowPhase) * 180,
-                                y: geo.size.height * 0.05 + cos(flowPhase) * 90
-                            )
-
-                        // 第二团色块（反向漂移，制造玻璃流动感）
-                        Ellipse()
-                            .fill(themeColor.opacity(0.35))
-                            .frame(width: geo.size.width * 0.85, height: geo.size.height * 0.7)
-                            .blur(radius: 160)
-                            .offset(
-                                x: geo.size.width * 0.22 + cos(flowPhase * 1.3) * 140,
-                                y: -geo.size.height * 0.05 + sin(flowPhase * 0.8) * 110
-                            )
+                        RadialGradient(
+                            colors: [themeColor.opacity(0.55), themeColor.opacity(0.18), .clear],
+                            center: .top,
+                            startRadius: 0,
+                            endRadius: geo.size.height * 1.1
+                        )
                     }
                 }
                 .ignoresSafeArea()
@@ -163,20 +146,13 @@ struct FNOSItemDetailView: View {
 
                             if item.type == "Series" && !episodeChunks.isEmpty {
                                 episodeSection
-                                    .padding(.top, 24)
-                                    .padding(.bottom, 8)
-                            }
-
-                            // 演员阵容（放在选集下面）
-                            if !people.isEmpty {
-                                castSection
-                                    .padding(.horizontal, 60)
-                                    .padding(.top, 28)
+                                    .padding(.top, 20)
+                                    .padding(.bottom, 10)
                             }
 
                             infoSection
                                 .padding(.horizontal, 60)
-                                .padding(.top, 30)
+                                .padding(.top, 10)
                                 .padding(.bottom, 90)
                                 .id("detail-info")
                         }
@@ -206,16 +182,6 @@ struct FNOSItemDetailView: View {
             }
         }
         .ignoresSafeArea()
-        .scaleEffect(appeared ? 1.0 : 0.94)
-        .opacity(appeared ? 1 : 0)
-        .onAppear {
-            withAnimation(.easeOut(duration: 0.32)) {
-                appeared = true
-            }
-            withAnimation(.linear(duration: 14).repeatForever(autoreverses: true)) {
-                flowPhase = .pi * 2
-            }
-        }
         .task {
             await loadDetail()
         }
@@ -547,6 +513,11 @@ struct FNOSItemDetailView: View {
 
     private var infoSection: some View {
         VStack(alignment: .leading, spacing: 40) {
+            // 演员阵容
+            if !people.isEmpty {
+                castSection
+            }
+
             VStack(alignment: .leading, spacing: 16) {
                 Text("信息")
                     .font(.system(size: 26, weight: .bold))
@@ -571,7 +542,6 @@ struct FNOSItemDetailView: View {
             Text("演员阵容")
                 .font(.system(size: 26, weight: .bold))
                 .foregroundColor(.white)
-                .padding(.leading, 60)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 28) {
@@ -602,7 +572,6 @@ struct FNOSItemDetailView: View {
                     }
                 }
                 .padding(.vertical, 4)
-                .padding(.horizontal, 60)
             }
         }
     }

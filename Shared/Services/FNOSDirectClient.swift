@@ -163,6 +163,8 @@ struct FNOSItem: Decodable, Identifiable {
     let IndexNumber: Int?
     // 首播日期（ISO8601 字符串，剧集卡片底部展示）
     let PremiereDate: String?
+    // 单集所属剧名（弹幕按「剧名+集数」匹配）
+    let SeriesName: String?
 
     var id: String { Id }
     var type: String? { ItemType }
@@ -173,14 +175,23 @@ struct FNOSItem: Decodable, Identifiable {
         case ItemType = "Type"
         case ProductionYear, Overview, ImageTags, BackdropImageTags
         case RunTimeTicks, OfficialRating, Genres
-        case ParentIndexNumber, IndexNumber, PremiereDate
+        case ParentIndexNumber, IndexNumber, PremiereDate, SeriesName
     }
 }
 
 extension FNOSItem {
+    /// 归一化时长（100ns 单位）。飞牛分集接口的 RunTimeTicks 有时给秒、有时给 0，
+    /// 按量级判定：>=6e8 视为标准 100ns；120~86400 视为秒；其它视为无效。
+    var normalizedTicks: Int64? {
+        guard let ticks = RunTimeTicks, ticks > 0 else { return nil }
+        if ticks >= 600_000_000 { return ticks }
+        if ticks >= 120, ticks <= 24 * 3600 { return ticks * 10_000_000 }
+        return nil
+    }
+
     /// 时长展示文案（RunTimeTicks 单位为 100 纳秒）
     var durationString: String? {
-        guard let ticks = RunTimeTicks, ticks > 0 else { return nil }
+        guard let ticks = normalizedTicks else { return nil }
         let seconds = ticks / 10_000_000
         let hours = seconds / 3600
         let minutes = (seconds % 3600) / 60
@@ -192,6 +203,7 @@ extension FNOSItem {
     }
 
     /// 卡片角标用的紧凑时长（"54分钟" / "1小时6分钟"）
+    /// 归一化后仍不足 1 分钟视为无效、不显示
     var compactDuration: String? {
         durationString?.replacingOccurrences(of: " ", with: "")
     }

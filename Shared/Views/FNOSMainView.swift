@@ -14,6 +14,8 @@ struct FNOSPlaybackTarget: Identifiable {
     let item: FNOSItem
     let client: FNOSDirectClient
     let userID: String
+    /// 单集所属剧名（弹幕「剧名+集数」匹配用）
+    var seriesName: String? = nil
 }
 
 /// 单个媒体库的横向海报墙数据
@@ -153,7 +155,12 @@ struct FNOSMainView: View {
             await bootstrapIfNeeded()
         }
         .fullScreenCover(item: $playbackTarget) { target in
-            FNOSPlayerContainerView(item: target.item, client: target.client, userID: target.userID)
+            FNOSPlayerContainerView(
+                item: target.item,
+                client: target.client,
+                userID: target.userID,
+                seriesName: target.seriesName
+            )
         }
         .fullScreenCover(item: $detailItem) { item in
             FNOSItemDetailView(

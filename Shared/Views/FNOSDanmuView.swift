@@ -107,12 +107,23 @@ final class FNOSDanmuEngine: ObservableObject {
 
     // MARK: 服务端加载
 
-    func load(title: String) async {
+    func load(title: String, seriesTitle: String? = nil, episodeNumber: Int? = nil) async {
         status = .loading
-        print("FNOSℹ️弹幕: 开始匹配「\(title)」")
 
         do {
-            let episodeID = try await matchEpisodeID(title: title)
+            let episodeID: Int
+            if let seriesTitle, !seriesTitle.isEmpty, let episodeNumber {
+                // 剧集：剧名 + 集数匹配（单集标题在弹幕库里几乎不存在）
+                print("FNOSℹ️弹幕: 剧集匹配「\(seriesTitle)」第 \(episodeNumber) 集")
+                episodeID = try await matchEpisodeID(
+                    seriesTitle: seriesTitle,
+                    episodeNumber: episodeNumber,
+                    fallbackTitle: title
+                )
+            } else {
+                print("FNOSℹ️弹幕: 开始匹配「\(title)」")
+                episodeID = try await matchEpisodeID(title: title)
+            }
             let fetched = try await fetchComments(episodeID: episodeID)
 
             comments = fetched.sorted { $0.time < $1.time }
@@ -128,6 +139,65 @@ final class FNOSDanmuEngine: ObservableObject {
             print("FNOS❗️弹幕加载失败: \(error)")
             status = .failed(error.localizedDescription)
         }
+    }
+
+    /// 剧集匹配：match 接口按「剧名+集数」多命名尝试 → search 按集号挑选 → 退单集标题
+    private func matchEpisodeID(seriesTitle: String, episodeNumber: Int, fallbackTitle: String) async throws -> Int {
+        let padded = String(format: "%02d", episodeNumber)
+        let candidates = [
+            "\(seriesTitle) 第\(episodeNumber)集",
+            "\(seriesTitle) S01E\(padded)",
+            "\(seriesTitle) EP\(episodeNumber)",
+            "\(seriesTitle) \(padded)",
+        ]
+        for candidate in candidates {
+            if let id = try? await matchViaMatchAPI(title: candidate) {
+                return id
+            }
+        }
+
+        if let id = try await searchEpisodeID(seriesTitle: seriesTitle, episodeNumber: episodeNumber) {
+            return id
+        }
+
+        print("FNOS⚠️弹幕: 剧名匹配全失败，退回单集标题「\(fallbackTitle)」")
+        return try await matchEpisodeID(title: fallbackTitle)
+    }
+
+    /// 按剧名搜索，再从结果里按集号挑（匹配"第N集/第N话/EPn/E0n"，失败按序号取第 n 条）
+    private func searchEpisodeID(seriesTitle: String, episodeNumber: Int) async throws -> Int? {
+        let encoded = seriesTitle.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? seriesTitle
+        guard let url = URL(string: "\(Self.defaultBaseURL)/api/v2/search/episodes?anime=\(encoded)") else {
+            throw FNOSDirectError("弹幕搜索 URL 非法")
+        }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 15
+        let (data, response) = try await URLSession.shared.data(for: request)
+        try Self.assertOK(response, url: url, data: data)
+        let decoded = try Self.decode(FNOSDanmuSearchResult.self, from: data)
+
+        guard let anime = decoded.animes?.first, let episodes = anime.episodes, !episodes.isEmpty else {
+            return nil
+        }
+        print("FNOSℹ️弹幕 search「\(seriesTitle)」候选 \(episodes.count) 集")
+
+        // 1) 标题里含集号
+        let markers = ["第\(episodeNumber)集", "第\(episodeNumber)话", "EP\(episodeNumber)", "E\(episodeNumber)", String(format: "%02d", episodeNumber)]
+        if let hit = episodes.first(where: { ref in
+            guard let t = ref.episodeTitle else { return false }
+            return markers.contains { t.localizedCaseInsensitiveContains($0) }
+        }) {
+            print("FNOS✅弹幕 search 命中(标题): \(hit.episodeTitle ?? "?")")
+            return hit.episodeId
+        }
+
+        // 2) 标题不含集号时按序号取第 n 条（弹幕库一般按集顺序返回）
+        if episodes.count >= episodeNumber {
+            let ref = episodes[episodeNumber - 1]
+            print("FNOS✅弹幕 search 命中(序号): \(ref.episodeTitle ?? "?")")
+            return ref.episodeId
+        }
+        return nil
     }
 
     /// 优先精确 match，失败退回 search

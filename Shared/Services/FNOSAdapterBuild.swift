@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v46"
+    static let version = "v47"
 
     /// 本版主要变更摘要
-    static let changes = "选集修复：Season+UserId/SeasonId 逐季取集(复用旧季面板可用调用)+双兜底；季标签驱动选集；页面底部临时诊断行(详情字段/端点结果)"
+    static let changes = "弹幕改为剧名+集数匹配(match多命名→search按集号→原标题兜底)；时长按量级归一化不再显示0分钟；诊断行精简为关键结论"
 }

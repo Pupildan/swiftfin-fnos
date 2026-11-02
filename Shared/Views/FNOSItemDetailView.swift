@@ -103,9 +103,13 @@ struct FNOSItemDetailView: View {
         }
     }
 
-    /// 时长文案：优先 PlaybackInfo 的 RunTimeTicks（Jellyfin 单位 100ns）
+    /// 时长文案：RunTimeTicks 按量级归一化（>=6e8 标准 100ns；120~86400 视为秒）
     private var durationString: String? {
-        guard let ticks = runtimeTicks ?? item.RunTimeTicks, ticks > 0 else { return nil }
+        guard var ticks = runtimeTicks ?? item.RunTimeTicks, ticks > 0 else { return nil }
+        if ticks < 600_000_000 {
+            guard ticks >= 120, ticks <= 24 * 3600 else { return nil }
+            ticks *= 10_000_000
+        }
         let seconds = ticks / 10_000_000
         guard seconds > 0 else { return nil }
         let hours = seconds / 3600
@@ -197,7 +201,8 @@ struct FNOSItemDetailView: View {
             FNOSPlayerContainerView(
                 item: target.item,
                 client: target.client,
-                userID: target.userID
+                userID: target.userID,
+                seriesName: target.seriesName
             )
         }
     }
@@ -678,7 +683,8 @@ struct FNOSItemDetailView: View {
             if let tags = detail.backdropTags, !tags.isEmpty {
                 fetchedBackdropTags = tags
             }
-            debugLines.append("详情: 演员\(detail.people.count) 源\(detail.mediaSourceID == nil ? "无" : "有") 字段[\(detail.rawKeys.joined(separator: ","))]")
+            let peopleKey = detail.rawKeys.contains("People")
+            debugLines.append("详情: 演员\(detail.people.count) 源\(detail.mediaSourceID == nil ? "无" : "有") People键=\(peopleKey ? "有" : "无")")
             print("FNOSℹ️详情 \(item.Name ?? "?") 时长ticks=\(runtimeTicks ?? -1) 源=\(mediaSourceID ?? "nil") 演员=\(people.count) 字段=\(detail.rawKeys)")
         } catch {
             debugLines.append("详情失败: \(error.localizedDescription)")
@@ -728,7 +734,7 @@ struct FNOSItemDetailView: View {
                     query: [
                         "UserId": userID,
                         "SeasonId": season.Id,
-                        "Fields": "Overview,RunTimeTicks,OfficialRating,ParentIndexNumber,IndexNumber,PremiereDate",
+                        "Fields": "Overview,RunTimeTicks,OfficialRating,ParentIndexNumber,IndexNumber,PremiereDate,SeriesName",
                     ]
                 )
                 let list = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items
@@ -754,7 +760,7 @@ struct FNOSItemDetailView: View {
                     path: "Shows/\(item.Id)/Episodes",
                     query: [
                         "UserId": userID,
-                        "Fields": "Overview,RunTimeTicks,OfficialRating,ParentIndexNumber,IndexNumber,PremiereDate",
+                        "Fields": "Overview,RunTimeTicks,OfficialRating,ParentIndexNumber,IndexNumber,PremiereDate,SeriesName",
                     ]
                 )
                 all = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items
@@ -777,7 +783,7 @@ struct FNOSItemDetailView: View {
                         "Limit": "500",
                         "SortBy": "ParentIndexNumber,IndexNumber",
                         "SortOrder": "Ascending",
-                        "Fields": "Overview,RunTimeTicks,OfficialRating,ParentIndexNumber,IndexNumber,PremiereDate",
+                        "Fields": "Overview,RunTimeTicks,OfficialRating,ParentIndexNumber,IndexNumber,PremiereDate,SeriesName",
                     ]
                 )
                 let items = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items
@@ -803,7 +809,7 @@ struct FNOSItemDetailView: View {
             return (a.IndexNumber ?? 0) < (b.IndexNumber ?? 0)
         }
         selectedTabIndex = 0
-        debugLines.append("结论: 共 \(episodes.count) 集，分 \(episodeTabs.count) 组")
+        debugLines.append("结论: 共 \(episodes.count) 集，分 \(episodeTabs.count) 组；第1集ticks=\(episodes.first?.RunTimeTicks ?? -1)")
         print("FNOSℹ️剧集 \(item.Name ?? "?") 共 \(episodes.count) 集，分 \(episodeTabs.count) 组")
     }
 
@@ -826,7 +832,13 @@ struct FNOSItemDetailView: View {
 
     private func playEpisode(_ ep: FNOSItem) {
         guard let client else { return }
-        playbackTarget = FNOSPlaybackTarget(item: ep, client: client, userID: userID)
+        // 剧名随播放目标带进播放器，弹幕按「剧名+集数」匹配
+        playbackTarget = FNOSPlaybackTarget(
+            item: ep,
+            client: client,
+            userID: userID,
+            seriesName: item.Name
+        )
     }
 
     @AppStorage("fnos.watchlater") private var watchLaterIDs = ""

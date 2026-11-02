@@ -172,6 +172,8 @@ struct FNOSPlayerContainerView: View {
     let item: FNOSItem
     let client: FNOSDirectClient
     let userID: String
+    /// 单集所属剧名（弹幕按剧名+集数匹配；item.SeriesName 缺失时用这个兜底）
+    var seriesName: String? = nil
 
     @Environment(\.dismiss)
     private var dismiss
@@ -623,11 +625,16 @@ struct FNOSPlayerContainerView: View {
         containerInfo = source.container
         notice = ""
 
-        // 3) 弹幕（真实服务端，按标题匹配）
+        // 3) 弹幕（真实服务端；剧集按「剧名 + 集数」匹配，电影按标题匹配）
         danmuEngine.setRate(1)
         let title = item.Name ?? "视频"
+        let isEpisode = item.type == "Episode"
+        let episodeNumber: Int? = isEpisode ? item.IndexNumber : nil
+        let serieTitleResolved: String? = isEpisode
+            ? ((item.SeriesName?.isEmpty == false ? item.SeriesName : seriesName))
+            : nil
         notice = "弹幕匹配中…"
-        await danmuEngine.load(title: title)
+        await danmuEngine.load(title: title, seriesTitle: serieTitleResolved, episodeNumber: episodeNumber)
         switch danmuEngine.status {
         case .ready:
             notice = "弹幕 \(danmuEngine.commentCount) 条"

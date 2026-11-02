@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v45"
+    static let version = "v46"
 
     /// 本版主要变更摘要
-    static let changes = "剧集详情页选集(ATV+ 版式)：分段标签+16:9横图卡片+时长角标+简介/日期/分级；分集双端点兜底加载；剧集卡片优先Thumb剧照"
+    static let changes = "选集修复：Season+UserId/SeasonId 逐季取集(复用旧季面板可用调用)+双兜底；季标签驱动选集；页面底部临时诊断行(详情字段/端点结果)"
 }

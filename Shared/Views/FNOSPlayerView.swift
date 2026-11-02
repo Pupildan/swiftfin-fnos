@@ -44,6 +44,8 @@ extension FNOSDirectClient {
         var runTimeTicks: Int64?
         var backdropTags: [String]?
         var people: [FNOSPerson] = []
+        /// 原始响应里出现过的键名（诊断用：确认 People 等字段服务端到底给不给）
+        var rawKeys: [String] = []
     }
 
     struct FNOSPerson {
@@ -72,6 +74,7 @@ extension FNOSDirectClient {
         }
 
         var detail = FNOSItemDetail()
+        detail.rawKeys = Array(root.keys).sorted()
         detail.runTimeTicks = (root["RunTimeTicks"] as? NSNumber)?.int64Value
         detail.backdropTags = root["BackdropImageTags"] as? [String]
 

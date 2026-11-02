@@ -34,12 +34,15 @@ struct FNOSItemDetailView: View {
     @State private var themeColor: Color?
     @State private var fetchedBackdropTags: [String]?
 
-    // 剧集选集状态
+    // 剧集选集状态（季优先，无季数据时按 10 集分段）
     @State private var episodes: [FNOSItem] = []
-    @State private var episodeChunks: [[FNOSItem]] = []
-    @State private var selectedChunkIndex = 0
-    @FocusState private var focusedChunk: Int?
+    @State private var seasons: [FNOSItem] = []
+    @State private var episodesBySeason: [String: [FNOSItem]] = [:]
+    @State private var selectedTabIndex = 0
+    @FocusState private var focusedTab: String?
     @FocusState private var focusedEpisode: String?
+    /// 临时诊断行（确认服务端字段/分集端点真实返回）
+    @State private var debugLines: [String] = []
 
     // 三个按钮的焦点
     private enum DetailButton { case play, plus, info }
@@ -144,7 +147,7 @@ struct FNOSItemDetailView: View {
                         VStack(spacing: 0) {
                             heroSection(size: geo.size, proxy: proxy)
 
-                            if item.type == "Series" && !episodeChunks.isEmpty {
+                            if item.type == "Series" && !episodeTabs.isEmpty {
                                 episodeSection
                                     .padding(.top, 36)
                                     .padding(.bottom, 12)
@@ -152,9 +155,11 @@ struct FNOSItemDetailView: View {
 
                             infoSection
                                 .padding(.horizontal, 60)
-                                .padding(.top, 10)
-                                .padding(.bottom, 90)
+                                .padding(.top, item.type == "Series" ? 24 : 10)
+                                .padding(.bottom, 40)
                                 .id("detail-info")
+
+                            debugSection
                         }
                     }
                     .ignoresSafeArea()
@@ -377,25 +382,59 @@ struct FNOSItemDetailView: View {
         .focusEffectDisabled()
     }
 
-    // MARK: - 剧集选集区域（ATV+ 版式：分段标签 + 横图卡片 + 简介/日期/分级）
+    // MARK: - 剧集选集区域（ATV+ 版式：季标签 + 横图卡片 + 简介/日期/分级）
+
+    struct EpisodeTab: Identifiable {
+        let id: String
+        let title: String
+        let episodes: [FNOSItem]
+    }
+
+    /// 有季数据 → 每季一个标签；否则把全部剧集按 10 集分段
+    private var episodeTabs: [EpisodeTab] {
+        if seasons.count > 1 {
+            return seasons.map { season in
+                EpisodeTab(
+                    id: season.Id,
+                    title: season.Name ?? "第 \(season.IndexNumber ?? 0) 季",
+                    episodes: episodesBySeason[season.Id] ?? []
+                )
+            }
+        }
+        guard !episodes.isEmpty else { return [] }
+        return stride(from: 0, to: episodes.count, by: 10).map { start in
+            let slice = Array(episodes[start..<min(start + 10, episodes.count)])
+            let first = slice.first?.IndexNumber ?? (start + 1)
+            let last = slice.last?.IndexNumber ?? (start + slice.count)
+            return EpisodeTab(
+                id: "chunk-\(start)",
+                title: first == last ? "第 \(first) 集" : "第 \(first)-\(last) 集",
+                episodes: slice
+            )
+        }
+    }
+
+    private var currentTabEpisodes: [FNOSItem] {
+        let tabs = episodeTabs
+        guard tabs.indices.contains(selectedTabIndex) else { return [] }
+        return tabs[selectedTabIndex].episodes
+    }
 
     private var episodeSection: some View {
         VStack(alignment: .leading, spacing: 28) {
-            // 分段标签（第 1-10 集 / 第 11-20 集 …）
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 28) {
-                    ForEach(Array(episodeChunks.enumerated()), id: \.offset) { index, chunk in
-                        if let first = chunk.first, let last = chunk.last {
-                            let start = first.IndexNumber ?? (index * 10 + 1)
-                            let end = last.IndexNumber ?? ((index + 1) * 10)
-                            let isSelected = selectedChunkIndex == index
-                            let isFocused = focusedChunk == index
+            // 季 / 分段标签
+            if episodeTabs.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 28) {
+                        ForEach(Array(episodeTabs.enumerated()), id: \.element.id) { index, tab in
+                            let isSelected = selectedTabIndex == index
+                            let isFocused = focusedTab == tab.id
                             Button {
                                 withAnimation(.easeInOut(duration: 0.25)) {
-                                    selectedChunkIndex = index
+                                    selectedTabIndex = index
                                 }
                             } label: {
-                                Text(start == end ? "第 \(start) 集" : "第 \(start)-\(end) 集")
+                                Text(tab.title)
                                     .font(.system(size: 20, weight: .semibold))
                                     .foregroundColor(
                                         isFocused ? .black : (isSelected ? .white : .white.opacity(0.55))
@@ -412,19 +451,18 @@ struct FNOSItemDetailView: View {
                             }
                             .buttonStyle(FNOSBareButtonStyle())
                             .focusEffectDisabled()
-                            .focused($focusedChunk, equals: index)
+                            .focused($focusedTab, equals: tab.id)
                         }
                     }
+                    .padding(.horizontal, 60)
+                    .padding(.vertical, 10)
                 }
-                .padding(.horizontal, 60)
-                .padding(.vertical, 10)
             }
 
             // 集数卡片横排
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(alignment: .top, spacing: 24) {
-                    let chunk = episodeChunks[selectedChunkIndex]
-                    ForEach(chunk) { ep in
+                    ForEach(currentTabEpisodes) { ep in
                         let isFocused = focusedEpisode == ep.Id
                         Button {
                             playEpisode(ep)
@@ -515,6 +553,26 @@ struct FNOSItemDetailView: View {
         .frame(width: 420)
         .scaleEffect(isFocused ? 1.02 : 1.0)
         .animation(.easeOut(duration: 0.18), value: isFocused)
+    }
+
+    // MARK: - 临时诊断（确认服务端字段与分集端点真实返回后删除）
+
+    @ViewBuilder
+    private var debugSection: some View {
+        if !debugLines.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(debugLines, id: \.self) { line in
+                    Text(line)
+                        .font(.system(size: 13, design: .monospaced))
+                        .foregroundColor(.yellow.opacity(0.7))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+            }
+            .padding(.horizontal, 60)
+            .padding(.bottom, 40)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     // MARK: - 下方信息区块
@@ -620,8 +678,10 @@ struct FNOSItemDetailView: View {
             if let tags = detail.backdropTags, !tags.isEmpty {
                 fetchedBackdropTags = tags
             }
-            print("FNOSℹ️详情 \(item.Name ?? "?") 时长ticks=\(runtimeTicks ?? -1) 源=\(mediaSourceID ?? "nil") 演员=\(people.count)")
+            debugLines.append("详情: 演员\(detail.people.count) 源\(detail.mediaSourceID == nil ? "无" : "有") 字段[\(detail.rawKeys.joined(separator: ","))]")
+            print("FNOSℹ️详情 \(item.Name ?? "?") 时长ticks=\(runtimeTicks ?? -1) 源=\(mediaSourceID ?? "nil") 演员=\(people.count) 字段=\(detail.rawKeys)")
         } catch {
+            debugLines.append("详情失败: \(error.localizedDescription)")
             print("FNOS⚠️ 详情接口失败（继续展示页面）: \(error.localizedDescription)")
             if item.type != "Series" {
                 loadError = "获取播放信息失败：\(error.localizedDescription)"
@@ -639,63 +699,112 @@ struct FNOSItemDetailView: View {
         }
     }
 
-    /// 拉取全部分集：先试 Shows/{id}/Episodes，失败或为空再走 Users/{uid}/Items 兜底。
-    /// 任何失败只打日志，绝不影响详情页主体。
+    /// 拉取分集：季列表 → 逐季取集（复用旧季面板验证过的 UserId/SeasonId 调用），
+    /// 失败再走两级兜底。任何失败只打日志，绝不影响详情页主体。
     @MainActor
     private func loadEpisodes(client: FNOSDirectClient) async {
-        var loaded: [FNOSItem] = []
+        debugLines.removeAll(where: { $0.hasPrefix("季") || $0.hasPrefix("分集") })
 
-        // 端点 A：Emby 标准剧集端点
+        // 端点 A：季列表（关键：必须带 UserId，这是旧季面板实测可用的调用）
         do {
             let data = try await client.get(
-                path: "Shows/\(item.Id)/Episodes",
-                query: ["Fields": "Overview,RunTimeTicks,OfficialRating,ParentIndexNumber,IndexNumber,PremiereDate"]
+                path: "Shows/\(item.Id)/Seasons",
+                query: ["UserId": userID]
             )
-            loaded = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items
-            print("FNOSℹ️分集(Shows/Episodes) \(loaded.count) 条")
+            seasons = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items
+            debugLines.append("季列表: \(seasons.count) 季")
+            print("FNOSℹ️季列表 \(seasons.count) 季")
         } catch {
-            print("FNOS⚠️ Shows/Episodes 失败: \(error.localizedDescription)，改用 Items 兜底")
+            seasons = []
+            debugLines.append("季列表失败: \(error.localizedDescription)")
+            print("FNOS⚠️ 季列表失败: \(error.localizedDescription)")
         }
 
-        // 端点 B：通用条目查询兜底
-        if loaded.isEmpty {
+        // 端点 A2：逐季取集（UserId + SeasonId）
+        for season in seasons {
+            do {
+                let data = try await client.get(
+                    path: "Shows/\(item.Id)/Episodes",
+                    query: [
+                        "UserId": userID,
+                        "SeasonId": season.Id,
+                        "Fields": "Overview,RunTimeTicks,OfficialRating,ParentIndexNumber,IndexNumber,PremiereDate",
+                    ]
+                )
+                let list = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items
+                episodesBySeason[season.Id] = list
+                print("FNOSℹ️季「\(season.Name ?? season.Id)」\(list.count) 集")
+            } catch {
+                debugLines.append("季「\(season.Name ?? "?")」取集失败: \(error.localizedDescription)")
+                print("FNOS⚠️ 季取集失败: \(error.localizedDescription)")
+            }
+        }
+
+        var all: [FNOSItem] = []
+        if !seasons.isEmpty {
+            for season in seasons {
+                all.append(contentsOf: episodesBySeason[season.Id] ?? [])
+            }
+        }
+
+        // 端点 B：全部剧集（仍带 UserId）
+        if all.isEmpty {
+            do {
+                let data = try await client.get(
+                    path: "Shows/\(item.Id)/Episodes",
+                    query: [
+                        "UserId": userID,
+                        "Fields": "Overview,RunTimeTicks,OfficialRating,ParentIndexNumber,IndexNumber,PremiereDate",
+                    ]
+                )
+                all = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items
+                debugLines.append("全剧集(带UserId): \(all.count) 集")
+                print("FNOSℹ️全剧集 \(all.count) 集")
+            } catch {
+                debugLines.append("全剧集失败: \(error.localizedDescription)")
+                print("FNOS⚠️ 全剧集失败: \(error.localizedDescription)")
+            }
+        }
+
+        // 端点 C：通用条目查询兜底
+        if all.isEmpty {
             do {
                 let data = try await client.get(
                     path: "Users/\(userID)/Items",
                     query: [
                         "ParentId": item.Id,
                         "Recursive": "true",
-                        "IncludeItemTypes": "Episode",
                         "Limit": "500",
                         "SortBy": "ParentIndexNumber,IndexNumber",
                         "SortOrder": "Ascending",
                         "Fields": "Overview,RunTimeTicks,OfficialRating,ParentIndexNumber,IndexNumber,PremiereDate",
                     ]
                 )
-                loaded = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items
-                print("FNOSℹ️分集(Items?ParentId) \(loaded.count) 条")
+                let items = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items
+                all = items.filter { $0.type == "Episode" || $0.IndexNumber != nil }
+                debugLines.append("Items兜底: 共\(items.count) 条 取\(all.count) 集 类型[\(Set(items.compactMap(\.type)).sorted().joined(separator: ","))]")
+                print("FNOSℹ️Items兜底 \(items.count) 条 → \(all.count) 集")
             } catch {
-                print("FNOS❗️分集兜底也失败: \(error)")
+                debugLines.append("Items兜底失败: \(error.localizedDescription)")
+                print("FNOS❗️Items兜底失败: \(error)")
             }
         }
 
-        guard !loaded.isEmpty else {
+        guard !all.isEmpty else {
+            debugLines.append("结论: 没有拿到任何分集")
             print("FNOS⚠️ 剧集 \(item.Name ?? "?") 没有可用的分集数据")
             return
         }
 
-        let sorted = loaded.sorted { a, b in
+        episodes = all.sorted { a, b in
             let sa = a.ParentIndexNumber ?? 0
             let sb = b.ParentIndexNumber ?? 0
             if sa != sb { return sa < sb }
             return (a.IndexNumber ?? 0) < (b.IndexNumber ?? 0)
         }
-        episodes = sorted
-        episodeChunks = stride(from: 0, to: sorted.count, by: 10).map {
-            Array(sorted[$0..<min($0 + 10, sorted.count)])
-        }
-        selectedChunkIndex = 0
-        print("FNOSℹ️剧集 \(item.Name ?? "?") 共 \(sorted.count) 集，分 \(episodeChunks.count) 组")
+        selectedTabIndex = 0
+        debugLines.append("结论: 共 \(episodes.count) 集，分 \(episodeTabs.count) 组")
+        print("FNOSℹ️剧集 \(item.Name ?? "?") 共 \(episodes.count) 集，分 \(episodeTabs.count) 组")
     }
 
     private func playNow() {

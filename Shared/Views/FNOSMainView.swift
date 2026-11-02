@@ -445,6 +445,9 @@ struct FNOSHomeSettingsView: View {
     // 若发现某些电影 Hero 图文对不上，多为飞牛刮削把 Backdrop 挂错条目，切到海报可规避。
     @AppStorage("fnos.hero.imageSource") private var heroImageSource = "backdrop"
 
+    // 杜比视界按 HDR10 输出（规避紫绿偏色）
+    @AppStorage("fnos.play.hdr10Compat") private var hdr10Compat = true
+
     var body: some View {
         NavigationStack {
             Form {
@@ -488,6 +491,16 @@ struct FNOSHomeSettingsView: View {
                     Text("Hero 图源")
                 } footer: {
                     Text("若 Hero 标题与画面不一致，通常是飞牛刮削的横图挂错了电影，切换到竖版海报即可规避。")
+                }
+
+                Section {
+                    Toggle(isOn: $hdr10Compat) {
+                        Label("杜比视界按 HDR10 输出", systemImage: "tv")
+                    }
+                } header: {
+                    Text("播放（色彩）")
+                } footer: {
+                    Text("飞牛片源的杜比视界走电视的杜比视界显示模式时会紫绿偏色，开启后改为按 HDR10 输出，由电视自己做色调映射。若某片反而更差可关掉对比。")
                 }
 
                 Section {

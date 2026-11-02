@@ -13,6 +13,7 @@
 //
 
 import AVFoundation
+import CoreMedia
 import KSPlayer
 import SwiftUI
 import UIKit
@@ -44,6 +45,12 @@ extension FNOSDirectClient {
         var runTimeTicks: Int64?
         var backdropTags: [String]?
         var people: [FNOSPerson] = []
+        /// 视频流信息（判定杜比视界/HDR：VideoRangeType 形如 DOVI / DOVIWithHDR10 / HDR10 / SDR）
+        var videoRangeType: String?
+        var videoRange: String?
+        var videoCodec: String?
+        var videoProfile: String?
+        var bitDepth: Int?
         /// 原始响应里出现过的键名（诊断用：确认 People 等字段服务端到底给不给）
         var rawKeys: [String] = []
         /// People 字段原始内容片段（诊断用）
@@ -86,7 +93,16 @@ extension FNOSDirectClient {
             if let ticks = (first["RunTimeTicks"] as? NSNumber)?.int64Value, ticks > 0 {
                 detail.runTimeTicks = ticks
             }
-            print("FNOS✅ 条目详情 \(itemID) → 媒体源 \(detail.mediaSourceID ?? "nil") 容器 \(detail.container ?? "?")")
+            if let streams = first["MediaStreams"] as? [[String: Any]],
+               let video = streams.first(where: { (($0["Type"] as? String) ?? "").lowercased() == "video" })
+            {
+                detail.videoRangeType = video["VideoRangeType"] as? String
+                detail.videoRange = video["VideoRange"] as? String
+                detail.videoCodec = video["Codec"] as? String
+                detail.videoProfile = video["Profile"] as? String
+                detail.bitDepth = (video["BitDepth"] as? NSNumber)?.intValue
+            }
+            print("FNOS✅ 条目详情 \(itemID) → 媒体源 \(detail.mediaSourceID ?? "nil") 容器 \(detail.container ?? "?") 视频 \(detail.videoCodec ?? "?") \(detail.videoProfile ?? "") range=\(detail.videoRange ?? "?")/\(detail.videoRangeType ?? "?") \(detail.bitDepth.map { "\($0)bit" } ?? "")")
         } else {
             print("FNOS⚠️ 条目详情 \(itemID) 无 MediaSources")
         }
@@ -136,13 +152,32 @@ extension FNOSDirectClient {
         }
     }
 
+    /// 播放源信息（含视频色彩信息，用于杜比视界/HDR 分流）
+    struct FNOSPlaybackSourceInfo {
+        let mediaSourceID: String
+        let container: String?
+        let videoRangeType: String?
+        let videoRange: String?
+        let videoCodec: String?
+        let videoProfile: String?
+        let bitDepth: Int?
+    }
+
     /// 条目播放源（fnOS 硬性要求：stream 的 MediaSourceId 必须传真实值，空值一律 400）
-    func playbackSource(itemID: String, userID: String) async throws -> (mediaSourceID: String, container: String?) {
+    func playbackSource(itemID: String, userID: String) async throws -> FNOSPlaybackSourceInfo {
         let detail = try await fetchItemDetail(itemID: itemID, userID: userID)
         guard let id = detail.mediaSourceID, !id.isEmpty else {
             throw FNOSDirectError("该条目没有可用的媒体源")
         }
-        return (id, detail.container)
+        return FNOSPlaybackSourceInfo(
+            mediaSourceID: id,
+            container: detail.container,
+            videoRangeType: detail.videoRangeType,
+            videoRange: detail.videoRange,
+            videoCodec: detail.videoCodec,
+            videoProfile: detail.videoProfile,
+            bitDepth: detail.bitDepth
+        )
     }
 
     /// 演员头像 URL
@@ -218,6 +253,12 @@ struct FNOSPlayerContainerView: View {
     @State private var showDanmu = true
     @State private var streamURL: URL?
     @State private var containerInfo: String?
+    /// 视频色彩信息（杜比视界/HDR 分流用）
+    @State private var videoRangeType: String?
+    @State private var videoCodec: String?
+    @State private var videoBitDepth: Int?
+    /// 杜比视界/HDR10 兼容输出开关（首页设置可关，用于 A/B 对比）
+    @AppStorage("fnos.play.hdr10Compat") private var hdr10Compat = true
     @State private var notice = "准备播放…"
     @State private var didSetup = false
 
@@ -749,7 +790,7 @@ struct FNOSPlayerContainerView: View {
         didSetup = true
 
         // 1) 取真实 MediaSourceId（fnOS 硬性要求）
-        let source: (mediaSourceID: String, container: String?)
+        let source: FNOSDirectClient.FNOSPlaybackSourceInfo
         do {
             source = try await client.playbackSource(itemID: item.Id, userID: userID)
         } catch {
@@ -765,6 +806,9 @@ struct FNOSPlayerContainerView: View {
         }
         streamURL = url
         containerInfo = source.container
+        videoRangeType = source.videoRangeType
+        videoCodec = source.videoCodec
+        videoBitDepth = source.bitDepth
         notice = ""
 
         // 3) 弹幕（真实服务端；剧集按「剧名 + 集数」匹配，电影按标题匹配）
@@ -779,13 +823,48 @@ struct FNOSPlayerContainerView: View {
         await danmuEngine.load(title: title, seriesTitle: serieTitleResolved, episodeNumber: episodeNumber)
         switch danmuEngine.status {
         case .ready:
-            notice = "弹幕 \(danmuEngine.commentCount) 条"
+            notice = "弹幕 \(danmuEngine.commentCount) 条" + formatBadge
         case .failed(let message):
             notice = "弹幕失败: \(message)"
         default:
             notice = ""
         }
         revealControls()
+    }
+
+    // MARK: 色彩判定
+
+    /// 杜比视界（Jellyfin 的 VideoRangeType：DOVI / DOVIWithHDR10 / DOVIWithEL / DOVIWithHDR10Plus…）
+    private var isDolbyVision: Bool {
+        (videoRangeType ?? "").uppercased().contains("DOVI")
+    }
+
+    private var isHDRContent: Bool {
+        let t = (videoRangeType ?? "").uppercased()
+        return t.contains("DOVI") || t.contains("HDR") || t.contains("HLG")
+    }
+
+    /// 控制条上的格式标记（识别结果一眼可见，便于确认分流是否生效）
+    private var formatBadge: String {
+        let t = (videoRangeType ?? "").uppercased()
+        guard !t.isEmpty else { return "" }
+        var label: String
+        if t.contains("DOVI") {
+            label = t.contains("HDR10") ? "杜比视界 P8" : "杜比视界 P5"
+        } else if t.contains("HLG") {
+            label = "HLG"
+        } else if t.contains("HDR") {
+            label = "HDR10"
+        } else {
+            label = "SDR"
+        }
+        if let depth = videoBitDepth, depth > 8 {
+            label += " \(depth)bit"
+        }
+        if isDolbyVision || isHDRContent {
+            label += hdr10Compat ? " · HDR10 输出" : " · 直通"
+        }
+        return " · " + label
     }
 
     // MARK: 引擎分流（.mkv → FFmpeg；.mp4/.m3u8 → AVPlayer）
@@ -795,9 +874,16 @@ struct FNOSPlayerContainerView: View {
         let isMKV = container.contains("matroska") || container.contains("mkv")
 
         KSOptions.firstPlayerType = isMKV ? KSMEPlayer.self : KSAVPlayer.self
-        print("FNOSℹ️播放引擎: \(isMKV ? "FFmpeg (KSMEPlayer)" : "AVPlayer (KSAVPlayer)") · 容器: \(container.isEmpty ? "未知" : container)")
+        print("FNOSℹ️播放引擎: \(isMKV ? "FFmpeg (KSMEPlayer)" : "AVPlayer (KSAVPlayer)") · 容器: \(container.isEmpty ? "未知" : container) · \(formatBadge)")
 
-        let options = KSOptions()
+        // 杜比视界：KSPlayer 免费版不做 DoVi(IPTPQc2)→RGB 的色彩转换，
+        // 但 isDovi=true 会让 tvOS 把电视切到「杜比视界」显示模式，
+        // 电视于是按 DV 去解一路普通 HDR10/PQ 画面 → 紫绿偏色。
+        // 这里改为按 HDR10 请求显示模式，把 PQ 层交给电视自己色调映射（对 P7/P8 这类 HDR10 兼容层是正确的）。
+        let options: KSOptions = (isDolbyVision && hdr10Compat) ? FNOSPlayerOptions() : KSOptions()
+        if isHDRContent, hdr10Compat {
+            options.destinationDynamicRange = .hdr10
+        }
 
         // 鉴权头：fnOS 播放流必须带 X-Emby-Authorization（实测仅 api_key 会 400）
         // AVPlayer 引擎：通过 avOptions 注入 AVURLAsset 请求头
@@ -809,6 +895,20 @@ struct FNOSPlayerContainerView: View {
         options.formatContextOptions["headers"] = headerString
 
         return options
+    }
+}
+
+// MARK: - 播放选项（杜比视界 → HDR10 显示模式）
+
+/// KSPlayer 免费版不解 DoVi 的 IPTPQc2 色彩空间，但 `updateVideo(isDovi: true)` 会把电视切到
+/// 「杜比视界」显示模式，导致电视按 DV 去解一路普通 PQ 画面 → 紫绿偏色。
+/// 这里把 DoVi 内容统一按 HDR10 请求显示模式，让电视自己做色调映射。
+/// （P7/P8 这类带 HDR10 兼容层的片源效果正确；P5 因底层是 IPT 数据，仍需 mpv/libplacebo 才能完全还原）
+final class FNOSPlayerOptions: KSOptions {
+
+    @MainActor
+    override func updateVideo(refreshRate: Float, isDovi: Bool, formatDescription: CMFormatDescription?) {
+        super.updateVideo(refreshRate: refreshRate, isDovi: false, formatDescription: formatDescription)
     }
 }
 

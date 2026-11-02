@@ -519,6 +519,10 @@ struct FNOSPlayerContainerView: View {
                         .buttonStyle(FNOSBareButtonStyle())
                         .focusEffectDisabled()
                         .focused($focusedChip, equals: ep.Id)
+                        .onMoveCommand { direction in
+                            // 上键回进度条（换集条在进度条下方，明确路由避免焦点乱跳）
+                            if direction == .up { focus = .scrubber }
+                        }
                         .id(ep.Id)
                     }
                 }
@@ -548,7 +552,7 @@ struct FNOSPlayerContainerView: View {
             .animation(.easeOut(duration: 0.15), value: focus == .scrubber)
             .contentShape(Rectangle())
         }
-        .frame(height: 28)
+        .frame(height: 40)
         .focusable(true)
         .focused($focus, equals: .scrubber)
         .focusEffectDisabled()
@@ -574,6 +578,10 @@ struct FNOSPlayerContainerView: View {
         .buttonStyle(.plain)
         .focused($focus, equals: control)
         .focusEffectDisabled()
+        .onMoveCommand { direction in
+            // 下键明确落到进度条：换集条插入后焦点引擎可能跳过 scrubber
+            if direction == .down { focus = .scrubber }
+        }
     }
 
     /// 倍速按钮：0.5 → 1.0 → 1.5 → 2.0 循环
@@ -589,6 +597,9 @@ struct FNOSPlayerContainerView: View {
         .buttonStyle(.plain)
         .focused($focus, equals: .rate)
         .focusEffectDisabled()
+        .onMoveCommand { direction in
+            if direction == .down { focus = .scrubber }
+        }
     }
 
     private func cycleRate() {
@@ -632,6 +643,8 @@ struct FNOSPlayerContainerView: View {
         scrubActive = true
         scrubValue = min(max(base + direction * scrubStep, 0), total)
         scheduleScrubCommit()
+        // 拖进度时不让控制条到点自动消失（否则拖到一半整条连 scrubber 一起没了）
+        revealControls()
     }
 
     private static let scrubLadder: [Double] = [10, 30, 60, 120]
@@ -696,8 +709,8 @@ struct FNOSPlayerContainerView: View {
 
     private func scheduleHide() {
         guard !isSheetPresented else { return }
-        // 焦点停在换集条上时保持控制条常显：否则 3 秒后整条（含换集条）一起消失，用户点不到
-        guard focusedChip == nil else { return }
+        // 焦点停在换集条上 / 正在拖进度时保持控制条常显：否则 3 秒后整条一起消失，用户点不到
+        guard focusedChip == nil, !scrubActive else { return }
         hideTask?.cancel()
         hideTask = Task {
             try? await Task.sleep(nanoseconds: 3_000_000_000)

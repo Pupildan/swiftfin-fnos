@@ -14,6 +14,9 @@ struct FNOSCredentials: Codable, Equatable {
     var token: String
     var userID: String
     var userName: String
+    /// 飞牛**原生** API token（`/v/api/v1/` 用；与兼容层的 AccessToken 不是同一套）。
+    /// 演员阵容、精确时长只能从原生接口取到，所以登录时顺手换一个存下来。
+    var nativeToken: String? = nil
 }
 
 @MainActor
@@ -143,12 +146,23 @@ enum FNOSAuthClient {
             throw FNOSLoginError.emptyToken
         }
 
-        print("FNOS✅登录成功: \(user.Name ?? "?") @ \(trimmed)")
+        // 顺带换飞牛原生 token（失败不影响登录，只是演员/时长拿不到）
+        var nativeToken: String?
+        do {
+            nativeToken = try await FNOSNativeClient.login(
+                baseURL: baseURL, username: username, password: password
+            )
+        } catch {
+            print("FNOS⚠️ 原生登录失败（演员/时长将不可用）: \(error.localizedDescription)")
+        }
+
+        print("FNOS✅登录成功: \(user.Name ?? "?") @ \(trimmed) 原生token=\(nativeToken == nil ? "无" : "有")")
         return FNOSCredentials(
             serverURL: baseURL,
             token: token,
             userID: user.Id,
-            userName: user.Name ?? username
+            userName: user.Name ?? username,
+            nativeToken: nativeToken
         )
     }
 }

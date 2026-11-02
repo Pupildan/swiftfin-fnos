@@ -32,6 +32,14 @@ struct FNOSItemDetailView: View {
     @State private var mediaSourceID: String?
     @State private var runtimeTicks: Int64?
     @State private var people: [FNOSDirectClient.FNOSPerson] = []
+    // 飞牛原生 API（兼容层拿不到的演员/精确时长）——走 /v/api/v1/ + Authx
+    @State private var nativePersons: [FNOSNativeClient.Person] = []
+    /// 原生客户端（头像 URL / 鉴权头需要它）
+    @State private var nativeClient: FNOSNativeClient?
+    /// 集号 → 时长（秒），来自原生 episode/list
+    @State private var nativeEpisodeDurations: [Int: Int] = [:]
+    /// 电影/单集时长（秒），来自原生条目
+    @State private var nativeDurationSeconds: Int?
     @State private var loadError: String?
     // 从海报提取的主色（动态液态玻璃背景）
     @State private var themeColor: Color?
@@ -106,13 +114,26 @@ struct FNOSItemDetailView: View {
         }
     }
 
-    /// 时长文案：优先详情接口的 ticks，走统一单位判定。
+    /// 时长文案：原生 API 的秒数最可信；否则退回 ticks 量级判定。
     /// 剧集(Series)没有自己的 ticks，runtimeTicks 由第 1 集补齐，所以按剧集的时长区间判定。
     private var durationString: String? {
-        FNOSItem.durationText(
+        if let seconds = nativeDurationSeconds, seconds >= 60 {
+            return FNOSItem.format(seconds: Double(seconds))
+        }
+        return FNOSItem.durationText(
             ticks: runtimeTicks ?? item.RunTimeTicks,
             isEpisode: item.type != "Movie"
         )
+    }
+
+    /// 单集时长文案：原生 episode/list 的秒数优先
+    private func episodeDurationText(_ ep: FNOSItem) -> String? {
+        if let number = ep.IndexNumber,
+           let seconds = nativeEpisodeDurations[number], seconds >= 60
+        {
+            return FNOSItem.format(seconds: Double(seconds))
+        }
+        return ep.compactDuration
     }
 
     private var genreLine: String {
@@ -501,7 +522,7 @@ struct FNOSItemDetailView: View {
                 .frame(width: 420, height: 236)
                 .clipped()
 
-                if let duration = ep.compactDuration {
+                if let duration = episodeDurationText(ep) {
                     Text(duration)
                         .font(.system(size: 16, weight: .bold))
                         .foregroundColor(.white)
@@ -523,7 +544,7 @@ struct FNOSItemDetailView: View {
                     Text("第 \(ep.IndexNumber ?? 0) 集")
                         .font(.system(size: 14))
                         .foregroundColor(.white.opacity(0.5))
-                    if let duration = ep.compactDuration {
+                    if let duration = episodeDurationText(ep) {
                         Text("·")
                             .font(.system(size: 14))
                             .foregroundColor(.white.opacity(0.28))
@@ -602,8 +623,8 @@ struct FNOSItemDetailView: View {
 
     private var infoSection: some View {
         VStack(alignment: .leading, spacing: 40) {
-            // 演员阵容
-            if !people.isEmpty {
+            // 演员阵容（原生 API 或 Jellyfin People，任一有数据就展示）
+            if !castEntries.isEmpty {
                 castSection
             }
 
@@ -634,13 +655,11 @@ struct FNOSItemDetailView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 28) {
-                    ForEach(Array(people.enumerated()), id: \.offset) { _, person in
+                    ForEach(castEntries) { person in
                         VStack(spacing: 8) {
                             FNOSAsyncImage(
-                                url: person.id.flatMap { id in
-                                    client?.personImageURL(personID: id, tag: person.imageTag)
-                                },
-                                headers: client?.mediaHeaders ?? [:],
+                                url: person.imageURL,
+                                headers: person.headers,
                                 contentMode: .fill
                             )
                             .frame(width: 124, height: 124)
@@ -652,7 +671,7 @@ struct FNOSItemDetailView: View {
                                 .foregroundColor(.white)
                                 .lineLimit(1)
 
-                            Text(person.role ?? " ")
+                            Text(person.role)
                                 .font(.system(size: 14))
                                 .foregroundColor(.white.opacity(0.55))
                                 .lineLimit(1)
@@ -662,6 +681,53 @@ struct FNOSItemDetailView: View {
                 }
                 .padding(.vertical, 4)
             }
+        }
+    }
+
+    // MARK: - 演职人员统一模型（原生 API 优先，Jellyfin People 兜底）
+
+    private struct CastEntry: Identifiable {
+        let id: String
+        let name: String
+        let role: String
+        let imageURL: URL?
+        let headers: [String: String]
+    }
+
+    private var castEntries: [CastEntry] {
+        // 1) 飞牛原生 person/list：字段是 job(Actor/Director) / role / profile_path
+        if !nativePersons.isEmpty {
+            return nativePersons.prefix(24).enumerated().map { index, person in
+                let roleText: String
+                switch person.job {
+                case "Director": roleText = "导演"
+                case "Actor": roleText = (person.role?.isEmpty == false) ? (person.role ?? "演员") : "演员"
+                default: roleText = person.role ?? person.job ?? " "
+                }
+                let url = person.profilePath.flatMap { path -> URL? in
+                    guard !path.isEmpty else { return nil }
+                    return nativeClient?.personImageURL(profilePath: path, width: 300)
+                }
+                return CastEntry(
+                    id: "native-\(index)-\(person.name)",
+                    name: person.name,
+                    role: roleText,
+                    imageURL: url,
+                    headers: nativeClient?.imageHeaders ?? [:]
+                )
+            }
+        }
+        // 2) Jellyfin 兼容层的 People（多数情况下为空）
+        return people.enumerated().map { index, person in
+            CastEntry(
+                id: "jf-\(index)-\(person.name)",
+                name: person.name,
+                role: person.role ?? " ",
+                imageURL: person.id.flatMap { id in
+                    client?.personImageURL(personID: id, tag: person.imageTag)
+                },
+                headers: client?.mediaHeaders ?? [:]
+            )
         }
     }
 
@@ -717,10 +783,49 @@ struct FNOSItemDetailView: View {
             await loadEpisodes(client: client)
         }
 
+        // 3) 飞牛原生 API：演员 + 精确时长（Jellyfin 兼容层根本不返回这些）
+        await loadNativeMetadata(client: client)
+
         // 3) 主题色
         if let url = backdropURL {
             themeColor = await FNOSDominantColor.color(for: url, headers: client.mediaHeaders)
         }
+    }
+
+    /// 飞牛原生 API：按标题换 guid，再取演员与逐集时长。
+    /// 兼容层只给 BaseItemDto（People 恒空、RunTimeTicks 单位混乱），这层才是飞牛 App 的真数据源。
+    @MainActor
+    private func loadNativeMetadata(client: FNOSDirectClient) async {
+        // 原生接口要飞牛自己的 token（登录时换好存在凭据里），不是兼容层的 AccessToken
+        let nativeToken = FNOSAuthStore.shared.credentials?.nativeToken
+        if nativeToken == nil {
+            debugLines.append("原生: 缺少飞牛 token —— 请退出重新登录一次")
+        }
+        let native = FNOSNativeClient(baseURL: client.baseURL, token: nativeToken ?? client.token)
+        nativeClient = native
+
+        let isSeries = item.type == "Series"
+        let resolved = await native.resolve(title: item.Name, isSeries: isSeries)
+
+        if !resolved.persons.isEmpty {
+            nativePersons = resolved.persons
+        }
+        if !resolved.episodeDurations.isEmpty {
+            nativeEpisodeDurations = resolved.episodeDurations
+        }
+        if let seconds = resolved.durationSeconds, seconds > 0 {
+            nativeDurationSeconds = seconds
+        }
+        // 剧集自身没有时长 → 用第 1 集的
+        if nativeDurationSeconds == nil, isSeries,
+           let firstNumber = episodes.first?.IndexNumber,
+           let seconds = resolved.episodeDurations[firstNumber]
+        {
+            nativeDurationSeconds = seconds
+        }
+
+        debugLines.append(contentsOf: resolved.debug)
+        print("FNOSℹ️原生链路: \(resolved.debug.joined(separator: " | "))")
     }
 
     /// 拉取分集：季列表 → 逐季取集（复用旧季面板验证过的 UserId/SeasonId 调用），

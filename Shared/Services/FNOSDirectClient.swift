@@ -165,6 +165,8 @@ struct FNOSItem: Decodable, Identifiable {
     let PremiereDate: String?
     // 单集所属剧名（弹幕按「剧名+集数」匹配）
     let SeriesName: String?
+    // 演职人员（请求时带 Fields=People 才会返回，Jellyfin 标准结构）
+    let People: [FNOSPeopleEntry]?
 
     var id: String { Id }
     var type: String? { ItemType }
@@ -176,7 +178,17 @@ struct FNOSItem: Decodable, Identifiable {
         case ProductionYear, Overview, ImageTags, BackdropImageTags
         case RunTimeTicks, OfficialRating, Genres
         case ParentIndexNumber, IndexNumber, PremiereDate, SeriesName
+        case People
     }
+}
+
+/// 条目上的演职人员（Jellyfin BaseItemPerson 结构）
+struct FNOSPeopleEntry: Decodable {
+    let Name: String?
+    let Id: String?
+    let Role: String?
+    let Type: String?
+    let PrimaryImageTag: String?
 }
 
 extension FNOSItem {
@@ -195,9 +207,15 @@ extension FNOSItem {
 
     static func durationText(ticks: Int64?, isEpisode: Bool) -> String? {
         guard let secondsDouble = plausibleSeconds(ticks: ticks, isEpisode: isEpisode) else { return nil }
-        let seconds = Int(secondsDouble)
-        let hours = seconds / 3600
-        let minutes = (seconds % 3600) / 60
+        return format(seconds: secondsDouble)
+    }
+
+    /// 秒 → "1 小时 10 分钟" / "54 分钟"
+    static func format(seconds: Double) -> String? {
+        let total = Int(seconds)
+        guard total >= 60 else { return nil }
+        let hours = total / 3600
+        let minutes = (total % 3600) / 60
         if hours > 0 {
             return minutes > 0 ? "\(hours) 小时 \(minutes) 分钟" : "\(hours) 小时"
         }

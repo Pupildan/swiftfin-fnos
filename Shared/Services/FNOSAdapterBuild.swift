@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v49"
+    static let version = "v50"
 
     /// 本版主要变更摘要
-    static let changes = "换集修复(cover关闭后重开新集,不再点了没反应)+换集条不再被3秒自动隐藏吞掉；片长改用第1集ticks；演员改从第1集取"
+    static let changes = "演员/时长改走飞牛原生API(/v/api/v1/person/list + episode/list，Authx签名，登录时换原生token)；进度条拖动不再被3秒隐藏打断+焦点路由修复"
 }

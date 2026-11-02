@@ -21,6 +21,9 @@ struct FNOSItemDetailView: View {
 
     /// 播放器在本页内打开（不先关详情页），避免 fullScreenCover 竞态导致请求被取消
     @State private var playbackTarget: FNOSPlaybackTarget?
+    /// 播放器内点了别的分集：先关闭播放器，onDismiss 里再以新目标重开（cover 展示中改 item 不会重建内容）
+    @State private var pendingEpisode: FNOSItem?
+    @State private var pendingSeriesName: String?
 
     /// 详情页背景图轮播索引
     @State private var backdropIndex = 0
@@ -103,11 +106,12 @@ struct FNOSItemDetailView: View {
         }
     }
 
-    /// 时长文案：优先详情接口的 ticks，走统一单位判定
+    /// 时长文案：优先详情接口的 ticks，走统一单位判定。
+    /// 剧集(Series)没有自己的 ticks，runtimeTicks 由第 1 集补齐，所以按剧集的时长区间判定。
     private var durationString: String? {
         FNOSItem.durationText(
             ticks: runtimeTicks ?? item.RunTimeTicks,
-            isEpisode: item.type == "Episode"
+            isEpisode: item.type != "Movie"
         )
     }
 
@@ -188,7 +192,7 @@ struct FNOSItemDetailView: View {
         .task(id: item.Id) {
             await rotateBackdrops()
         }
-        .fullScreenCover(item: $playbackTarget) { target in
+        .fullScreenCover(item: $playbackTarget, onDismiss: reopenPendingEpisode) { target in
             FNOSPlayerContainerView(
                 item: target.item,
                 client: target.client,
@@ -196,13 +200,12 @@ struct FNOSItemDetailView: View {
                 seriesName: target.seriesName,
                 episodes: target.item.type == "Episode" ? episodes : [],
                 onSelectEpisode: { ep in
-                    // 换集：重建播放目标（新 id → 全屏播放器重建，重新拉流与弹幕）
-                    playbackTarget = FNOSPlaybackTarget(
-                        item: ep,
-                        client: target.client,
-                        userID: userID,
-                        seriesName: target.seriesName ?? item.Name
-                    )
+                    // 换集：记下目标后关闭播放器；onDismiss 时再以新条目重新打开。
+                    // 不能直接替换 playbackTarget —— cover 展示期间换 item 不会重建视图，
+                    // 旧的 streamURL / didSetup 全都留着，表现就是「点了没反应」。
+                    pendingEpisode = ep
+                    pendingSeriesName = target.seriesName ?? item.Name
+                    playbackTarget = nil
                 }
             )
         }
@@ -500,11 +503,14 @@ struct FNOSItemDetailView: View {
 
                 if let duration = ep.compactDuration {
                     Text(duration)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.system(size: 16, weight: .bold))
                         .foregroundColor(.white)
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 5)
-                        .background(Capsule().fill(Color.black.opacity(0.55)))
+                        .padding(.horizontal, 13)
+                        .padding(.vertical, 6)
+                        .background(Capsule().fill(Color.black.opacity(0.78)))
+                        .overlay(
+                            Capsule().stroke(Color.white.opacity(0.22), lineWidth: 1)
+                        )
                         .padding(.leading, 14)
                         .padding(.bottom, 12)
                 }
@@ -513,9 +519,20 @@ struct FNOSItemDetailView: View {
 
             // 文本区：集号 / 标题 / 简介 / 日期 + 分级
             VStack(alignment: .leading, spacing: 9) {
-                Text("第 \(ep.IndexNumber ?? 0) 集")
-                    .font(.system(size: 14))
-                    .foregroundColor(.white.opacity(0.5))
+                HStack(spacing: 8) {
+                    Text("第 \(ep.IndexNumber ?? 0) 集")
+                        .font(.system(size: 14))
+                        .foregroundColor(.white.opacity(0.5))
+                    if let duration = ep.compactDuration {
+                        Text("·")
+                            .font(.system(size: 14))
+                            .foregroundColor(.white.opacity(0.28))
+                        Text(duration)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.white.opacity(0.6))
+                    }
+                    Spacer(minLength: 0)
+                }
 
                 Text(ep.Name ?? "未命名")
                     .font(.system(size: 20, weight: .bold))
@@ -810,7 +827,27 @@ struct FNOSItemDetailView: View {
             return (a.IndexNumber ?? 0) < (b.IndexNumber ?? 0)
         }
         selectedTabIndex = 0
-        debugLines.append("结论: 共 \(episodes.count) 集，分 \(episodeTabs.count) 组；第1集ticks=\(episodes.first?.RunTimeTicks ?? -1)")
+
+        // 剧集(Series)自身没有 RunTimeTicks → 用第 1 集的时长代表「单集片长」
+        if runtimeTicks == nil, let firstTicks = episodes.first?.RunTimeTicks, firstTicks > 0 {
+            runtimeTicks = firstTicks
+            print("FNOSℹ️片长取自第1集 ticks=\(firstTicks) → \(durationString ?? "nil")")
+        }
+
+        // 剧集(Series)自身的 People 通常为空，演员挂在单集上 → 拉第 1 集详情取阵容
+        if people.isEmpty, let first = episodes.first {
+            let epDetail = try? await client.fetchItemDetail(itemID: first.Id, userID: userID)
+            if let epDetail, !epDetail.people.isEmpty {
+                people = epDetail.people
+                debugLines.append("演员取自第1集: \(epDetail.people.count) 人")
+                print("FNOSℹ️演员取自第1集 \(epDetail.people.count) 人")
+            } else {
+                debugLines.append("第1集演员=\(epDetail?.people.count ?? -1) 原始[\(epDetail?.peopleRaw ?? "请求失败")]")
+                print("FNOS⚠️ 第1集也没有演员数据 raw=\(epDetail?.peopleRaw ?? "请求失败")")
+            }
+        }
+
+        debugLines.append("结论: 共 \(episodes.count) 集，分 \(episodeTabs.count) 组；第1集ticks=\(episodes.first?.RunTimeTicks ?? -1) 类型=\(episodes.first?.type ?? "nil") 角标=\(episodes.first?.compactDuration ?? "nil")")
         print("FNOSℹ️剧集 \(item.Name ?? "?") 共 \(episodes.count) 集，分 \(episodeTabs.count) 组")
     }
 
@@ -840,6 +877,23 @@ struct FNOSItemDetailView: View {
             userID: userID,
             seriesName: item.Name
         )
+    }
+
+    /// 播放器关闭后若有待切分集，立刻以新目标重新打开（全新视图实例 → 重新拉流 + 重新匹配弹幕）
+    private func reopenPendingEpisode() {
+        guard let ep = pendingEpisode, let client else { return }
+        pendingEpisode = nil
+        let name = pendingSeriesName ?? item.Name
+        pendingSeriesName = nil
+        print("FNOSℹ️换集 → 第 \(ep.IndexNumber ?? 0) 集《\(ep.Name ?? "?")》")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            playbackTarget = FNOSPlaybackTarget(
+                item: ep,
+                client: client,
+                userID: userID,
+                seriesName: name
+            )
+        }
     }
 
     @AppStorage("fnos.watchlater") private var watchLaterIDs = ""

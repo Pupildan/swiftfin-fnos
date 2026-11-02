@@ -466,6 +466,14 @@ struct FNOSPlayerContainerView: View {
             }
             scheduleHide()
         }
+        .onChange(of: focusedChip) { newValue in
+            // 焦点进入换集条 → 取消自动隐藏；离开 → 重新计时
+            if newValue == nil {
+                scheduleHide()
+            } else {
+                hideTask?.cancel()
+            }
+        }
     }
 
     /// 进度条下方的换集条：缩略图横排，当前集描边高亮，点选即切集
@@ -477,7 +485,11 @@ struct FNOSPlayerContainerView: View {
                         let isCurrent = ep.Id == item.Id
                         let isFocused = focusedChip == ep.Id
                         Button {
-                            guard !isCurrent else { return }
+                            guard !isCurrent else {
+                                print("FNOSℹ️换集: 已是当前集，忽略")
+                                return
+                            }
+                            print("FNOSℹ️换集点击 → 第 \(ep.IndexNumber ?? 0) 集《\(ep.Name ?? "?")》 id=\(ep.Id)")
                             onSelectEpisode?(ep)
                         } label: {
                             VStack(spacing: 6) {
@@ -684,6 +696,8 @@ struct FNOSPlayerContainerView: View {
 
     private func scheduleHide() {
         guard !isSheetPresented else { return }
+        // 焦点停在换集条上时保持控制条常显：否则 3 秒后整条（含换集条）一起消失，用户点不到
+        guard focusedChip == nil else { return }
         hideTask?.cancel()
         hideTask = Task {
             try? await Task.sleep(nanoseconds: 3_000_000_000)

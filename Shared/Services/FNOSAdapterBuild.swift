@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v48"
+    static let version = "v49"
 
     /// 本版主要变更摘要
-    static let changes = "播放页进度条下方新增换集条(缩略图横排+当前集描边)；时长按内容类型判定单位(剧集4.2e9→70分钟)；演员加 Items/{id} 备用端点+原始值诊断"
+    static let changes = "换集修复(cover关闭后重开新集,不再点了没反应)+换集条不再被3秒自动隐藏吞掉；片长改用第1集ticks；演员改从第1集取"
 }

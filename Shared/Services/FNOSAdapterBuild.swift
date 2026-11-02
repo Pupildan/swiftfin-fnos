@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v60"
+    static let version = "v61"
 
     /// 本版主要变更摘要
-    static let changes = "无感切换：开局检测片源(杜比视界/AV1 自动用 mpv，其余仍用 KSPlayer)，元数据漏报时按解码轨实测二次切换并带进度续播；KS 控制条按钮统一为 Hero 同款胶囊外观(去掉系统白方块)；首页媒体库标题字号调小"
+    static let changes = "引擎分流改为按真实杜比视界档位判定（起播时后台查 /stream）：P5/P7 自动用 mpv，P8（带 HDR10 基线层）继续留在 KS；切换带进度续播；控制条显示片源格式与当前引擎"
 }

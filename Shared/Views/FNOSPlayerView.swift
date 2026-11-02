@@ -166,27 +166,6 @@ extension FNOSDirectClient {
         let videoCodec: String?
         let videoProfile: String?
         let bitDepth: Int?
-
-        /// 杜比视界（兼容层 VideoRangeType 有时会漏报成 SDR，所以还有解码轨实测作为第二道判断）
-        var isDolbyVision: Bool {
-            let hay = [(videoRangeType ?? ""), (videoRange ?? "")].joined(separator: " ").lowercased()
-            return hay.contains("dovi") || hay.contains("dolby") || hay.contains("dvhe") || hay.contains("dvav")
-        }
-
-        var isAV1: Bool {
-            (videoCodec ?? "").lowercased().contains("av1")
-        }
-
-        /// KSPlayer 免费版处理不了的片源：杜比视界（IPTPQc2 不转色彩会紫绿）、AV1（无解码器）
-        var needsMPV: Bool { isDolbyVision || isAV1 }
-
-        var summary: String {
-            [
-                videoRangeType ?? videoRange ?? "-",
-                videoCodec ?? "-",
-                bitDepth.map { "\($0)bit" } ?? "-",
-            ].joined(separator: " · ")
-        }
     }
 
     /// 条目播放源（fnOS 硬性要求：stream 的 MediaSourceId 必须传真实值，空值一律 400）
@@ -295,15 +274,17 @@ struct FNOSPlayerContainerView: View {
     @AppStorage("fnos.play.engineMPV") private var useMPVEngine = false
     /// 自动分流：KSPlayer 处理不了的片源（杜比视界 / AV1）自动切 mpv
     @AppStorage("fnos.play.autoEngine") private var autoEngine = true
-    /// 片源检测完成前不渲染任何播放器，避免"先 KS 后 mpv"抖动
-    @State private var engineProbeDone = false
-    /// 本条目是否强制走 mpv（元数据命中或解码轨实测命中）
+    /// 本条目是否强制走 mpv（探测到 P5/P7 或解码轨实测命中）
     @State private var forceMPV = false
-    /// 元数据没报、播放中才发现是杜比视界时，记住已切过一次，避免来回跳
+    /// 已探测出"这片子 KS 能正确解"（P8/HDR10/SDR），解码轨实测就不再触发切换
+    @State private var ksProfileConfirmed = false
+    /// 探测只跑一次
+    @State private var probeStarted = false
+    /// 元数据/探测漏掉、播放中才发现是杜比视界时，记住已切过一次，避免来回跳
     @State private var didAutoSwitch = false
     /// 引擎切换时把播放进度带过去（无感续播）
     @State private var handoffPosition: Double = 0
-    /// 检测到的片源摘要（显示在控制条上）
+    /// 探测到的片源摘要（显示在控制条上）
     @State private var sourceSummary: String?
     /// mpv 用的原生直链解析结果（含整季分集，供播放器内换集）
     @State private var mpvRange: FNOSNativeClient.MediaRange?
@@ -337,54 +318,64 @@ struct FNOSPlayerContainerView: View {
 
     var body: some View {
         Group {
-            if !engineProbeDone {
-                engineProbeView
-            } else if useMPVEngine || forceMPV {
+            if useMPVEngine || forceMPV {
                 mpvLayer
             } else {
                 ksLayer
             }
         }
+        // 无感探测：KS 正常起播，同时后台问一次飞牛"这片子是什么格式"，
+        // 只有 P5/P7（KS 必然偏色）才在几百毫秒内切到 mpv 并带进度续播。
+        .task { await probeProfile() }
     }
 
-    // MARK: 引擎预检（无感切换）
+    // MARK: 片源格式探测（无感切换的核心）
 
-    /// 检测片源色彩格式 → 决定 KS / mpv。120ms 级别的本地接口调用，感知不到。
-    private var engineProbeView: some View {
-        VStack(spacing: 12) {
-            ProgressView()
-            Text("正在检测片源…")
-                .font(.footnote)
-                .foregroundColor(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black.ignoresSafeArea())
-        .task { await decideEngine() }
-        .onExitCommand { dismiss() }
-    }
-
-    /// 判定规则：
-    /// 1. 设置里强制 mpv / 关掉自动分流 → 直接按设置走
-    /// 2. 兼容层元数据报杜比视界 / AV1 → 走 mpv（元数据漏报的情况由解码轨实测兜底）
-    /// 3. 其余一律 KSPlayer（用户偏好，链路最稳）
+    /// 判定用的是真实档位，不是元数据：
+    /// - 兼容层 `color_range_type` 恒为 null、`VideoRangeType` 也拿不到 → 只能问原生 `/stream`
+    /// - `dv_profile = 5`（IPTPQc2，无 HDR10 基线层）→ KS 必偏色 → 切 mpv
+    /// - `dv_profile = 8`（如《阿凡达：火与烬》compat_id=1）→ 自带 HDR10 基线层，KS 解出来就是对的 → 留 KS
     @MainActor
-    private func decideEngine() async {
-        guard !engineProbeDone else { return }
-        defer { engineProbeDone = true }
-
+    private func probeProfile() async {
+        guard !probeStarted else { return }
+        probeStarted = true
         guard !useMPVEngine, autoEngine else { return }
 
-        guard let source = try? await client.playbackSource(itemID: item.Id, userID: userID) else {
+        guard let credentials = FNOSAuthStore.shared.credentials,
+              let nativeToken = credentials.nativeToken, !nativeToken.isEmpty
+        else {
+            print("FNOSℹ️无原生 token，跳过片源格式探测")
             return
         }
-        sourceSummary = source.summary
 
-        if source.needsMPV {
-            print("FNOSℹ️片源 \(source.summary) → 自动切换 mpv")
-            forceMPV = true
-        } else {
-            print("FNOSℹ️片源 \(source.summary) → KSPlayer")
+        let native = FNOSNativeClient(baseURL: credentials.serverURL, token: nativeToken)
+        let series = item.SeriesName ?? seriesName
+        guard let range = await native.mediaRange(
+            itemTitle: item.Name,
+            seriesTitle: series,
+            episodeNumber: item.IndexNumber
+        ) else { return }
+
+        guard let traits = await native.videoTraits(mediaGUID: range.mediaGUID) else {
+            print("FNOS⚠️片源格式探测失败，交给解码轨实测兜底")
+            return
         }
+
+        sourceSummary = traits.summary
+        print("FNOSℹ️片源格式 \(traits.summary) needsMPV=\(traits.needsMPV)")
+
+        guard traits.needsMPV else {
+            ksProfileConfirmed = true
+            return
+        }
+
+        // 已经在播的话，把当前进度带过去
+        handoffPosition = Double(coordinator.timemodel.currentTime)
+        mpvToken = nativeToken
+        mpvClient = native
+        mpvRange = range
+        print("FNOSℹ️\(traits.summary) → 自动切换 mpv，续播 @\(String(format: "%.1f", handoffPosition))s")
+        forceMPV = true
     }
 
     // MARK: mpv 引擎入口
@@ -580,7 +571,7 @@ struct FNOSPlayerContainerView: View {
 
         // 元数据没报杜比视界（兼容层常见漏报），播起来才从解码轨发现：
         // 无感切到 mpv，并把当前进度带过去续播。只切一次，避免来回跳。
-        if autoEngine, !useMPVEngine, !forceMPV, !didAutoSwitch {
+        if autoEngine, !useMPVEngine, !forceMPV, !ksProfileConfirmed, !didAutoSwitch {
             didAutoSwitch = true
             let position = Double(coordinator.timemodel.currentTime)
             handoffPosition = position
@@ -663,6 +654,11 @@ struct FNOSPlayerContainerView: View {
                         Text(notice)
                             .font(.caption)
                             .foregroundColor(.secondary)
+                    }
+                    if let sourceSummary {
+                        Text("片源 \(sourceSummary) · KSPlayer")
+                            .font(.system(size: 12))
+                            .foregroundColor(.white.opacity(0.45))
                     }
                 }
                 Spacer()

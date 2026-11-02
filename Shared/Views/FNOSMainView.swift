@@ -505,7 +505,7 @@ struct FNOSHomeSettingsView: View {
 
                     section(
                         "播放（引擎 / 色彩）",
-                        footer: "自动切换：开局先检测片源，杜比视界或 AV1 这类 KSPlayer 处理不了的片子自动改用 mpv（会从检测到的那一刻续播，不丢进度）；其余片源仍用 KSPlayer。若强制开启下面的 mpv 引擎，则所有片源都走 mpv。"
+                        footer: "自动切换：起播时向飞牛查一次真实格式 —— 杜比视界 P5（IPTPQc2，没有 HDR10 基线层）和 P7 用 mpv 才不会偏色；P8 自带 HDR10 基线层，KSPlayer 解开就是正确画面，会继续留在 KS。切换时会带着当前进度续播。下面的开关用于强制所有片源都走 mpv。"
                     ) {
                         FNOSSettingRow(
                             title: "自动切换播放引擎",

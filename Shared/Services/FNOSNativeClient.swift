@@ -526,6 +526,58 @@ extension FNOSNativeClient {
         return (mediaGUID, duration)
     }
 
+    /// 视频轨真实格式（来自 `POST /v/api/v1/stream` 的能力协商响应）
+    ///
+    /// 为什么需要它：兼容层（8005）根本不映射色彩信息（`media_stream.color_range_type` 恒为 null，
+    /// `VideoRangeType` 也拿不到），没法从元数据判断杜比视界档位；而不同档位对播放器的要求完全不同：
+    /// - **P5**：IPTPQc2，没有 HDR10 基线层（`dv_bl_signal_compatibility_id=0`）→ KSPlayer 解出来必然紫绿
+    /// - **P7**：带增强层，KS 用不了 EL
+    /// - **P8**：带 HDR10 兼容基线层（实测《阿凡达：火与烬》`dv_profile=8, compat_id=1`）→ KS 解基线层就是正确 HDR10
+    /// 所以只有 P5 / P7 才需要切 mpv，P8 留在 KS 反而画质和功能都更好。
+    struct VideoTraits {
+        let dvProfile: Int?
+        let codec: String?
+        let bitDepth: Int?
+        let width: Int?
+        let height: Int?
+
+        var needsMPV: Bool {
+            if let dvProfile { return dvProfile == 5 || dvProfile == 7 }
+            return (codec ?? "").lowercased() == "av1"
+        }
+
+        var summary: String {
+            var parts: [String] = []
+            if let dvProfile { parts.append("DoVi P\(dvProfile)") }
+            if let codec { parts.append(codec.uppercased()) }
+            if let bitDepth { parts.append("\(bitDepth)bit") }
+            if let width, let height { parts.append("\(width)×\(height)") }
+            return parts.isEmpty ? "未知" : parts.joined(separator: " · ")
+        }
+    }
+
+    /// 查询视频轨真实格式。实测 0.06s 返回，只做能力协商、不产生转码会话。
+    func videoTraits(mediaGUID: String) async -> VideoTraits? {
+        let now = Int(Date().timeIntervalSince1970 * 1000)
+        let nonce = Int.random(in: 100_000...999_999)
+        let body = """
+        {"header":{"User-Agent":["FNOS-tvOS/1.0"]},"level":1,"media_guid":"\(Self.escape(mediaGUID))","ip":"0.0.0.0","nonce":"\(nonce)","timestamp":\(now)}
+        """
+        guard let json = try? await post(path: "api/v1/stream", body: body),
+              let data = json["data"] as? [String: Any],
+              let video = data["video_stream"] as? [String: Any]
+        else { return nil }
+
+        let rawProfile = (video["dv_profile"] as? NSNumber)?.intValue
+        return VideoTraits(
+            dvProfile: (rawProfile ?? 0) > 0 ? rawProfile : nil,
+            codec: video["codec_name"] as? String,
+            bitDepth: (video["bit_depth"] as? NSNumber)?.intValue,
+            width: (video["width"] as? NSNumber)?.intValue,
+            height: (video["height"] as? NSNumber)?.intValue
+        )
+    }
+
     /// 剧集 → 第一个季的 guid（`GET /v/api/v1/season/list/{tv_guid}`，只支持 GET）
     private func firstSeasonGUID(tvGuid: String, log: DebugLog) async -> String? {
         do {

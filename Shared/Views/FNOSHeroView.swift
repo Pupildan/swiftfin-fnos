@@ -66,6 +66,12 @@ struct FNOSHeroBanner: View {
     @FocusState private var focusedPage: Int?
     // 播放按钮焦点（海报按下键直达）
     @FocusState private var playButtonFocused: Bool
+    @FocusState private var plusButtonFocused: Bool
+    @FocusState private var detailButtonFocused: Bool
+
+    // 转盘滑动翻页（手势桥接，不依赖焦点状态）
+    @State private var panAccumulatedX: CGFloat = 0
+    @State private var panDidPage = false
 
     // 「稍后观看」本地标记（加号按钮）
     @AppStorage("fnos.watchlater") private var watchLaterIDs = ""
@@ -94,14 +100,21 @@ struct FNOSHeroBanner: View {
                 .clipped()
                 .ignoresSafeArea()
                 .defaultFocus($focusedPage, 0)
+                .background(FNOSHeroPanCatcher())
+                .onAppear {
+                    installPanHandler()
+                }
+                .onDisappear {
+                    FNOSHeroPanBridge.shared.onPan = nil
+                }
 
                 // ---- 智能预告视频层（海报之上、遮罩之下）----
-                if previewVisible, !previewUsesKS, let player = previewPlayer {
+                if previewVisible, !previewUsesKS, previewItemID == current?.Id, let player = previewPlayer {
                     FNOSPreviewPlayerView(player: player)
                         .ignoresSafeArea()
                         .transition(.opacity)
                 }
-                if previewVisible, previewUsesKS, let url = previewKSURL {
+                if previewVisible, previewUsesKS, previewItemID == current?.Id, let url = previewKSURL {
                     KSVideoPlayer(coordinator: previewKSCoordinator, url: url, options: previewKSOptions ?? KSOptions())
                         .onStateChanged { _, state in
                             guard previewUsesKS, previewVisible else { return }
@@ -180,7 +193,7 @@ struct FNOSHeroBanner: View {
             // 智能预告：3 秒无操作 → 正片中间 30 秒静音预览；滑动立即打断
             stopPreview()
             guard let item = current else { return }
-            try? await Task.sleep(for: .seconds(3))
+            try? await Task.sleep(for: .seconds(5))
             guard !Task.isCancelled else { return }
             await startPreview(item: item)
             // 播 30 秒后淡出回海报
@@ -204,6 +217,7 @@ struct FNOSHeroBanner: View {
         .frame(width: size.width * 1.06, height: size.height * 1.06)
         .frame(width: size.width, height: size.height)
         .clipped()
+        .id(item.Id)
         .focusable(index == currentIndex)
         .focused($focusedPage, equals: index)
         .onMoveCommand { direction in
@@ -296,6 +310,7 @@ struct FNOSHeroBanner: View {
                 #if os(tvOS)
                     .buttonStyle(.card)
                 #endif
+                .focused($plusButtonFocused)
 
                 // 详情
                 Button {
@@ -309,6 +324,7 @@ struct FNOSHeroBanner: View {
                 #if os(tvOS)
                     .buttonStyle(.card)
                 #endif
+                .focused($detailButtonFocused)
             }
             .padding(.top, 6)
         }
@@ -348,6 +364,11 @@ struct FNOSHeroBanner: View {
                 previewItemID = item.Id
                 withAnimation(.easeIn(duration: 0.6)) {
                     previewVisible = true
+                }
+                // 视图插入后立即补设填充模式，避免第一帧按原比例闪现约 1 秒
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(80))
+                    previewKSCoordinator.isScaleAspectFill = true
                 }
                 return
             }
@@ -392,6 +413,43 @@ struct FNOSHeroBanner: View {
         if previewVisible {
             withAnimation(.easeOut(duration: 0.2)) {
                 previewVisible = false
+            }
+        }
+    }
+
+    // MARK: 转盘滑动翻页（焦点在按钮上时让路给焦点导航）
+
+    private func installPanHandler() {
+        FNOSHeroPanBridge.shared.onPan = { gesture in
+            switch gesture.state {
+            case .began:
+                panAccumulatedX = 0
+                panDidPage = false
+            case .changed:
+                guard !panDidPage else { return }
+                // 焦点在三个按钮上时，滑动属于焦点导航，不翻页
+                if playButtonFocused || plusButtonFocused || detailButtonFocused {
+                    return
+                }
+                let translation = gesture.translation(in: gesture.view)
+                gesture.setTranslation(.zero, in: gesture.view)
+                panAccumulatedX += translation.x
+                if panAccumulatedX < -60 {
+                    panDidPage = true
+                    guard currentIndex < items.count - 1 else { return }
+                    withAnimation(.easeInOut(duration: 0.35)) { currentIndex += 1 }
+                    focusedPage = currentIndex
+                } else if panAccumulatedX > 60 {
+                    panDidPage = true
+                    guard currentIndex > 0 else { return }
+                    withAnimation(.easeInOut(duration: 0.35)) { currentIndex -= 1 }
+                    focusedPage = currentIndex
+                }
+            case .ended, .cancelled:
+                panAccumulatedX = 0
+                panDidPage = false
+            default:
+                break
             }
         }
     }
@@ -443,4 +501,31 @@ struct FNOSPreviewPlayerView: UIViewRepresentable {
             layer.frame = uiView.bounds
         }
     }
+}
+
+
+// MARK: - 转盘滑动翻页桥接（不依赖焦点引擎；按钮聚焦时让路给焦点导航）
+
+final class FNOSHeroPanBridge: NSObject {
+    static let shared = FNOSHeroPanBridge()
+    var onPan: ((UIPanGestureRecognizer) -> Void)?
+
+    @objc func handle(_ gesture: UIPanGestureRecognizer) {
+        onPan?(gesture)
+    }
+}
+
+struct FNOSHeroPanCatcher: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        let recognizer = UIPanGestureRecognizer(
+            target: FNOSHeroPanBridge.shared,
+            action: #selector(FNOSHeroPanBridge.handle(_:))
+        )
+        view.addGestureRecognizer(recognizer)
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {}
 }

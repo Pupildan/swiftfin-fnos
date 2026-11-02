@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v27"
+    static let version = "v28"
 
     /// 本版主要变更摘要
-    static let changes = "焦点改按页索引绑定修复翻页失灵；预告画面填充全屏(isScaleAspectFill)"
+    static let changes = "转盘滑动翻页(手势桥接不依赖焦点)；海报/预告按条目ID绑定；预告即插即填充；等待5秒"
 }

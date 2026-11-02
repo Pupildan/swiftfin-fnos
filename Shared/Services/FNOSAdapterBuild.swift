@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v43"
+    static let version = "v44"
 
     /// 本版主要变更摘要
-    static let changes = "修复剧集详情选集不显示(分集接口双端点兜底+失败不再阻断页面)；演员阵容移到选集下方；背景改为取色+高斯模糊+液态流动；详情页进入加缩放淡入过渡；海报墙缓存命中不再闪加载圈、阴影降开销"
+    static let changes = "修复剧集详情页选集不显示(分集双端点兜底,失败不再阻断整页)；演员阵容移到选集下方；详情页背景取色+高斯模糊+液态流动；进入详情页加缩放淡入过渡；海报墙缓存命中不再闪转圈"
 }

@@ -453,74 +453,189 @@ struct FNOSHomeSettingsView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    Button {
-                        dismiss()
-                        onRefresh()
-                    } label: {
-                        Label("刷新媒体库", systemImage: "arrow.clockwise")
+            ScrollView {
+                VStack(alignment: .leading, spacing: 40) {
+                    section("操作") {
+                        FNOSSettingRow(title: "刷新媒体库", systemImage: "arrow.clockwise") {
+                            dismiss()
+                            onRefresh()
+                        }
+                        FNOSSettingRow(
+                            title: "退出登录",
+                            systemImage: "rectangle.portrait.and.arrow.right",
+                            destructive: true
+                        ) {
+                            dismiss()
+                            onLogout()
+                        }
                     }
 
-                    Button(role: .destructive) {
-                        dismiss()
-                        onLogout()
-                    } label: {
-                        Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
+                    section(
+                        "Hero 图源",
+                        footer: "若 Hero 标题与画面不一致，通常是飞牛刮削的横图挂错了电影，切换到竖版海报即可规避。"
+                    ) {
+                        FNOSSettingRow(
+                            title: "Hero 横版大图（推荐）",
+                            selected: heroImageSource == "backdrop"
+                        ) {
+                            heroImageSource = "backdrop"
+                        }
+                        FNOSSettingRow(
+                            title: "Hero 竖版海报（图文对不上时切换）",
+                            selected: heroImageSource == "primary"
+                        ) {
+                            heroImageSource = "primary"
+                        }
                     }
-                } header: {
-                    Text("操作")
-                }
 
-                Section {
-                    Button {
-                        heroImageSource = "backdrop"
-                    } label: {
-                        Label(
-                            "Hero 横版大图（推荐）",
-                            systemImage: heroImageSource == "backdrop" ? "checkmark.circle.fill" : "circle"
+                    section(
+                        "播放（色彩）",
+                        footer: "mpv 引擎用 libplacebo 做杜比视界 P5 的色彩转换，可根治紫绿偏色；字幕改由系统字体渲染，不再乱码。KSPlayer 的「按 HDR10 输出」只在未启用 mpv 时生效。"
+                    ) {
+                        FNOSSettingRow(
+                            title: "使用 mpv 引擎播放（实验）",
+                            systemImage: "play.rectangle",
+                            isOn: engineMPV
+                        ) {
+                            engineMPV.toggle()
+                        }
+                        FNOSSettingRow(
+                            title: "杜比视界按 HDR10 输出",
+                            systemImage: "tv",
+                            isOn: hdr10Compat
+                        ) {
+                            hdr10Compat.toggle()
+                        }
+                    }
+
+                    section("关于") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Text("适配版本")
+                                    .font(.system(size: 24, weight: .medium))
+                                Spacer()
+                                Text(FNOSAdapterBuild.version)
+                                    .font(.system(size: 22, weight: .semibold, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                            }
+                            Text(FNOSAdapterBuild.changes)
+                                .font(.system(size: 18))
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.horizontal, 26)
+                        .padding(.vertical, 20)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .fill(Color.white.opacity(0.10))
                         )
                     }
-
-                    Button {
-                        heroImageSource = "primary"
-                    } label: {
-                        Label(
-                            "Hero 竖版海报（图文对不上时切换）",
-                            systemImage: heroImageSource == "primary" ? "checkmark.circle.fill" : "circle"
-                        )
-                    }
-                } header: {
-                    Text("Hero 图源")
-                } footer: {
-                    Text("若 Hero 标题与画面不一致，通常是飞牛刮削的横图挂错了电影，切换到竖版海报即可规避。")
                 }
-
-                Section {
-                    Toggle(isOn: $engineMPV) {
-                        Label("使用 mpv 引擎播放（实验）", systemImage: "play.rectangle")
-                    }
-
-                    Toggle(isOn: $hdr10Compat) {
-                        Label("杜比视界按 HDR10 输出", systemImage: "tv")
-                    }
-                } header: {
-                    Text("播放（色彩）")
-                } footer: {
-                    Text("mpv 引擎用 libplacebo 做杜比视界 P5 的色彩转换，可根治紫绿偏色；实验阶段只提供画面、进度与快进快退，弹幕与换集条暂不接入。KSPlayer 的「按 HDR10 输出」只在未启用 mpv 时生效。")
-                }
-
-                Section {
-                    LabeledContent("适配版本", value: FNOSAdapterBuild.version)
-                    Text(FNOSAdapterBuild.changes)
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
-                } header: {
-                    Text("关于")
-                }
+                .padding(.horizontal, 96)
+                .padding(.vertical, 44)
+                .frame(maxWidth: 1400, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
             .navigationTitle("设置")
         }
+    }
+
+    @ViewBuilder
+    private func section<Content: View>(
+        _ title: String,
+        footer: String? = nil,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(title)
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundColor(.secondary)
+
+            VStack(spacing: 10) {
+                content()
+            }
+
+            if let footer {
+                Text(footer)
+                    .font(.system(size: 17))
+                    .foregroundColor(.white.opacity(0.45))
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+// MARK: - 设置行（自绘焦点，避免 Form 的系统灰色焦点板）
+
+private struct FNOSSettingRow: View {
+
+    let title: String
+    var systemImage: String? = nil
+    /// 单选组的选中态（非空时显示勾选圈）
+    var selected: Bool? = nil
+    /// 开关态（非空时显示开/关胶囊）
+    var isOn: Bool? = nil
+    var destructive: Bool = false
+
+    let action: () -> Void
+
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 14) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 21, weight: .semibold))
+                        .frame(width: 28)
+                }
+
+                Text(title)
+                    .font(.system(size: 24, weight: .medium))
+                    .lineLimit(1)
+
+                Spacer(minLength: 16)
+
+                if let selected {
+                    Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 21, weight: .semibold))
+                }
+
+                if let isOn {
+                    Text(isOn ? "开" : "关")
+                        .font(.system(size: 18, weight: .semibold))
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule().fill(Color.black.opacity(focused ? 0.12 : 0.0))
+                        )
+                        .overlay(
+                            Capsule().stroke(
+                                Color.black.opacity(focused ? 0.25 : 0.35),
+                                lineWidth: 1.5
+                            )
+                        )
+                }
+            }
+            .foregroundColor(rowForeground)
+            .padding(.horizontal, 26)
+            .frame(height: 72)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(focused ? Color.white : Color.white.opacity(0.10))
+            )
+            .scaleEffect(focused ? 1.015 : 1.0)
+            .animation(.easeOut(duration: 0.14), value: focused)
+        }
+        .buttonStyle(FNOSBareButtonStyle())
+        .focused($focused)
+    }
+
+    private var rowForeground: Color {
+        if focused { return destructive ? Color(red: 0.75, green: 0.1, blue: 0.1) : .black }
+        return destructive ? Color(red: 1, green: 0.36, blue: 0.36) : .white
     }
 }
 

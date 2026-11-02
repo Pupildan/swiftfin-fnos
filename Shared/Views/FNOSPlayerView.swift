@@ -315,9 +315,12 @@ struct FNOSPlayerContainerView: View {
     private var mpvLayer: some View {
         if let mpvURL, let mpvToken {
             FNOSMPVPlayerView(
+                item: item,
                 url: mpvURL,
+                authToken: mpvToken,
                 title: item.Name ?? seriesName ?? "",
-                authToken: mpvToken
+                episodes: episodes,
+                onSelectEpisode: onSelectEpisode
             ) {
                 dismiss()
             }

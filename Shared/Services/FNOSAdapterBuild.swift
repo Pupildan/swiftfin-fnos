@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v56"
+    static let version = "v57"
 
     /// 本版主要变更摘要
-    static let changes = "新增 mpv 引擎（MPVUI/gpu-next，libplacebo 做 DoVi P5 色彩转换），设置里可切换；mpv 走飞牛原生 media/range 直链（仅需 Authorization 头），实验阶段只提供画面/进度/快进快退"
+    static let changes = "mpv 引擎补齐功能：续播、弹幕、换集条、进度条、快进快退、诊断面板；字幕改走文本拦截用系统字体渲染（修乱码）；解码显式 VideoToolbox；设置页改为自绘列表，两侧留白且去掉系统灰焦点板"
 }

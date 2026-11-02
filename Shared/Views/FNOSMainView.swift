@@ -28,7 +28,7 @@ struct FNOSLibrarySection: Identifiable {
 ///
 /// 沉浸式第一原则：
 /// - 无顶栏、无 URL、无日志输出，画面只有海报与内容；
-/// - Hero Banner 真·全屏铺满（含安全区），刷新/退出做成右上角半透明小图标；
+/// - Hero Banner 真·全屏铺满（含安全区），左上角设置入口（刷新/退出集成在面板里）；
 /// - 行卡片加大，全部 .buttonStyle(.card) 原生焦点质感。
 struct FNOSMainView: View {
 
@@ -44,6 +44,11 @@ struct FNOSMainView: View {
 
     @State private var playbackTarget: FNOSPlaybackTarget?
     @State private var seriesItem: FNOSItem?
+
+    // 首页设置面板（刷新/退出集成在内）
+    @State private var showSettings = false
+    // 媒体库卡片焦点（下键从 Hero 跳入海报墙的落点）
+    @FocusState private var shelfCardFocused: String?
 
     // Hero 每日随机抽选（每天首次进入重新抽 6 部电影）
     @AppStorage("fnos.hero.date") private var heroDate = ""
@@ -75,60 +80,69 @@ struct FNOSMainView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ScrollView(.vertical, showsIndicators: false) {
-                        VStack(spacing: 0) {
-                            // Apple TV+ 式全屏 Hero Banner（当日抽选的 6 部电影快照）
-                            if !heroSnapshot.isEmpty, let heroClient = client {
-                                FNOSHeroBanner(
-                                    items: heroSnapshot,
-                                    client: heroClient,
-                                    userID: userID,
-                                    onPlay: { item in
-                                        open(item: item)
-                                    },
-                                    onDetail: { item in
-                                        open(item: item)
-                                    }
-                                )
-                                .frame(width: geo.size.width, height: geo.size.height)
-                            }
-
-                            // 媒体库横向海报墙
-                            LazyVStack(alignment: .leading, spacing: 44) {
-                                ForEach(sections) { section in
-                                    shelf(section)
+                    ScrollViewReader { proxy in
+                        ScrollView(.vertical, showsIndicators: false) {
+                            VStack(spacing: 0) {
+                                // Apple TV+ 式全屏 Hero Banner（当日抽选的 6 部电影快照）
+                                if !heroSnapshot.isEmpty, let heroClient = client {
+                                    FNOSHeroBanner(
+                                        items: heroSnapshot,
+                                        client: heroClient,
+                                        userID: userID,
+                                        onPlay: { item in
+                                            open(item: item)
+                                        },
+                                        onDetail: { item in
+                                            open(item: item)
+                                        },
+                                        onDownToShelf: {
+                                            // 下键从 Hero 跳入海报墙：先滚动让媒体库行出现，再把焦点落到第一张卡
+                                            withAnimation(.easeInOut(duration: 0.4)) {
+                                                proxy.scrollTo("fnos-shelf-top", anchor: .top)
+                                            }
+                                            Task { @MainActor in
+                                                try? await Task.sleep(for: .milliseconds(450))
+                                                if let lead = sections.first(where: { !$0.items.isEmpty })?.items.first?.Id {
+                                                    shelfCardFocused = lead
+                                                }
+                                            }
+                                        }
+                                    )
+                                    .frame(width: geo.size.width, height: geo.size.height)
                                 }
+
+                                // 媒体库横向海报墙（非懒容器：保证屏外行存在，焦点引擎才有落点）
+                                VStack(alignment: .leading, spacing: 44) {
+                                    ForEach(sections) { section in
+                                        shelf(section)
+                                    }
+                                }
+                                .padding(.vertical, 40)
+                                .id("fnos-shelf-top")
+                                #if os(tvOS)
+                                    .focusSection()
+                                #endif
                             }
-                            .padding(.vertical, 40)
                         }
+                        .ignoresSafeArea()
                     }
-                    .ignoresSafeArea()
 
-                    // 右上角悬浮小图标（半透明，不破坏画面）
+                    // 左上角设置按钮（刷新/退出集成在设置面板里）
                     VStack {
-                        HStack(spacing: 22) {
+                        HStack {
+                            Button {
+                                showSettings = true
+                            } label: {
+                                Image(systemName: "gearshape")
+                                    .font(.system(size: 24))
+                                    .foregroundColor(.white.opacity(0.7))
+                                    .padding(10)
+                            }
+                            .buttonStyle(.plain)
                             Spacer()
-                            Button {
-                                didBootstrap = false
-                                Task { await bootstrapIfNeeded() }
-                            } label: {
-                                Image(systemName: "arrow.clockwise")
-                                    .font(.system(size: 22))
-                                    .foregroundColor(.white.opacity(0.6))
-                            }
-                            .buttonStyle(.plain)
-
-                            Button {
-                                auth.logout()
-                            } label: {
-                                Image(systemName: "rectangle.portrait.and.arrow.right")
-                                    .font(.system(size: 22))
-                                    .foregroundColor(.white.opacity(0.6))
-                            }
-                            .buttonStyle(.plain)
                         }
-                        .padding(.trailing, 36)
-                        .padding(.top, 24)
+                        .padding(.leading, 36)
+                        .padding(.top, 20)
                         Spacer()
                     }
                 }
@@ -139,6 +153,17 @@ struct FNOSMainView: View {
         }
         .fullScreenCover(item: $playbackTarget) { target in
             FNOSPlayerContainerView(item: target.item, client: target.client, userID: target.userID)
+        }
+        .sheet(isPresented: $showSettings) {
+            FNOSHomeSettingsView(
+                onRefresh: {
+                    didBootstrap = false
+                    Task { await bootstrapIfNeeded() }
+                },
+                onLogout: {
+                    auth.logout()
+                }
+            )
         }
         .sheet(item: $seriesItem) { series in
             FNOSSeasonsSheet(
@@ -164,25 +189,34 @@ struct FNOSMainView: View {
                 guard item.type == "Movie", let tags = item.ImageTags else { return false }
                 return !tags.isEmpty
             }
-        guard !movies.isEmpty else {
+        // 关键去重：同一部电影可能出现在多个库视图里，重复 Id 会破坏 ForEach 恒等 → 图文错位
+        var seen = Set<String>()
+        let uniqueMovies = movies.filter { seen.insert($0.Id).inserted }
+        guard !uniqueMovies.isEmpty else {
             heroSnapshot = []
             return
         }
 
         let ids = heroIDs.split(separator: ",").map(String.init)
         var picked: [FNOSItem] = []
+        var pickedSeen = Set<String>()
         for id in ids {
-            if let movie = movies.first(where: { $0.Id == id }) {
+            if let movie = uniqueMovies.first(where: { $0.Id == id }), pickedSeen.insert(id).inserted {
                 picked.append(movie)
             }
         }
         // 库变化导致抽选结果大部分失效时兜底重抽（只发生在快照刷新时，不影响渲染稳定性）
-        if picked.count >= min(3, movies.count) {
+        if picked.count >= min(3, uniqueMovies.count) {
             heroSnapshot = Array(picked.prefix(6))
         } else {
-            heroSnapshot = Array(movies.shuffled().prefix(6))
+            heroSnapshot = Array(uniqueMovies.shuffled().prefix(6))
         }
-        print("FNOSℹ️Hero 快照: \(heroSnapshot.compactMap(\.Name).joined(separator: " | "))")
+        let summary = heroSnapshot.map { item -> String in
+            let tags = item.ImageTags ?? [:]
+            let img = tags["Backdrop"] != nil ? "Backdrop" : "Primary"
+            return "\(item.Name ?? "?")[\(img)]"
+        }
+        print("FNOSℹ️Hero 快照(\(heroSnapshot.count)): \(summary.joined(separator: " | "))")
     }
 
     /// 每天首次进入时重新随机抽 6 部电影
@@ -200,8 +234,11 @@ struct FNOSMainView: View {
                 guard item.type == "Movie", let tags = item.ImageTags else { return false }
                 return !tags.isEmpty
             }
-        guard !movies.isEmpty else { return }
-        heroIDs = movies.shuffled().prefix(6).map(\.Id).joined(separator: ",")
+        // 同样去重：抽选池不能有重复 Id
+        var seen = Set<String>()
+        let uniqueMovies = movies.filter { seen.insert($0.Id).inserted }
+        guard !uniqueMovies.isEmpty else { return }
+        heroIDs = uniqueMovies.shuffled().prefix(6).map(\.Id).joined(separator: ",")
         print("FNOSℹ️Hero 今日抽选: \(heroIDs)")
     }
 
@@ -227,6 +264,8 @@ struct FNOSMainView: View {
                         #else
                             .buttonStyle(.plain)
                         #endif
+                        // 每张卡注册独立焦点值（条目 Id 唯一，避免 Bool 歧义），供下键直达
+                        .focused($shelfCardFocused, equals: item.Id)
                     }
                 }
                 .padding(.horizontal, 72)
@@ -334,6 +373,50 @@ struct FNOSMainView: View {
             let raw = String(data: data.prefix(400), encoding: .utf8) ?? "(非文本)"
             print("FNOS❗️解析 /Items 失败: \(error) 原文: \(raw)")
             throw FNOSDirectError("解析 /Items 失败: \(error.localizedDescription)")
+        }
+    }
+}
+
+// MARK: - 首页设置面板（刷新媒体库 / 退出登录 / 版本信息）
+
+struct FNOSHomeSettingsView: View {
+
+    let onRefresh: () -> Void
+    let onLogout: () -> Void
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Button {
+                        dismiss()
+                        onRefresh()
+                    } label: {
+                        Label("刷新媒体库", systemImage: "arrow.clockwise")
+                    }
+
+                    Button(role: .destructive) {
+                        dismiss()
+                        onLogout()
+                    } label: {
+                        Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
+                    }
+                } header: {
+                    Text("操作")
+                }
+
+                Section {
+                    LabeledContent("适配版本", value: FNOSAdapterBuild.version)
+                    Text(FNOSAdapterBuild.changes)
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                } header: {
+                    Text("关于")
+                }
+            }
+            .navigationTitle("设置")
         }
     }
 }

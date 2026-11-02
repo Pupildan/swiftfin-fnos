@@ -49,6 +49,7 @@ struct FNOSHeroBanner: View {
     let userID: String
     let onPlay: (FNOSItem) -> Void
     let onDetail: (FNOSItem) -> Void
+    let onDownToShelf: () -> Void
 
     @State private var currentIndex = 0
 
@@ -297,9 +298,14 @@ struct FNOSHeroBanner: View {
                 #endif
                 .focused($playButtonFocused)
                 .onMoveCommand { direction in
-                    // 上键把焦点交还海报页，左右键随即恢复翻页职责（ATV+ 交互）
-                    if direction == .up {
+                    // 上键回海报页（左右键恢复翻页）；下键跳媒体库海报墙
+                    switch direction {
+                    case .up:
                         focusedPage = currentIndex
+                    case .down:
+                        onDownToShelf()
+                    default:
+                        break
                     }
                 }
 
@@ -320,8 +326,13 @@ struct FNOSHeroBanner: View {
                 #endif
                 .focused($plusButtonFocused)
                 .onMoveCommand { direction in
-                    if direction == .up {
+                    switch direction {
+                    case .up:
                         focusedPage = currentIndex
+                    case .down:
+                        onDownToShelf()
+                    default:
+                        break
                     }
                 }
 
@@ -339,8 +350,13 @@ struct FNOSHeroBanner: View {
                 #endif
                 .focused($detailButtonFocused)
                 .onMoveCommand { direction in
-                    if direction == .up {
+                    switch direction {
+                    case .up:
                         focusedPage = currentIndex
+                    case .down:
+                        onDownToShelf()
+                    default:
+                        break
                     }
                 }
             }

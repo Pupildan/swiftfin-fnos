@@ -15,7 +15,7 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v35"
+    static let version = "v36"
 
     /// 本版主要变更摘要
     static let changes = "媒体库海报墙改为 ATV+ 风格：无文字纯海报、圆角矩形、一屏 6 张、间距加大、聚焦轻微放大+自绘液态玻璃描边；Hero 海报错位根因已修"

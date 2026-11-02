@@ -501,40 +501,7 @@ fileprivate struct FNOSPosterTile: View {
         )
         .frame(width: width, height: height)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        // 液态玻璃描边：聚焦时白色高光渐变边框，非聚焦时几乎不可见
-        .overlay(
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .strokeBorder(
-                    LinearGradient(
-                        colors: isFocused
-                            ? [
-                                Color.white.opacity(0.95),
-                                Color.white.opacity(0.45),
-                                Color.white.opacity(0.85),
-                            ]
-                            : [Color.white.opacity(0.05), Color.white.opacity(0.05)],
-                        startPoint: .topLeading,
-                        endPoint: .bottomTrailing
-                    ),
-                    lineWidth: isFocused ? 3 : 1
-                )
-        )
-        // 玻璃折射高光：顶部极淡白色渐变
-        .overlay(
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: [
-                            Color.white.opacity(isFocused ? 0.16 : 0),
-                            Color.white.opacity(0),
-                        ],
-                        startPoint: .top,
-                        endPoint: .center
-                    )
-                )
-                .allowsHitTesting(false)
-        )
-        .shadow(color: .black.opacity(isFocused ? 0.6 : 0), radius: isFocused ? 24 : 0, y: 10)
+        .shadow(color: .black.opacity(isFocused ? 0.5 : 0), radius: isFocused ? 20 : 0, y: 8)
         .scaleEffect(isFocused ? 1.06 : 1.0)
         .animation(.easeOut(duration: 0.18), value: isFocused)
     }

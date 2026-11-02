@@ -102,7 +102,12 @@ extension FNOSDirectClient {
                 detail.videoProfile = video["Profile"] as? String
                 detail.bitDepth = (video["BitDepth"] as? NSNumber)?.intValue
             }
-            print("FNOS✅ 条目详情 \(itemID) → 媒体源 \(detail.mediaSourceID ?? "nil") 容器 \(detail.container ?? "?") 视频 \(detail.videoCodec ?? "?") \(detail.videoProfile ?? "") range=\(detail.videoRange ?? "?")/\(detail.videoRangeType ?? "?") \(detail.bitDepth.map { "\($0)bit" } ?? "")")
+            let depthText = detail.bitDepth.map { String($0) + "bit" } ?? ""
+            let vCodec = detail.videoCodec ?? "?"
+            let vProfile = detail.videoProfile ?? ""
+            let vRange = detail.videoRange ?? "?"
+            let vRangeType = detail.videoRangeType ?? "?"
+            print("FNOS✅ 条目详情 \(itemID) → 媒体源 \(detail.mediaSourceID ?? "nil") 容器 \(detail.container ?? "?") 视频 \(vCodec) \(vProfile) range=\(vRange)/\(vRangeType) \(depthText)")
         } else {
             print("FNOS⚠️ 条目详情 \(itemID) 无 MediaSources")
         }

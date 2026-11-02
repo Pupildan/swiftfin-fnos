@@ -63,16 +63,9 @@ struct FNOSHeroBanner: View {
     @State private var previewKSOptions: KSOptions?
     @State private var previewKSSeeked = false
 
-    // 海报聚焦翻页（按页索引绑定，避免 Bool 歧义命中屏幕外页面）
-    @FocusState private var focusedPage: Int?
-    // 播放按钮焦点（海报按下键直达）
-    @FocusState private var playButtonFocused: Bool
-    @FocusState private var plusButtonFocused: Bool
-    @FocusState private var detailButtonFocused: Bool
-
-    // 转盘滑动翻页（手势桥接，不依赖焦点状态）
-    @State private var panAccumulatedX: CGFloat = 0
-    @State private var panDidPage = false
+    // Hero 按钮焦点（原生 defaultFocus：启动即锁定「播放」按钮）
+    enum HeroButton { case play, plus, detail }
+    @FocusState private var focusedButton: HeroButton?
 
     // 「稍后观看」本地标记（加号按钮）
     @AppStorage("fnos.watchlater") private var watchLaterIDs = ""
@@ -100,13 +93,6 @@ struct FNOSHeroBanner: View {
                 .frame(width: geo.size.width, height: geo.size.height)
                 .clipped()
                 .ignoresSafeArea()
-                .defaultFocus($focusedPage, 0)
-                .onAppear {
-                    installPanHandler()
-                }
-                .onDisappear {
-                    FNOSHeroPanBridge.shared.onPan = nil
-                }
 
                 // ---- 智能预告视频层（海报之上、遮罩之下）----
                 if previewVisible, !previewUsesKS, previewItemID == current?.Id, let player = previewPlayer {
@@ -188,9 +174,13 @@ struct FNOSHeroBanner: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .animation(.easeInOut(duration: 0.3), value: currentIndex)
-            // ---- 手势捕获层（最顶层）：滑动手势优先于一切，覆盖左下按钮区域 ----
-            // tvOS 按钮激活走「焦点 + 确认键」，不经触摸，所以顶层捕获层不影响按钮点击
-            .overlay(FNOSHeroPanCatcher())
+            .onAppear {
+                // 双保险：启动/回前台时把初始焦点强制锁到「播放」按钮，不给设置按钮抢走
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(120))
+                    focusedButton = .play
+                }
+            }
         }
         .task(id: currentIndex) {
             // 智能预告：3 秒无操作 → 正片中间 30 秒静音预览；滑动立即打断
@@ -209,7 +199,7 @@ struct FNOSHeroBanner: View {
         }
     }
 
-    // MARK: 轮播页（只有全屏海报图；可聚焦：左右键翻页，点击=播放）
+    // MARK: 轮播页（纯展示海报，无焦点；翻页全部由按钮的 onMoveCommand 驱动）
 
     private func heroBackdrop(item: FNOSItem, index: Int, size: CGSize) -> some View {
         FNOSAsyncImage(
@@ -221,33 +211,6 @@ struct FNOSHeroBanner: View {
         .frame(width: size.width, height: size.height)
         .clipped()
         .id(item.Id)
-        .focusable(index == currentIndex)
-        .focused($focusedPage, equals: index)
-        .onMoveCommand { direction in
-            switch direction {
-            case .left:
-                guard currentIndex > 0 else { return }
-                withAnimation(.easeInOut(duration: 0.35)) { currentIndex -= 1 }
-                // 立即把焦点精确移到新页海报（旧页已 disabled）
-                focusedPage = currentIndex
-            case .right:
-                guard currentIndex < items.count - 1 else { return }
-                withAnimation(.easeInOut(duration: 0.35)) { currentIndex += 1 }
-                focusedPage = currentIndex
-            case .down:
-                // 下键直达按钮组
-                focusedPage = nil
-                playButtonFocused = true
-            default:
-                break
-            }
-        }
-        .onTapGesture {
-            if let item = current {
-                onPlay(item)
-            }
-        }
-        .disabled(index != currentIndex)
     }
 
     // MARK: 左下角信息与操作区
@@ -296,12 +259,12 @@ struct FNOSHeroBanner: View {
                 #if os(tvOS)
                     .buttonStyle(.card)
                 #endif
-                .focused($playButtonFocused)
+                .focused($focusedButton, equals: .play)
                 .onMoveCommand { direction in
-                    // 上键回海报页（左右键恢复翻页）；下键跳媒体库海报墙
+                    // 左键=上一张海报；下键=媒体库；上键不响应（不许跳去设置）
                     switch direction {
-                    case .up:
-                        focusedPage = currentIndex
+                    case .left:
+                        pagePrevious()
                     case .down:
                         onDownToShelf()
                     default:
@@ -324,15 +287,10 @@ struct FNOSHeroBanner: View {
                 #if os(tvOS)
                     .buttonStyle(.card)
                 #endif
-                .focused($plusButtonFocused)
+                .focused($focusedButton, equals: .plus)
                 .onMoveCommand { direction in
-                    switch direction {
-                    case .up:
-                        focusedPage = currentIndex
-                    case .down:
+                    if direction == .down {
                         onDownToShelf()
-                    default:
-                        break
                     }
                 }
 
@@ -348,11 +306,12 @@ struct FNOSHeroBanner: View {
                 #if os(tvOS)
                     .buttonStyle(.card)
                 #endif
-                .focused($detailButtonFocused)
+                .focused($focusedButton, equals: .detail)
                 .onMoveCommand { direction in
+                    // 右键=下一张海报；下键=媒体库；上键不响应（不许跳去设置）
                     switch direction {
-                    case .up:
-                        focusedPage = currentIndex
+                    case .right:
+                        pageNext()
                     case .down:
                         onDownToShelf()
                     default:
@@ -361,7 +320,24 @@ struct FNOSHeroBanner: View {
                 }
             }
             .padding(.top, 6)
+            #if os(tvOS)
+                .defaultFocus($focusedButton, .play)
+            #endif
         }
+    }
+
+    // MARK: 焦点驱动的海报翻页（翻页后焦点强制留在原按钮上）
+
+    private func pagePrevious() {
+        guard currentIndex > 0 else { return }
+        withAnimation(.easeInOut(duration: 0.35)) { currentIndex -= 1 }
+        focusedButton = .play
+    }
+
+    private func pageNext() {
+        guard currentIndex < items.count - 1 else { return }
+        withAnimation(.easeInOut(duration: 0.35)) { currentIndex += 1 }
+        focusedButton = .detail
     }
 
     // MARK: 智能预告（独立 AVPlayer，与正片 KSPlayer 完全隔离）
@@ -451,40 +427,6 @@ struct FNOSHeroBanner: View {
         }
     }
 
-    // MARK: 转盘滑动翻页（焦点在按钮上时让路给焦点导航）
-
-    private func installPanHandler() {
-        FNOSHeroPanBridge.shared.onPan = { gesture in
-            switch gesture.state {
-            case .began:
-                panAccumulatedX = 0
-                panDidPage = false
-            case .changed:
-                guard !panDidPage else { return }
-                // 滑动永远翻页（ATV+ 逻辑：滑动=翻页，点击=激活按钮），不做任何焦点让路
-                let translation = gesture.translation(in: gesture.view)
-                gesture.setTranslation(.zero, in: gesture.view)
-                panAccumulatedX += translation.x
-                if panAccumulatedX < -60 {
-                    panDidPage = true
-                    guard currentIndex < items.count - 1 else { return }
-                    withAnimation(.easeInOut(duration: 0.35)) { currentIndex += 1 }
-                    focusedPage = currentIndex
-                } else if panAccumulatedX > 60 {
-                    panDidPage = true
-                    guard currentIndex > 0 else { return }
-                    withAnimation(.easeInOut(duration: 0.35)) { currentIndex -= 1 }
-                    focusedPage = currentIndex
-                }
-            case .ended, .cancelled:
-                panAccumulatedX = 0
-                panDidPage = false
-            default:
-                break
-            }
-        }
-    }
-
     // MARK: 稍后观看（本地 UserDefaults）
 
     private func isWatchLater(_ item: FNOSItem) -> Bool {
@@ -532,31 +474,4 @@ struct FNOSPreviewPlayerView: UIViewRepresentable {
             layer.frame = uiView.bounds
         }
     }
-}
-
-
-// MARK: - 转盘滑动翻页桥接（不依赖焦点引擎；按钮聚焦时让路给焦点导航）
-
-final class FNOSHeroPanBridge: NSObject {
-    static let shared = FNOSHeroPanBridge()
-    var onPan: ((UIPanGestureRecognizer) -> Void)?
-
-    @objc func handle(_ gesture: UIPanGestureRecognizer) {
-        onPan?(gesture)
-    }
-}
-
-struct FNOSHeroPanCatcher: UIViewRepresentable {
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
-        view.backgroundColor = .clear
-        let recognizer = UIPanGestureRecognizer(
-            target: FNOSHeroPanBridge.shared,
-            action: #selector(FNOSHeroPanBridge.handle(_:))
-        )
-        view.addGestureRecognizer(recognizer)
-        return view
-    }
-
-    func updateUIView(_ uiView: UIView, context: Context) {}
 }

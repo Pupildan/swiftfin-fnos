@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v30"
+    static let version = "v31"
 
     /// 本版主要变更摘要
-    static let changes = "左上角设置按钮(刷新/退出/版本集成)；Hero电影按Id去重修图文错位；下键直达媒体库海报墙"
+    static let changes = "Hero原生焦点重构：defaultFocus锁定播放按钮；播放+左键上一张/详情+右键下一张；删除全部手势桥接代码"
 }

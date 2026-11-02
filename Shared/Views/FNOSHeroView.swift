@@ -76,16 +76,20 @@ struct FNOSHeroBanner: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .bottomLeading) {
-                // ---- 底层：全屏海报轮播（页内只有图）----
-                TabView(selection: $currentIndex) {
-                    ForEach(Array(items.enumerated()), id: \.element.Id) { index, item in
-                        heroBackdrop(item: item, index: index, size: geo.size)
-                            .tag(index)
+                // ---- 底层：自绘轮播（TabView 页控制器按安全区内缩导致黑边，弃用；
+                //      整条 HStack 水平偏移实现翻页，尺寸完全自控）----
+                ZStack {
+                    HStack(spacing: 0) {
+                        ForEach(Array(items.enumerated()), id: \.element.Id) { index, item in
+                            heroBackdrop(item: item, index: index, size: geo.size)
+                                .frame(width: geo.size.width)
+                        }
                     }
+                    .offset(x: -CGFloat(currentIndex) * geo.size.width)
+                    .animation(.easeInOut(duration: 0.35), value: currentIndex)
                 }
-                #if os(tvOS)
-                    .tabViewStyle(.page(indexDisplayMode: .never))
-                #endif
+                .frame(width: geo.size.width, height: geo.size.height)
+                .clipped()
                 .ignoresSafeArea()
                 .defaultFocus($imageFocused, true)
 
@@ -98,16 +102,17 @@ struct FNOSHeroBanner: View {
                 if previewVisible, previewUsesKS, let url = previewKSURL {
                     KSVideoPlayer(coordinator: previewKSCoordinator, url: url, options: previewKSOptions ?? KSOptions())
                         .onStateChanged { _, state in
-                            guard previewUsesKS else { return }
-                            if state == .bufferFinished || state == .readyToPlay {
-                                // 静音 + 定位正片中间（总时长从 KSPlayer 拿，AVAsset 读不了 MKV）
+                            guard previewUsesKS, previewVisible else { return }
+                            // 只在缓冲完成这一时机做一次：静音 + 定位正片中间 + 播放
+                            guard state == .bufferFinished, !previewKSSeeked else { return }
+                            Task { @MainActor in
+                                guard previewUsesKS, previewVisible, !previewKSSeeked else { return }
+                                previewKSSeeked = true
                                 previewKSCoordinator.isMuted = true
-                                if !previewKSSeeked {
-                                    let total = Double(previewKSCoordinator.timemodel.totalTime)
-                                    if total > 60 {
-                                        previewKSCoordinator.seek(time: total / 2)
-                                        previewKSSeeked = true
-                                    }
+                                // 总时长从 KSPlayer 拿（AVAsset 读不了 MKV）
+                                let total = Double(previewKSCoordinator.timemodel.totalTime)
+                                if total > 60 {
+                                    previewKSCoordinator.seek(time: total / 2)
                                 }
                                 previewKSCoordinator.playerLayer?.play()
                             }
@@ -192,10 +197,10 @@ struct FNOSHeroBanner: View {
             url: client.heroImageURL(item: item),
             headers: client.mediaHeaders
         )
-        // 106% 过扫描：任何容器/舍入情况下四周都溢出裁切，绝不露黑边
+        // 106% 过扫描后裁到本页：任何容器/舍入情况下四边都不露黑边
         .frame(width: size.width * 1.06, height: size.height * 1.06)
+        .frame(width: size.width, height: size.height)
         .clipped()
-        .ignoresSafeArea()
         .focusable(index == currentIndex)
         .focused($imageFocused)
         .onMoveCommand { direction in

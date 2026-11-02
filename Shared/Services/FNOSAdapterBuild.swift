@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v24"
+    static let version = "v25"
 
     /// 本版主要变更摘要
-    static let changes = "全屏无黑边（geo含安全区+海报106%过扫描）；海报聚焦翻页+点击播放；MKV预告用独立KSPlayer静音实例"
+    static let changes = "自绘轮播替换TabView根治黑边；KS预告回调主线程化+单次触发防闪退"
 }

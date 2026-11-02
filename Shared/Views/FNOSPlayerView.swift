@@ -390,8 +390,8 @@ struct FNOSPlayerContainerView: View {
     /// 免费版 KSPlayer 不解 DoVi 的 IPTPQc2，若让电视按「杜比视界」显示模式去解一路普通 PQ 画面就会紫绿。
     @MainActor
     private func probeStreamRange() {
-        guard let tracks = coordinator.playerLayer?.player.tracks,
-              let video = tracks.first(where: { $0.mediaType == .video })
+        guard let player = coordinator.playerLayer?.player,
+              let video = player.tracks(mediaType: .video).first
         else { return }
 
         let label: String

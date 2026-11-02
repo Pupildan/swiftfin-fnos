@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v54"
+    static let version = "v55"
 
     /// 本版主要变更摘要
-    static let changes = "杜比视界/HDR 处理：识别 VideoRangeType，DoVi 内容改按 HDR10 请求显示模式（避免电视按 DV 解普通 PQ 画面导致紫绿）；控制条显示格式标记；设置可开关"
+    static let changes = "色彩识别改读解码轨实测(飞牛 VideoRangeType 常误报 SDR)；实测为杜比视界时运行时把显示模式请求改回 HDR10，避免电视按 DV 解普通 PQ 画面导致紫绿"
 }

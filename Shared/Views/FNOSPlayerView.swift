@@ -264,6 +264,8 @@ struct FNOSPlayerContainerView: View {
     @State private var videoBitDepth: Int?
     /// 杜比视界/HDR10 兼容输出开关（首页设置可关，用于 A/B 对比）
     @AppStorage("fnos.play.hdr10Compat") private var hdr10Compat = true
+    /// 解码后视频轨真实的色彩范围（飞牛兼容层的 VideoRangeType 常报 SDR，不可信，以播放器轨道为准）
+    @State private var streamDynamicRange: String?
     @State private var notice = "准备播放…"
     @State private var didSetup = false
 
@@ -359,6 +361,10 @@ struct FNOSPlayerContainerView: View {
                 danmuEngine.sync(mediaTime: currentTime)
             }
             .onStateChanged { _, state in
+                // 开播后读取解码轨真实色彩范围（服务端 VideoRangeType 不可信）
+                if streamDynamicRange == nil {
+                    Task { @MainActor in probeStreamRange() }
+                }
                 switch state {
                 case .paused, .playedToTheEnd, .error:
                     danmuEngine.setRate(0)
@@ -378,6 +384,43 @@ struct FNOSPlayerContainerView: View {
             .onAppear {
                 attachPanRecognizer()
             }
+    }
+
+    /// 读取解码后视频轨的真实色彩范围；实测为杜比视界时把显示模式改回 HDR10。
+    /// 免费版 KSPlayer 不解 DoVi 的 IPTPQc2，若让电视按「杜比视界」显示模式去解一路普通 PQ 画面就会紫绿。
+    @MainActor
+    private func probeStreamRange() {
+        guard let tracks = coordinator.playerLayer?.player.tracks,
+              let video = tracks.first(where: { $0.mediaType == .video })
+        else { return }
+
+        let label: String
+        switch video.dynamicRange {
+        case .dolbyVision: label = "杜比视界"
+        case .hdr10: label = "HDR10"
+        case .hlg: label = "HLG"
+        default: label = "SDR"
+        }
+        streamDynamicRange = label
+        print("FNOSℹ️解码轨实测色彩: \(label) \(video.nominalFrameRate)fps")
+
+        if video.dynamicRange == .dolbyVision, hdr10Compat {
+            applyHDR10DisplayCriteria(refreshRate: video.nominalFrameRate)
+        }
+    }
+
+    /// 把 tvOS 的显示模式请求改成 HDR10（2），避免电视进杜比视界模式解错信号
+    @MainActor
+    private func applyHDR10DisplayCriteria(refreshRate: Float) {
+        guard let window = UIApplication.shared.windows.first else { return }
+        let displayManager = window.avDisplayManager
+        guard displayManager.isDisplayCriteriaMatchingEnabled else { return }
+        let rate = refreshRate > 0 ? refreshRate : 24
+        displayManager.preferredDisplayCriteria = AVDisplayCriteria(
+            refreshRate: rate,
+            videoDynamicRange: 2
+        )
+        print("FNOSℹ️显示模式请求改为 HDR10 @\(rate)fps")
     }
 
     /// 在 KSPlayer 的 UIView 上挂 UIPanGestureRecognizer：遥控器转盘/触摸滑动 → 连续拖动进度
@@ -841,10 +884,14 @@ struct FNOSPlayerContainerView: View {
 
     /// 杜比视界（Jellyfin 的 VideoRangeType：DOVI / DOVIWithHDR10 / DOVIWithEL / DOVIWithHDR10Plus…）
     private var isDolbyVision: Bool {
-        (videoRangeType ?? "").uppercased().contains("DOVI")
+        if streamDynamicRange == "杜比视界" { return true }
+        return (videoRangeType ?? "").uppercased().contains("DOVI")
     }
 
     private var isHDRContent: Bool {
+        if let measured = streamDynamicRange {
+            return measured != "SDR"
+        }
         let t = (videoRangeType ?? "").uppercased()
         return t.contains("DOVI") || t.contains("HDR") || t.contains("HLG")
     }
@@ -852,9 +899,13 @@ struct FNOSPlayerContainerView: View {
     /// 控制条上的格式标记（识别结果一眼可见，便于确认分流是否生效）
     private var formatBadge: String {
         let t = (videoRangeType ?? "").uppercased()
-        guard !t.isEmpty else { return "" }
+        // 优先用解码后轨道实测（服务端元数据常把 DV 报成 SDR）
         var label: String
-        if t.contains("DOVI") {
+        if let measured = streamDynamicRange {
+            label = measured
+        } else if t.isEmpty {
+            return ""
+        } else if t.contains("DOVI") {
             label = t.contains("HDR10") ? "杜比视界 P8" : "杜比视界 P5"
         } else if t.contains("HLG") {
             label = "HLG"

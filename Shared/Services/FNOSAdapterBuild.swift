@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v59"
+    static let version = "v60"
 
     /// 本版主要变更摘要
-    static let changes = "mpv：控制条 5 秒无操作自动隐藏（暂停/选集/弹幕设置时不隐藏），任意方向键唤回；选集条每集有焦点白底高亮 + 正在播放标记并自动滚到当前集；新增弹幕设置（字号/速度/不透明度/垂直位置，播放中实时可调 + 设置页常驻）；弹幕去掉黑色描边"
+    static let changes = "无感切换：开局检测片源(杜比视界/AV1 自动用 mpv，其余仍用 KSPlayer)，元数据漏报时按解码轨实测二次切换并带进度续播；KS 控制条按钮统一为 Hero 同款胶囊外观(去掉系统白方块)；首页媒体库标题字号调小"
 }

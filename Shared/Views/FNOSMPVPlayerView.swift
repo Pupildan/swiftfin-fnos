@@ -30,6 +30,10 @@ struct FNOSMPVPlayerView: View {
     let authToken: String
     let native: FNOSNativeClient
     let range: FNOSNativeClient.MediaRange
+    /// 引擎切换时带过来的播放进度（无感续播）
+    var initialSeek: Double? = nil
+    /// 由自动分流选中（而不是用户手动开 mpv）→ 顶部提示一次
+    var autoSelected: Bool = false
     var onExit: () -> Void
 
     @State private var player: MPVPlayer?
@@ -50,6 +54,8 @@ struct FNOSMPVPlayerView: View {
     @State private var showInfo = false
     @State private var infoText = ""
     @State private var switching = false
+    /// 自动分流提示（只在自动切换时出现一次）
+    @State private var engineToast: String?
 
     /// 控制条是否可见（自动隐藏）
     @State private var controlsVisible = true
@@ -85,6 +91,8 @@ struct FNOSMPVPlayerView: View {
         authToken: String,
         native: FNOSNativeClient,
         range: FNOSNativeClient.MediaRange,
+        initialSeek: Double? = nil,
+        autoSelected: Bool = false,
         onExit: @escaping () -> Void
     ) {
         self.item = item
@@ -92,11 +100,16 @@ struct FNOSMPVPlayerView: View {
         self.authToken = authToken
         self.native = native
         self.range = range
+        self.initialSeek = initialSeek
+        self.autoSelected = autoSelected
         self.onExit = onExit
         _currentURL = State(initialValue: range.url)
         _currentGUID = State(initialValue: range.itemGUID)
         _currentNumber = State(initialValue: range.episodeNumber)
         _episodes = State(initialValue: range.episodes)
+        _engineToast = State(
+            initialValue: autoSelected ? "已自动切换 mpv 引擎（杜比视界色彩转换）" : nil
+        )
     }
 
     private var resumeKey: String { "fnos.resume.native.\(currentGUID)" }
@@ -134,6 +147,19 @@ struct FNOSMPVPlayerView: View {
                 if showInfo {
                     infoPanel
                         .allowsHitTesting(false)
+                }
+
+                if let engineToast {
+                    Text(engineToast)
+                        .font(.system(size: 18, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 10)
+                        .background(Color.black.opacity(0.62), in: Capsule())
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                        .padding(.top, 54)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
                 }
             } else {
                 VStack(spacing: 12) {
@@ -654,7 +680,10 @@ struct FNOSMPVPlayerView: View {
         self.player = player
 
         let resume = UserDefaults.standard.double(forKey: resumeKey)
-        if resume > 30 {
+        // 切引擎带过来的进度优先；其次本地续播；都没有就从头播
+        if let initialSeek, initialSeek > 1 {
+            player.load(currentURL, startTime: .seconds(initialSeek))
+        } else if resume > 30 {
             player.load(currentURL, startTime: .seconds(resume))
         } else {
             player.load(currentURL)
@@ -669,6 +698,14 @@ struct FNOSMPVPlayerView: View {
             try? await Task.sleep(nanoseconds: 300_000_000)
             focus = .playPause
             bumpActivity()
+        }
+
+        // 自动分流提示 3.5 秒后淡出
+        if engineToast != nil {
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 3_500_000_000)
+                withAnimation(.easeOut(duration: 0.3)) { engineToast = nil }
+            }
         }
     }
 

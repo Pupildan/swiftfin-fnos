@@ -292,7 +292,8 @@ struct FNOSMainView: View {
 
         return VStack(alignment: .leading, spacing: 14) {
             Text(section.library.Name ?? "未命名")
-                .font(.title2.bold())
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundColor(.white.opacity(0.92))
                 .padding(.horizontal, hPadding)
 
             ScrollView(.horizontal, showsIndicators: false) {
@@ -456,6 +457,8 @@ struct FNOSHomeSettingsView: View {
 
     // 播放器引擎：默认 KSPlayer；开启后走 mpv（MPVUI），用于杜比视界 P5 的色彩转换
     @AppStorage("fnos.play.engineMPV") private var engineMPV = false
+    // 自动分流：KSPlayer 处理不了的片源（杜比视界 / AV1）自动切 mpv
+    @AppStorage("fnos.play.autoEngine") private var autoEngine = true
 
     // 弹幕外观（与播放器内「弹幕设置」共用同一批键）
     @AppStorage("fnos.danmu.fontSize") private var danmuFontSize: Double = 26
@@ -501,18 +504,25 @@ struct FNOSHomeSettingsView: View {
                     }
 
                     section(
-                        "播放（色彩）",
-                        footer: "mpv 引擎用 libplacebo 做杜比视界 P5 的色彩转换，可根治紫绿偏色；字幕改由系统字体渲染，不再乱码。KSPlayer 的「按 HDR10 输出」只在未启用 mpv 时生效。"
+                        "播放（引擎 / 色彩）",
+                        footer: "自动切换：开局先检测片源，杜比视界或 AV1 这类 KSPlayer 处理不了的片子自动改用 mpv（会从检测到的那一刻续播，不丢进度）；其余片源仍用 KSPlayer。若强制开启下面的 mpv 引擎，则所有片源都走 mpv。"
                     ) {
                         FNOSSettingRow(
-                            title: "使用 mpv 引擎播放（实验）",
+                            title: "自动切换播放引擎",
+                            systemImage: "arrow.triangle.branch",
+                            isOn: autoEngine
+                        ) {
+                            autoEngine.toggle()
+                        }
+                        FNOSSettingRow(
+                            title: "始终使用 mpv 引擎播放",
                             systemImage: "play.rectangle",
                             isOn: engineMPV
                         ) {
                             engineMPV.toggle()
                         }
                         FNOSSettingRow(
-                            title: "杜比视界按 HDR10 输出",
+                            title: "杜比视界按 HDR10 输出（KS）",
                             systemImage: "tv",
                             isOn: hdr10Compat
                         ) {

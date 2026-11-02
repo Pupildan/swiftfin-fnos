@@ -7,7 +7,11 @@
 //
 
 import AVFoundation
+import KSPlayer
 import SwiftUI
+
+/// AVURLAsset 请求头 Key（ObjC 常量未暴露给 Swift，按官方字符串手动声明）
+private let fnosHeroAVHTTPKey = "AVURLAssetHTTPHeaderFieldsKey"
 
 // MARK: - Hero Banner 专用扩展（只读 FNOSDirectClient 公开属性，不修改网络层文件）
 
@@ -48,10 +52,18 @@ struct FNOSHeroBanner: View {
 
     @State private var currentIndex = 0
 
-    // 智能预告状态
+    // 智能预告状态（AVPlayer 播 mp4/m3u8；MKV 等用第二个独立 KSPlayer 实例，与正片完全隔离）
     @State private var previewPlayer: AVPlayer?
     @State private var previewItemID: String?
     @State private var previewVisible = false
+    @StateObject private var previewKSCoordinator = KSVideoPlayer.Coordinator()
+    @State private var previewUsesKS = false
+    @State private var previewKSURL: URL?
+    @State private var previewKSOptions: KSOptions?
+    @State private var previewKSSeeked = false
+
+    // 海报聚焦翻页
+    @FocusState private var imageFocused: Bool
 
     // 「稍后观看」本地标记（加号按钮）
     @AppStorage("fnos.watchlater") private var watchLaterIDs = ""
@@ -67,7 +79,7 @@ struct FNOSHeroBanner: View {
                 // ---- 底层：全屏海报轮播（页内只有图）----
                 TabView(selection: $currentIndex) {
                     ForEach(Array(items.enumerated()), id: \.element.Id) { index, item in
-                        heroBackdrop(item: item, size: geo.size)
+                        heroBackdrop(item: item, index: index, size: geo.size)
                             .tag(index)
                     }
                 }
@@ -75,23 +87,31 @@ struct FNOSHeroBanner: View {
                     .tabViewStyle(.page(indexDisplayMode: .never))
                 #endif
                 .ignoresSafeArea()
-                .onMoveCommand { direction in
-                    // 焦点在 Hero 内且左右无可移动目标时翻页
-                    switch direction {
-                    case .left:
-                        guard currentIndex > 0 else { return }
-                        withAnimation(.easeInOut(duration: 0.35)) { currentIndex -= 1 }
-                    case .right:
-                        guard currentIndex < items.count - 1 else { return }
-                        withAnimation(.easeInOut(duration: 0.35)) { currentIndex += 1 }
-                    default:
-                        break
-                    }
-                }
+                .defaultFocus($imageFocused, true)
 
                 // ---- 智能预告视频层（海报之上、遮罩之下）----
-                if previewVisible, let player = previewPlayer {
+                if previewVisible, !previewUsesKS, let player = previewPlayer {
                     FNOSPreviewPlayerView(player: player)
+                        .ignoresSafeArea()
+                        .transition(.opacity)
+                }
+                if previewVisible, previewUsesKS, let url = previewKSURL {
+                    KSVideoPlayer(coordinator: previewKSCoordinator, url: url, options: previewKSOptions ?? KSOptions())
+                        .onStateChanged { _, state in
+                            guard previewUsesKS else { return }
+                            if state == .bufferFinished || state == .readyToPlay {
+                                // 静音 + 定位正片中间（总时长从 KSPlayer 拿，AVAsset 读不了 MKV）
+                                previewKSCoordinator.isMuted = true
+                                if !previewKSSeeked {
+                                    let total = Double(previewKSCoordinator.timemodel.totalTime)
+                                    if total > 60 {
+                                        previewKSCoordinator.seek(time: total / 2)
+                                        previewKSSeeked = true
+                                    }
+                                }
+                                previewKSCoordinator.playerLayer?.play()
+                            }
+                        }
                         .ignoresSafeArea()
                         .transition(.opacity)
                 }
@@ -165,16 +185,37 @@ struct FNOSHeroBanner: View {
         }
     }
 
-    // MARK: 轮播页（只有全屏海报图）
+    // MARK: 轮播页（只有全屏海报图；可聚焦：左右键翻页，点击=播放）
 
-    private func heroBackdrop(item: FNOSItem, size: CGSize) -> some View {
+    private func heroBackdrop(item: FNOSItem, index: Int, size: CGSize) -> some View {
         FNOSAsyncImage(
             url: client.heroImageURL(item: item),
             headers: client.mediaHeaders
         )
-        .frame(width: size.width, height: size.height)
+        // 106% 过扫描：任何容器/舍入情况下四周都溢出裁切，绝不露黑边
+        .frame(width: size.width * 1.06, height: size.height * 1.06)
         .clipped()
         .ignoresSafeArea()
+        .focusable(index == currentIndex)
+        .focused($imageFocused)
+        .onMoveCommand { direction in
+            switch direction {
+            case .left:
+                guard currentIndex > 0 else { return }
+                withAnimation(.easeInOut(duration: 0.35)) { currentIndex -= 1 }
+            case .right:
+                guard currentIndex < items.count - 1 else { return }
+                withAnimation(.easeInOut(duration: 0.35)) { currentIndex += 1 }
+            default:
+                break
+            }
+        }
+        .onTapGesture {
+            if let item = current {
+                onPlay(item)
+            }
+        }
+        .disabled(index != currentIndex)
     }
 
     // MARK: 左下角信息与操作区
@@ -267,14 +308,33 @@ struct FNOSHeroBanner: View {
         do {
             let source = try await client.playbackSource(itemID: item.Id, userID: userID)
             let container = (source.container ?? "").lowercased()
-            let playable = ["mp4", "mov", "m4v", "m3u8"].contains { container.contains($0) }
-            guard playable else {
-                print("FNOSℹ️Hero 预告跳过（容器 \(container) 非 AVPlayer 原生兼容）")
-                return
-            }
             guard let url = client.streamURL(itemID: item.Id, mediaSourceID: source.mediaSourceID) else { return }
 
-            let asset = AVURLAsset(url: url, options: ["AVURLAssetHTTPHeaderFieldsKey": client.mediaHeaders])
+            // MKV/Matroska 等非 AVPlayer 容器 → 第二个独立 KSPlayer 实例（静音预告）
+            let avPlayable = ["mp4", "mov", "m4v", "m3u8"].contains { container.contains($0) }
+            if !avPlayable {
+                print("FNOSℹ️Hero 预告（KSPlayer 独立实例）容器: \(container)")
+                let options = KSOptions()
+                options.avOptions[fnosHeroAVHTTPKey] = client.mediaHeaders
+                let headerString = client.mediaHeaders
+                    .map { "\($0.key): \($0.value)" }
+                    .joined(separator: "\r\n")
+                options.formatContextOptions["headers"] = headerString
+                KSOptions.firstPlayerType = KSMEPlayer.self
+
+                previewPlayer = nil
+                previewUsesKS = true
+                previewKSSeeked = false
+                previewKSURL = url
+                previewKSOptions = options
+                previewItemID = item.Id
+                withAnimation(.easeIn(duration: 0.6)) {
+                    previewVisible = true
+                }
+                return
+            }
+
+            let asset = AVURLAsset(url: url, options: [fnosHeroAVHTTPKey: client.mediaHeaders])
             // 取总时长，定位正片中间
             let total = try await asset.load(.duration).seconds
             guard total.isFinite, total > 60 else {
@@ -287,6 +347,8 @@ struct FNOSHeroBanner: View {
             player.isMuted = true
             player.actionAtItemEnd = .none
             previewPlayer = player
+            previewUsesKS = false
+            previewKSURL = nil
             previewItemID = item.Id
 
             withAnimation(.easeIn(duration: 0.6)) {
@@ -303,6 +365,11 @@ struct FNOSHeroBanner: View {
     private func stopPreview() {
         previewPlayer?.pause()
         previewPlayer = nil
+        if previewUsesKS {
+            previewKSCoordinator.playerLayer?.pause()
+        }
+        previewUsesKS = false
+        previewKSURL = nil
         previewItemID = nil
         if previewVisible {
             withAnimation(.easeOut(duration: 0.2)) {

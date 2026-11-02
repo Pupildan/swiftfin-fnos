@@ -144,6 +144,7 @@ struct FNOSMainView: View {
                 }
             )
         }
+        .ignoresSafeArea()
     }
 
     // MARK: - Hero Banner 数据：全部媒体库条目按序取前 6 个（须有海报）

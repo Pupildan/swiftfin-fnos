@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v23"
+    static let version = "v24"
 
     /// 本版主要变更摘要
-    static let changes = "沉浸式首页：去顶栏去日志、Hero真全屏铺满+暗角、信息左下角常驻、卡片加大"
+    static let changes = "全屏无黑边（geo含安全区+海报106%过扫描）；海报聚焦翻页+点击播放；MKV预告用独立KSPlayer静音实例"
 }

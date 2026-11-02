@@ -233,7 +233,8 @@ struct FNOSPlayerContainerView: View {
     @State private var isSheetPresented = false
     @State private var audioSheetPresented = false
     @FocusState private var focus: Control?
-    // 换集条焦点
+    // 换集条：默认不展开（一上来就渲染 24 张缩略图会跟弹幕争内存，拖动进度条容易闪退）
+    @State private var showEpisodeStrip = false
     @FocusState private var focusedChip: String?
 
     private enum Control: Hashable {
@@ -441,9 +442,10 @@ struct FNOSPlayerContainerView: View {
                     .foregroundColor(.white)
             }
 
-            // 换集条（紧贴进度条下方，播放中随时切换）
-            if !episodes.isEmpty {
+            // 换集条：只有「焦点在进度条 + 再按一次下键」才展开
+            if !episodes.isEmpty && showEpisodeStrip {
                 episodeStrip
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
         .padding(.horizontal, 90)
@@ -463,6 +465,8 @@ struct FNOSPlayerContainerView: View {
         .onChange(of: focus) { newValue in
             if newValue != .scrubber {
                 commitScrubIfNeeded()
+                // 焦点离开进度条、又不在换集条上 → 把换集条收起来
+                if focusedChip == nil { showEpisodeStrip = false }
             }
             scheduleHide()
         }
@@ -480,7 +484,7 @@ struct FNOSPlayerContainerView: View {
     private var episodeStrip: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 14) {
+                LazyHStack(spacing: 14) {
                     ForEach(episodes) { ep in
                         let isCurrent = ep.Id == item.Id
                         let isFocused = focusedChip == ep.Id
@@ -520,8 +524,13 @@ struct FNOSPlayerContainerView: View {
                         .focusEffectDisabled()
                         .focused($focusedChip, equals: ep.Id)
                         .onMoveCommand { direction in
-                            // 上键回进度条（换集条在进度条下方，明确路由避免焦点乱跳）
-                            if direction == .up { focus = .scrubber }
+                            // 上键收起换集条并回进度条
+                            if direction == .up {
+                                showEpisodeStrip = false
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                    focus = .scrubber
+                                }
+                            }
                         }
                         .id(ep.Id)
                     }
@@ -562,6 +571,16 @@ struct FNOSPlayerContainerView: View {
                 scrub(by: -1)
             case .right:
                 scrub(by: 1)
+            case .down:
+                // 第一次按↓：展开换集条并把焦点交给当前集
+                guard !episodes.isEmpty else { return }
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showEpisodeStrip = true
+                }
+                let target = episodes.first(where: { $0.Id == item.Id })?.Id ?? episodes.first?.Id
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    focusedChip = target
+                }
             default:
                 break
             }
@@ -717,6 +736,7 @@ struct FNOSPlayerContainerView: View {
             guard !Task.isCancelled else { return }
             withAnimation(.easeInOut(duration: 0.4)) {
                 controlsVisible = false
+                showEpisodeStrip = false
             }
             focus = nil
         }

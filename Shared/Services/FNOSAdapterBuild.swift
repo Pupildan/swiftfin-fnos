@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v52"
+    static let version = "v53"
 
     /// 本版主要变更摘要
-    static let changes = "分集改走季guid(season/list->episode/list)；演员多级兜底(条目/季/条目详情)+分页自愈；时长换算微秒优先；移除501的body形式"
+    static let changes = "详情页: 删右上关闭按钮/删卡片图片角标/默认焦点锁播放按钮/↓直达第一组选集；播放页换集条改按需展开(进度条按↓)，修复拖进度闪退"
 }

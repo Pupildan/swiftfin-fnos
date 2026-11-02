@@ -17,8 +17,6 @@ struct FNOSItemDetailView: View {
     /// 剧集：交给外层弹选集面板
     let onEpisodes: (FNOSItem) -> Void
 
-    @Environment(\.dismiss) private var dismiss
-
     /// 播放器在本页内打开（不先关详情页），避免 fullScreenCover 竞态导致请求被取消
     @State private var playbackTarget: FNOSPlaybackTarget?
     /// 播放器内点了别的分集：先关闭播放器，onDismiss 里再以新目标重开（cover 展示中改 item 不会重建内容）
@@ -171,6 +169,7 @@ struct FNOSItemDetailView: View {
                                 episodeSection
                                     .padding(.top, 36)
                                     .padding(.bottom, 12)
+                                    .id("detail-episodes")
                             }
 
                             infoSection
@@ -185,30 +184,17 @@ struct FNOSItemDetailView: View {
                     .ignoresSafeArea()
                 }
 
-                // 右上角关闭
-                VStack {
-                    HStack {
-                        Spacer()
-                        Button {
-                            dismiss()
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 22, weight: .semibold))
-                                .foregroundColor(.white)
-                                .frame(width: 52, height: 52)
-                                .background(Circle().fill(Color.black.opacity(0.45)))
-                        }
-                        .buttonStyle(.plain)
-                        .padding(.trailing, 44)
-                        .padding(.top, 40)
-                    }
-                    Spacer()
-                }
             }
         }
         .ignoresSafeArea()
         .task {
             await loadDetail()
+        }
+        .onAppear {
+            // defaultFocus 会被背景图/滚动容器抢走，延迟再压一次确保落在「播放第 1 集」
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                focusedButton = .play
+            }
         }
         .task(id: item.Id) {
             await rotateBackdrops()
@@ -341,11 +327,7 @@ struct FNOSItemDetailView: View {
                             .font(.system(size: 21, weight: .semibold))
                     }
                     .onMoveCommand { direction in
-                        if direction == .down {
-                            withAnimation(.easeInOut(duration: 0.35)) {
-                                proxy.scrollTo("detail-info", anchor: .top)
-                            }
-                        }
+                        if direction == .down { goDownFromHero(proxy) }
                     }
 
                     // 稍后观看
@@ -357,11 +339,7 @@ struct FNOSItemDetailView: View {
                             .frame(width: 54, height: 54)
                     }
                     .onMoveCommand { direction in
-                        if direction == .down {
-                            withAnimation(.easeInOut(duration: 0.35)) {
-                                proxy.scrollTo("detail-info", anchor: .top)
-                            }
-                        }
+                        if direction == .down { goDownFromHero(proxy) }
                     }
 
                     // 信息
@@ -375,11 +353,7 @@ struct FNOSItemDetailView: View {
                             .frame(width: 54, height: 54)
                     }
                     .onMoveCommand { direction in
-                        if direction == .down {
-                            withAnimation(.easeInOut(duration: 0.35)) {
-                                proxy.scrollTo("detail-info", anchor: .top)
-                            }
-                        }
+                        if direction == .down { goDownFromHero(proxy) }
                     }
                 }
                 .padding(.top, 10)
@@ -522,19 +496,6 @@ struct FNOSItemDetailView: View {
                 .frame(width: 420, height: 236)
                 .clipped()
 
-                if let duration = episodeDurationText(ep) {
-                    Text(duration)
-                        .font(.system(size: 16, weight: .bold))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 13)
-                        .padding(.vertical, 6)
-                        .background(Capsule().fill(Color.black.opacity(0.78)))
-                        .overlay(
-                            Capsule().stroke(Color.white.opacity(0.22), lineWidth: 1)
-                        )
-                        .padding(.leading, 14)
-                        .padding(.bottom, 12)
-                }
             }
             .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
 
@@ -958,6 +919,24 @@ struct FNOSItemDetailView: View {
         let div = (probe?.RunTimeTicks).map { String(Int(Double($0) / 1_000_000)) } ?? "nil"
         debugLines.append("结论: 共 \(episodes.count) 集 分 \(episodeTabs.count) 组；ticks=\(probe?.RunTimeTicks ?? -1) ÷1e6=\(div) 秒=\(probeSeconds.map { String(Int($0)) } ?? "nil") 角标=\(probe?.compactDuration ?? "nil")")
         print("FNOSℹ️剧集 \(item.Name ?? "?") 共 \(episodes.count) 集，分 \(episodeTabs.count) 组")
+    }
+
+    /// Hero 按钮按下键：剧集页优先落到「第 1-10 集」分段标签，电影才滚到信息卡。
+    /// 之前一律滚到 detail-info，导致按一下下键画面与焦点一起飞走。
+    private func goDownFromHero(_ proxy: ScrollViewProxy) {
+        if item.type == "Series", let firstTab = episodeTabs.first {
+            withAnimation(.easeInOut(duration: 0.35)) {
+                proxy.scrollTo("detail-episodes", anchor: .top)
+            }
+            // 等滚动落位后把焦点交给第一个分段标签
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                focusedTab = firstTab.id
+            }
+        } else {
+            withAnimation(.easeInOut(duration: 0.35)) {
+                proxy.scrollTo("detail-info", anchor: .top)
+            }
+        }
     }
 
     private func playNow() {

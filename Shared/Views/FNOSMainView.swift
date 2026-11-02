@@ -47,7 +47,7 @@ struct FNOSMainView: View {
 
     // Hero 每日随机抽选（每天首次进入重新抽 6 部电影）
     @AppStorage("fnos.hero.date") private var heroDate = ""
-    @AppStorage("fnos.hero.ids") private var heroIDs = 
+    @AppStorage("fnos.hero.ids") private var heroIDs = ""
 
     private let cardWidth: CGFloat = 300
 

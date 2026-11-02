@@ -48,6 +48,8 @@ struct FNOSMainView: View {
     // Hero 每日随机抽选（每天首次进入重新抽 6 部电影）
     @AppStorage("fnos.hero.date") private var heroDate = ""
     @AppStorage("fnos.hero.ids") private var heroIDs = ""
+    // Hero 快照：只在 bootstrap / 刷新时赋值一次，绝不在 body 渲染中重新洗牌（洗牌会图文错位）
+    @State private var heroSnapshot: [FNOSItem] = []
 
     private let cardWidth: CGFloat = 300
 
@@ -75,10 +77,10 @@ struct FNOSMainView: View {
                 } else {
                     ScrollView(.vertical, showsIndicators: false) {
                         VStack(spacing: 0) {
-                            // Apple TV+ 式全屏 Hero Banner（媒体库前 6 个条目）
-                            if !heroItems.isEmpty, let heroClient = client {
+                            // Apple TV+ 式全屏 Hero Banner（当日抽选的 6 部电影快照）
+                            if !heroSnapshot.isEmpty, let heroClient = client {
                                 FNOSHeroBanner(
-                                    items: Array(heroItems),
+                                    items: heroSnapshot,
                                     client: heroClient,
                                     userID: userID,
                                     onPlay: { item in
@@ -151,18 +153,22 @@ struct FNOSMainView: View {
         .ignoresSafeArea()
     }
 
-    // MARK: - Hero Banner 数据：只抓电影（排除剧集），按当天抽选结果展示
+    // MARK: - Hero Banner 数据：只抓电影（排除剧集），快照只在加载/刷新时生成一次
 
-    private var heroItems: [FNOSItem] {
+    /// 按当日抽选的 id 生成 Hero 快照；取不满时兜底随机（只在此函数内洗牌，body 渲染绝不重抽）
+    @MainActor
+    private func refreshHeroSnapshot() {
         let movies = sections
             .flatMap(\.items)
             .filter { item in
                 guard item.type == "Movie", let tags = item.ImageTags else { return false }
                 return !tags.isEmpty
             }
-        guard !movies.isEmpty else { return [] }
+        guard !movies.isEmpty else {
+            heroSnapshot = []
+            return
+        }
 
-        // 按当日抽选的 id 顺序取
         let ids = heroIDs.split(separator: ",").map(String.init)
         var picked: [FNOSItem] = []
         for id in ids {
@@ -170,11 +176,13 @@ struct FNOSMainView: View {
                 picked.append(movie)
             }
         }
-        // 库变化导致抽选结果大部分失效时兜底重抽（不写回，避免频繁变更）
+        // 库变化导致抽选结果大部分失效时兜底重抽（只发生在快照刷新时，不影响渲染稳定性）
         if picked.count >= min(3, movies.count) {
-            return Array(picked.prefix(6))
+            heroSnapshot = Array(picked.prefix(6))
+        } else {
+            heroSnapshot = Array(movies.shuffled().prefix(6))
         }
-        return Array(movies.shuffled().prefix(6))
+        print("FNOSℹ️Hero 快照: \(heroSnapshot.compactMap(\.Name).joined(separator: " | "))")
     }
 
     /// 每天首次进入时重新随机抽 6 部电影
@@ -298,6 +306,8 @@ struct FNOSMainView: View {
 
             isLoading = false
             rollHeroIfNeeded()
+            // Hero 快照只在此处（bootstrap / 下拉刷新）生成一次
+            refreshHeroSnapshot()
         } catch {
             isLoading = false
             print("FNOS❗️加载媒体库失败: \(error)")

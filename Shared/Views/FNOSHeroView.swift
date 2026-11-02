@@ -100,7 +100,6 @@ struct FNOSHeroBanner: View {
                 .clipped()
                 .ignoresSafeArea()
                 .defaultFocus($focusedPage, 0)
-                .background(FNOSHeroPanCatcher())
                 .onAppear {
                     installPanHandler()
                 }
@@ -188,6 +187,9 @@ struct FNOSHeroBanner: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .animation(.easeInOut(duration: 0.3), value: currentIndex)
+            // ---- 手势捕获层（最顶层）：滑动手势优先于一切，覆盖左下按钮区域 ----
+            // tvOS 按钮激活走「焦点 + 确认键」，不经触摸，所以顶层捕获层不影响按钮点击
+            .overlay(FNOSHeroPanCatcher())
         }
         .task(id: currentIndex) {
             // 智能预告：3 秒无操作 → 正片中间 30 秒静音预览；滑动立即打断
@@ -294,6 +296,12 @@ struct FNOSHeroBanner: View {
                     .buttonStyle(.card)
                 #endif
                 .focused($playButtonFocused)
+                .onMoveCommand { direction in
+                    // 上键把焦点交还海报页，左右键随即恢复翻页职责（ATV+ 交互）
+                    if direction == .up {
+                        focusedPage = currentIndex
+                    }
+                }
 
                 // + 稍后观看
                 Button {
@@ -311,6 +319,11 @@ struct FNOSHeroBanner: View {
                     .buttonStyle(.card)
                 #endif
                 .focused($plusButtonFocused)
+                .onMoveCommand { direction in
+                    if direction == .up {
+                        focusedPage = currentIndex
+                    }
+                }
 
                 // 详情
                 Button {
@@ -325,6 +338,11 @@ struct FNOSHeroBanner: View {
                     .buttonStyle(.card)
                 #endif
                 .focused($detailButtonFocused)
+                .onMoveCommand { direction in
+                    if direction == .up {
+                        focusedPage = currentIndex
+                    }
+                }
             }
             .padding(.top, 6)
         }
@@ -427,10 +445,7 @@ struct FNOSHeroBanner: View {
                 panDidPage = false
             case .changed:
                 guard !panDidPage else { return }
-                // 焦点在三个按钮上时，滑动属于焦点导航，不翻页
-                if playButtonFocused || plusButtonFocused || detailButtonFocused {
-                    return
-                }
+                // 滑动永远翻页（ATV+ 逻辑：滑动=翻页，点击=激活按钮），不做任何焦点让路
                 let translation = gesture.translation(in: gesture.view)
                 gesture.setTranslation(.zero, in: gesture.view)
                 panAccumulatedX += translation.x

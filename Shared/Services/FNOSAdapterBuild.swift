@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v28"
+    static let version = "v29"
 
     /// 本版主要变更摘要
-    static let changes = "转盘滑动翻页(手势桥接不依赖焦点)；海报/预告按条目ID绑定；预告即插即填充；等待5秒"
+    static let changes = "Hero 修复：滑动永远翻页(手势置顶+删焦点门控)；图文错位(Hero快照只刷新时生成)；按钮上键回海报恢复左右键翻页"
 }

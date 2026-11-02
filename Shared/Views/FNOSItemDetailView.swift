@@ -933,8 +933,9 @@ struct FNOSItemDetailView: View {
         }
         selectedTabIndex = 0
 
-        // 剧集(Series)自身没有 RunTimeTicks → 用第 1 集的时长代表「单集片长」
-        if runtimeTicks == nil, let firstTicks = episodes.first?.RunTimeTicks, firstTicks > 0 {
+        // 剧集(Series)自身没有 RunTimeTicks（飞牛返回 0 而不是缺失）→ 用第 1 集代表「单集片长」
+        if runtimeTicks == nil || runtimeTicks == 0,
+           let firstTicks = episodes.first?.RunTimeTicks, firstTicks > 0 {
             runtimeTicks = firstTicks
             print("FNOSℹ️片长取自第1集 ticks=\(firstTicks) → \(durationString ?? "nil")")
         }
@@ -952,7 +953,9 @@ struct FNOSItemDetailView: View {
             }
         }
 
-        debugLines.append("结论: 共 \(episodes.count) 集，分 \(episodeTabs.count) 组；第1集ticks=\(episodes.first?.RunTimeTicks ?? -1) 类型=\(episodes.first?.type ?? "nil") 角标=\(episodes.first?.compactDuration ?? "nil")")
+        let probe = episodes.first
+        let probeSeconds = FNOSItem.plausibleSeconds(ticks: probe?.RunTimeTicks, isEpisode: probe?.type == "Episode")
+        debugLines.append("结论: 共 \(episodes.count) 集，分 \(episodeTabs.count) 组；ticks=\(probe?.RunTimeTicks ?? -1) 类型=\(probe?.type ?? "nil") 秒=\(probeSeconds.map { String(Int($0)) } ?? "nil") 角标=\(probe?.compactDuration ?? "nil")")
         print("FNOSℹ️剧集 \(item.Name ?? "?") 共 \(episodes.count) 集，分 \(episodeTabs.count) 组")
     }
 

@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v50"
+    static let version = "v51"
 
     /// 本版主要变更摘要
-    static let changes = "演员/时长改走飞牛原生API(/v/api/v1/person/list + episode/list，Authx签名，登录时换原生token)；进度条拖动不再被3秒隐藏打断+焦点路由修复"
+    static let changes = "原生API结构自适应(data.list/数组/body形式)+响应结构诊断；时长换算中间值诊断；演员body兜底"
 }

@@ -185,7 +185,10 @@ final class FNOSNativeClient {
                 return nil
             }
             let duration = (picked["duration"] as? NSNumber)?.intValue ?? 0
-            log.add("原生命中 guid=\(guid.prefix(8)) 时长\(duration)s")
+            let runtime = (picked["runtime"] as? NSNumber)?.intValue ?? 0
+            let epsCount = (picked["number_of_episodes"] as? NSNumber)?.intValue
+                ?? (picked["local_number_of_episodes"] as? NSNumber)?.intValue ?? 0
+            log.add("原生命中「\(picked["title"] as? String ?? "?")」guid=\(guid.prefix(8)) dur=\(duration)s run=\(runtime)m 集=\(epsCount)")
             return ItemHit(guid: guid, title: picked["title"] as? String ?? title, duration: duration)
         } catch {
             log.add("原生搜索失败: \(short(error))")
@@ -198,7 +201,8 @@ final class FNOSNativeClient {
     private func fetchPersons(guid: String, log: DebugLog) async -> [Person] {
         do {
             let json = try await post(path: "api/v1/person/list/\(guid)", body: #"{"page":1,"page_size":200}"#)
-            let list = (json["data"] as? [String: Any])?["list"] as? [[String: Any]] ?? []
+            let list = Self.extractList(json["data"])
+            log.add("原生演员结构: \(Self.describeStructure(json["data"])) → \(list.count) 条")
             let people: [Person] = list.compactMap { dict in
                 guard let name = dict["name"] as? String, !name.isEmpty else { return nil }
                 return Person(
@@ -210,9 +214,29 @@ final class FNOSNativeClient {
             }
             log.add("原生演员: \(people.count) 人")
             print("FNOSℹ️原生演员 \(people.count) 人")
-            return people
+            if !people.isEmpty { return people }
         } catch {
             log.add("原生演员失败: \(short(error))")
+        }
+
+        // 兜底：部分版本 person/list 走 body 传 item_guid
+        do {
+            let body = "{\"item_guid\":\"\(Self.escape(guid))\",\"page\":1,\"page_size\":200}"
+            let json = try await post(path: "api/v1/person/list", body: body)
+            let list = Self.extractList(json["data"])
+            let people: [Person] = list.compactMap { dict in
+                guard let name = dict["name"] as? String, !name.isEmpty else { return nil }
+                return Person(
+                    name: name,
+                    role: dict["role"] as? String,
+                    job: dict["job"] as? String,
+                    profilePath: dict["profile_path"] as? String
+                )
+            }
+            log.add("原生演员(body形式): \(Self.describeStructure(json["data"])) → \(people.count) 人")
+            return people
+        } catch {
+            log.add("原生演员(body)失败: \(short(error))")
             return []
         }
     }
@@ -222,13 +246,18 @@ final class FNOSNativeClient {
     private func fetchEpisodeDurations(guid: String, log: DebugLog) async -> [Int: Int] {
         do {
             let json = try await get(path: "api/v1/episode/list/\(guid)")
-            let list = (json["data"] as? [String: Any])?["list"] as? [[String: Any]]
-                ?? (json["data"] as? [[String: Any]])
-                ?? []
+            let list = Self.extractList(json["data"])
+            log.add("原生分集结构: \(Self.describeStructure(json["data"])) → \(list.count) 条")
             var map: [Int: Int] = [:]
             for dict in list {
-                guard let number = (dict["episode_number"] as? NSNumber)?.intValue else { continue }
-                let seconds = (dict["duration"] as? NSNumber)?.intValue ?? 0
+                let number = (dict["episode_number"] as? NSNumber)?.intValue
+                    ?? (dict["episode"] as? NSNumber)?.intValue
+                guard let number else { continue }
+                var seconds = (dict["duration"] as? NSNumber)?.intValue ?? 0
+                // runtime 单位是分钟
+                if seconds <= 0, let minutes = (dict["runtime"] as? NSNumber)?.intValue, minutes > 0 {
+                    seconds = minutes * 60
+                }
                 if seconds > 0 { map[number] = seconds }
             }
             log.add("原生分集时长: \(map.count) 集")
@@ -284,6 +313,29 @@ final class FNOSNativeClient {
             throw FNOSDirectError("原生 code=\(code) msg=\(msg)")
         }
         return json
+    }
+
+    // MARK: - 响应结构兼容
+
+    /// 飞牛各版本把列表放在 data.list / data(数组) / data.persons 都可能，一律兼容
+    private static func extractList(_ data: Any?) -> [[String: Any]] {
+        if let array = data as? [[String: Any]] { return array }
+        if let dict = data as? [String: Any] {
+            for key in ["list", "persons", "items", "actors", "data"] {
+                if let array = dict[key] as? [[String: Any]] { return array }
+            }
+        }
+        return []
+    }
+
+    /// 诊断用：data 的真实形状
+    private static func describeStructure(_ data: Any?) -> String {
+        guard let data else { return "data=nil" }
+        if let array = data as? [Any] { return "数组(\(array.count))" }
+        if let dict = data as? [String: Any] {
+            return "keys[\(dict.keys.sorted().joined(separator: ","))]"
+        }
+        return String(describing: type(of: data))
     }
 
     // MARK: - Authx 签名

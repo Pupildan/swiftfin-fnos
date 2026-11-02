@@ -350,11 +350,13 @@ struct FNOSMPVPlayerView: View {
             player.load(url)
         }
 
-        danmu.load(
-            title: item.Name ?? title,
-            seriesTitle: item.SeriesName,
-            episodeNumber: item.IndexNumber
-        )
+        Task { @MainActor in
+            await danmu.load(
+                title: item.Name ?? title,
+                seriesTitle: item.SeriesName,
+                episodeNumber: item.IndexNumber
+            )
+        }
 
         startTicker(player)
         startSubtitleStream(player)

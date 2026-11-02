@@ -261,13 +261,30 @@ struct FNOSHeroBanner: View {
     // MARK: 轮播页（纯展示海报，无焦点；翻页全部由按钮的 onMoveCommand 驱动）
 
     private func heroBackdrop(item: FNOSItem, index: Int, size: CGSize) -> some View {
-        FNOSAsyncImage(
-            url: client.heroImageURL(
-                item: item,
-                preferBackdrop: heroImageSource != "primary"
-            ),
-            headers: client.mediaHeaders
-        )
+        // 是否是竖版海报（无 Backdrop，或用户强制 Primary）
+        let preferBackdrop = heroImageSource != "primary"
+        let hasBackdrop = preferBackdrop && (item.ImageTags?["Backdrop"] != nil)
+        let url = client.heroImageURL(item: item, preferBackdrop: preferBackdrop)
+
+        return ZStack {
+            if !hasBackdrop {
+                // 竖版海报：底层放同图放大模糊 + 压暗，填满全屏不留黑边
+                FNOSAsyncImage(
+                    url: url,
+                    headers: client.mediaHeaders,
+                    contentMode: .fill
+                )
+                .blur(radius: 45)
+                .overlay(Color.black.opacity(0.45))
+            }
+
+            // 主图：有横图 → 铺满；只有竖图 → 等比完整显示（不裁掉主体）
+            FNOSAsyncImage(
+                url: url,
+                headers: client.mediaHeaders,
+                contentMode: hasBackdrop ? .fill : .fit
+            )
+        }
         // 106% 过扫描后裁到本页：任何容器/舍入情况下四边都不露黑边
         .frame(width: size.width * 1.06, height: size.height * 1.06)
         .frame(width: size.width, height: size.height)

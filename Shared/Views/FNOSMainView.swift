@@ -255,16 +255,16 @@ struct FNOSMainView: View {
     // MARK: - 海报墙（每行一个媒体库，横向滚动）
 
     private func shelf(_ section: FNOSLibrarySection, screenWidth: CGFloat) -> some View {
-        // ATV+ 版式：左右 72 边距，一屏正好 6 张，间距 36
+        // ATV+ 版式：左右 72 边距，一屏正好 6 张，间距与上下留白接近（28）
         let hPadding: CGFloat = 72
-        let spacing: CGFloat = 36
+        let spacing: CGFloat = 28
         let visibleCount: CGFloat = 6
         let tileWidth = max(
             140,
             (screenWidth - hPadding * 2 - spacing * (visibleCount - 1)) / visibleCount
         )
 
-        return VStack(alignment: .leading, spacing: 18) {
+        return VStack(alignment: .leading, spacing: 14) {
             Text(section.library.Name ?? "未命名")
                 .font(.title2.bold())
                 .padding(.horizontal, hPadding)
@@ -283,18 +283,22 @@ struct FNOSMainView: View {
                                 isFocused: isFocused
                             )
                         }
-                        .buttonStyle(.plain)
-                        // 关闭系统焦点特效，焦点视觉完全由 FNOSPosterTile 自绘
-                        .focusEffectDisabled()
+                        // 自定义 ButtonStyle：彻底去掉系统焦点板（ScrollView 内的 Button
+                        // 对 focusEffectDisabled 不生效，这是 tvOS 已知行为）
+                        .buttonStyle(FNOSBareButtonStyle())
                         // 每张卡注册独立焦点值（条目 Id 唯一，避免 Bool 歧义），供下键直达
                         .focused($shelfCardFocused, equals: item.Id)
                     }
                 }
                 .padding(.horizontal, hPadding)
                 // 给聚焦放大（1.06）与阴影留出空间，避免被 ScrollView 裁掉
-                .padding(.vertical, 28)
+                .padding(.vertical, 26)
+                // 双保险：把焦点特效关闭挂到内容容器上
+                .focusEffectDisabled()
             }
+            .focusEffectDisabled()
         }
+        .focusEffectDisabled()
     }
 
     // MARK: - 导航
@@ -474,7 +478,18 @@ struct FNOSHomeSettingsView: View {
     }
 }
 
-// MARK: - 媒体库海报瓦片（ATV+ 风格：无文字、圆角矩形、焦点放大 + 液态玻璃描边）
+// MARK: - 无焦点视觉按钮样式（彻底屏蔽 tvOS 系统焦点板）
+
+/// tvOS 的 .plain / .borderless 在 ScrollView 内仍会画系统焦点板（白圆角框）。
+/// 用空 ButtonStyle 让系统拿不到任何可绘制的 focus 外观。
+struct FNOSBareButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+// MARK: - 媒体库海报瓦片（ATV+ 风格：无文字、圆角矩形、焦点放大 + 液态玻璃高光）
 
 /// 纯海报瓦片：不显示标题/年份，聚焦时轻微放大 + 自绘玻璃描边。
 ///
@@ -501,7 +516,21 @@ fileprivate struct FNOSPosterTile: View {
         )
         .frame(width: width, height: height)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        .shadow(color: .black.opacity(isFocused ? 0.5 : 0), radius: isFocused ? 20 : 0, y: 8)
+        // 液态玻璃高光：聚焦时顶部斜向一层极淡白色渐变（模拟玻璃折射，不是描边）
+        .overlay(
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: isFocused
+                            ? [Color.white.opacity(0.22), Color.white.opacity(0.0)]
+                            : [Color.white.opacity(0.0), Color.white.opacity(0.0)],
+                        startPoint: .topLeading,
+                        endPoint: .center
+                    )
+                )
+                .allowsHitTesting(false)
+        )
+        .shadow(color: .black.opacity(isFocused ? 0.55 : 0), radius: isFocused ? 22 : 0, y: 10)
         .scaleEffect(isFocused ? 1.06 : 1.0)
         .animation(.easeOut(duration: 0.18), value: isFocused)
     }

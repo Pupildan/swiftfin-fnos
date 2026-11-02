@@ -529,13 +529,14 @@ fileprivate struct FNOSPosterTile: View {
         FNOSAsyncImage(
             url: client?.posterURL(
                 itemID: item.Id,
-                tag: item.ImageTags?["Primary"]
+                tag: item.ImageTags?["Primary"],
+                maxWidth: 360
             ),
             headers: client?.mediaHeaders ?? [:]
         )
         .frame(width: width, height: height)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        .shadow(color: .black.opacity(isFocused ? 0.55 : 0), radius: isFocused ? 22 : 0, y: 10)
+        .shadow(color: .black.opacity(isFocused ? 0.5 : 0), radius: isFocused ? 12 : 0, y: 6)
         .scaleEffect(isFocused ? 1.06 : 1.0)
         .animation(.easeOut(duration: 0.18), value: isFocused)
     }

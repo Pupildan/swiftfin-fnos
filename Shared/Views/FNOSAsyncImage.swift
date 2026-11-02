@@ -93,7 +93,6 @@ struct FNOSAsyncImage: View {
             case .loading:
                 Rectangle()
                     .fill(Color.white.opacity(0.06))
-                ProgressView()
             case .failed:
                 Rectangle()
                     .fill(Color.white.opacity(0.06))
@@ -109,10 +108,20 @@ struct FNOSAsyncImage: View {
                 }
             }
         }
-        .animation(.easeOut(duration: 0.25), value: phase)
+        .animation(.easeOut(duration: 0.35), value: phase)
         .task(id: url) {
-            // 关键：url 变化（翻页 / 刷新媒体库 / 视图被复用）先清空旧图，
-            // 否则新条目会短暂显示上一部电影的海报 = 图文错位。
+            guard let url else {
+                phase = .failed
+                return
+            }
+            // 缓存命中：同步显示，避免闪一下 loading（这是海报墙"转圈"卡顿的主因）
+            let key = url.absoluteString as NSString
+            if let cached = FNOSImageCache.shared.memory.object(forKey: key) {
+                image = cached
+                phase = .loaded
+                return
+            }
+            // 未命中才清空并展示占位
             image = nil
             phase = .loading
             await load()

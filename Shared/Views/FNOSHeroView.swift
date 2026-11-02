@@ -62,8 +62,8 @@ struct FNOSHeroBanner: View {
     @State private var previewKSOptions: KSOptions?
     @State private var previewKSSeeked = false
 
-    // 海报聚焦翻页
-    @FocusState private var imageFocused: Bool
+    // 海报聚焦翻页（按页索引绑定，避免 Bool 歧义命中屏幕外页面）
+    @FocusState private var focusedPage: Int?
     // 播放按钮焦点（海报按下键直达）
     @FocusState private var playButtonFocused: Bool
 
@@ -93,7 +93,7 @@ struct FNOSHeroBanner: View {
                 .frame(width: geo.size.width, height: geo.size.height)
                 .clipped()
                 .ignoresSafeArea()
-                .defaultFocus($imageFocused, true)
+                .defaultFocus($focusedPage, 0)
 
                 // ---- 智能预告视频层（海报之上、遮罩之下）----
                 if previewVisible, !previewUsesKS, let player = previewPlayer {
@@ -111,6 +111,7 @@ struct FNOSHeroBanner: View {
                                 guard previewUsesKS, previewVisible, !previewKSSeeked else { return }
                                 previewKSSeeked = true
                                 previewKSCoordinator.isMuted = true
+                                previewKSCoordinator.isScaleAspectFill = true
                                 // 总时长从 KSPlayer 拿（AVAsset 读不了 MKV）
                                 let total = Double(previewKSCoordinator.timemodel.totalTime)
                                 if total > 60 {
@@ -204,20 +205,21 @@ struct FNOSHeroBanner: View {
         .frame(width: size.width, height: size.height)
         .clipped()
         .focusable(index == currentIndex)
-        .focused($imageFocused)
+        .focused($focusedPage, equals: index)
         .onMoveCommand { direction in
             switch direction {
             case .left:
                 guard currentIndex > 0 else { return }
                 withAnimation(.easeInOut(duration: 0.35)) { currentIndex -= 1 }
-                // 翻页后旧海报被 disabled，焦点会掉进真空，必须立即拉回新海报
-                DispatchQueue.main.async { imageFocused = true }
+                // 立即把焦点精确移到新页海报（旧页已 disabled）
+                focusedPage = currentIndex
             case .right:
                 guard currentIndex < items.count - 1 else { return }
                 withAnimation(.easeInOut(duration: 0.35)) { currentIndex += 1 }
-                DispatchQueue.main.async { imageFocused = true }
+                focusedPage = currentIndex
             case .down:
                 // 下键直达按钮组
+                focusedPage = nil
                 playButtonFocused = true
             default:
                 break
@@ -339,6 +341,8 @@ struct FNOSHeroBanner: View {
                 previewPlayer = nil
                 previewUsesKS = true
                 previewKSSeeked = false
+                // 非全屏比例的片源也填充到全屏（官方 isScaleAspectFill 开关）
+                previewKSCoordinator.isScaleAspectFill = true
                 previewKSURL = url
                 previewKSOptions = options
                 previewItemID = item.Id

@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v26"
+    static let version = "v27"
 
     /// 本版主要变更摘要
-    static let changes = "Hero每日随机抽6部电影(排除剧集)；修复翻页后焦点丢失与下键导航"
+    static let changes = "焦点改按页索引绑定修复翻页失灵；预告画面填充全屏(isScaleAspectFill)"
 }

@@ -24,12 +24,12 @@ struct FNOSLibrarySection: Identifiable {
     var id: String { library.Id }
 }
 
-/// 飞牛影视（fnOS）主界面 —— Apple TV+ 式横向海报墙布局。
+/// 飞牛影视（fnOS）主界面 —— Apple TV+ 沉浸式布局。
 ///
-/// 性能要点（tvOS 焦点引擎最顺滑的组合）：
-/// - 纵向 LazyVStack 分行（每行一个媒体库），横向 ScrollView(.horizontal) + LazyHStack 海报墙；
-/// - 无任何 .blur / matchedGeometryEffect（大面积高斯模糊在 tvOS 必掉帧，已按用户要求彻底移除）；
-/// - 焦点表现全部交给原生 .buttonStyle(.card)。
+/// 沉浸式第一原则：
+/// - 无顶栏、无 URL、无日志输出，画面只有海报与内容；
+/// - Hero Banner 真·全屏铺满（含安全区），刷新/退出做成右上角半透明小图标；
+/// - 行卡片加大，全部 .buttonStyle(.card) 原生焦点质感。
 struct FNOSMainView: View {
 
     @ObservedObject var auth: FNOSAuthStore
@@ -37,28 +37,95 @@ struct FNOSMainView: View {
 
     @State private var client: FNOSDirectClient?
     @State private var userID = ""
-    @State private var serverDescription = ""
 
     @State private var sections: [FNOSLibrarySection] = []
-    @State private var logs: [String] = []
     @State private var isLoading = false
     @State private var didBootstrap = false
 
     @State private var playbackTarget: FNOSPlaybackTarget?
     @State private var seriesItem: FNOSItem?
 
-    private let cardWidth: CGFloat = 240
+    private let cardWidth: CGFloat = 300
 
     // MARK: - Body
 
     var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
+        GeometryReader { geo in
+            ZStack {
+                Color.black.ignoresSafeArea()
 
-            VStack(spacing: 0) {
-                topBar
-                shelves
-                logArea
+                if isLoading {
+                    VStack {
+                        Spacer()
+                        ProgressView("加载中…")
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if sections.isEmpty {
+                    VStack(spacing: 12) {
+                        Text("暂无内容")
+                            .font(.title3)
+                            .foregroundColor(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(spacing: 0) {
+                            // Apple TV+ 式全屏 Hero Banner（媒体库前 6 个条目）
+                            if !heroItems.isEmpty, let heroClient = client {
+                                FNOSHeroBanner(
+                                    items: Array(heroItems),
+                                    client: heroClient,
+                                    userID: userID,
+                                    onPlay: { item in
+                                        open(item: item)
+                                    },
+                                    onDetail: { item in
+                                        open(item: item)
+                                    }
+                                )
+                                .frame(width: geo.size.width, height: geo.size.height)
+                            }
+
+                            // 媒体库横向海报墙
+                            LazyVStack(alignment: .leading, spacing: 44) {
+                                ForEach(sections) { section in
+                                    shelf(section)
+                                }
+                            }
+                            .padding(.vertical, 40)
+                        }
+                    }
+                    .ignoresSafeArea()
+
+                    // 右上角悬浮小图标（半透明，不破坏画面）
+                    VStack {
+                        HStack(spacing: 22) {
+                            Spacer()
+                            Button {
+                                didBootstrap = false
+                                Task { await bootstrapIfNeeded() }
+                            } label: {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 22))
+                                    .foregroundColor(.white.opacity(0.6))
+                            }
+                            .buttonStyle(.plain)
+
+                            Button {
+                                auth.logout()
+                            } label: {
+                                Image(systemName: "rectangle.portrait.and.arrow.right")
+                                    .font(.system(size: 22))
+                                    .foregroundColor(.white.opacity(0.6))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.trailing, 36)
+                        .padding(.top, 24)
+                        Spacer()
+                    }
+                }
             }
         }
         .task {
@@ -79,85 +146,8 @@ struct FNOSMainView: View {
         }
     }
 
-    // MARK: - 毛玻璃顶栏（导航）
+    // MARK: - Hero Banner 数据：全部媒体库条目按序取前 6 个（须有海报）
 
-    private var topBar: some View {
-        HStack(spacing: 16) {
-            Text("FNOS v\(FNOSAdapterBuild.version)")
-                .font(.title3)
-                .bold()
-            Text(serverDescription)
-                .font(.footnote)
-                .foregroundColor(.secondary)
-                .lineLimit(1)
-            Spacer()
-            Button {
-                didBootstrap = false
-                Task { await bootstrapIfNeeded() }
-            } label: {
-                Label("刷新", systemImage: "arrow.clockwise")
-            }
-            Button {
-                auth.logout()
-            } label: {
-                Label("退出登录", systemImage: "rectangle.portrait.and.arrow.right")
-            }
-        }
-        .padding(.horizontal, 48)
-        .padding(.vertical, 14)
-        .background(.ultraThinMaterial)
-    }
-
-    // MARK: - 海报墙（每行一个媒体库，横向滚动）
-
-    @ViewBuilder
-    private var shelves: some View {
-        if isLoading {
-            VStack {
-                Spacer()
-                ProgressView("加载中…")
-                Spacer()
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else if sections.isEmpty {
-            VStack(spacing: 12) {
-                Text("暂无内容")
-                    .font(.title3)
-                    .foregroundColor(.secondary)
-                Text("请把下方日志拍照反馈")
-                    .font(.footnote)
-                    .foregroundColor(.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            ScrollView {
-                // Apple TV+ 式全屏 Hero Banner（媒体库前 6 个条目）
-                if !heroItems.isEmpty, let heroClient = client {
-                    FNOSHeroBanner(
-                        items: Array(heroItems),
-                        client: heroClient,
-                        userID: userID,
-                        onPlay: { item in
-                            open(item: item)
-                        },
-                        onDetail: { item in
-                            open(item: item)
-                        }
-                    )
-                    .frame(height: 640)
-                }
-
-                LazyVStack(alignment: .leading, spacing: 36) {
-                    ForEach(sections) { section in
-                        shelf(section)
-                    }
-                }
-                .padding(.vertical, 24)
-            }
-        }
-    }
-
-    /// Hero Banner 数据：全部媒体库条目按序取前 6 个（须有海报）
     private var heroItems: [FNOSItem] {
         sections
             .flatMap(\.items)
@@ -169,20 +159,16 @@ struct FNOSMainView: View {
             .map { $0 }
     }
 
+    // MARK: - 海报墙（每行一个媒体库，横向滚动）
+
     private func shelf(_ section: FNOSLibrarySection) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(spacing: 10) {
-                Text(section.library.Name ?? "未命名")
-                    .font(.title3)
-                    .bold()
-                Text("\(section.items.count)")
-                    .font(.footnote)
-                    .foregroundColor(.secondary)
-            }
-            .padding(.horizontal, 48)
+        VStack(alignment: .leading, spacing: 16) {
+            Text(section.library.Name ?? "未命名")
+                .font(.title2.bold())
+                .padding(.horizontal, 72)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 20) {
+                LazyHStack(spacing: 24) {
                     ForEach(section.items) { item in
                         Button {
                             open(item: item)
@@ -197,26 +183,10 @@ struct FNOSMainView: View {
                         #endif
                     }
                 }
-                .padding(.horizontal, 48)
-                .padding(.vertical, 4)
+                .padding(.horizontal, 72)
+                .padding(.vertical, 8)
             }
         }
-    }
-
-    // MARK: - 底部实时日志
-
-    private var logArea: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(Array(logs.suffix(3).enumerated()), id: \.offset) { _, line in
-                Text(line)
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundColor(.green.opacity(0.7))
-                    .lineLimit(1)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 48)
-        .padding(.vertical, 6)
     }
 
     // MARK: - 导航
@@ -231,7 +201,7 @@ struct FNOSMainView: View {
 
     private func openPlayback(item: FNOSItem) {
         guard let client else {
-            log("❗️客户端未初始化")
+            print("FNOS❗️客户端未初始化，无法播放")
             return
         }
         playbackTarget = FNOSPlaybackTarget(item: item, client: client, userID: userID)
@@ -248,14 +218,11 @@ struct FNOSMainView: View {
 
     @MainActor
     private func bootstrap() async {
-        log("启动 FNOS v\(FNOSAdapterBuild.version)")
+        print("FNOSℹ️启动 v\(FNOSAdapterBuild.version)")
 
         let baseURL = credentials.serverURL
         let token = credentials.token
         userID = credentials.userID
-        serverDescription = baseURL.absoluteString
-
-        log("服务器 \(serverDescription) · 令牌 \(token.count) 字符")
 
         let newClient = FNOSDirectClient(baseURL: baseURL, token: token)
         client = newClient
@@ -273,7 +240,7 @@ struct FNOSMainView: View {
             }
 
             let libraries = envelope.Items
-            log("✅ 媒体库 \(libraries.count) 个")
+            print("FNOSℹ️媒体库 \(libraries.count) 个")
 
             isLoading = true
 
@@ -283,10 +250,9 @@ struct FNOSMainView: View {
                 do {
                     let items = try await loadItems(for: library, client: newClient)
                     loaded.append(FNOSLibrarySection(library: library, items: items))
-                    log("✅ 「\(library.Name ?? "?")」\(items.count) 条")
+                    print("FNOSℹ️「\(library.Name ?? "?")」\(items.count) 条")
                 } catch {
                     print("FNOS❗️加载「\(library.Name ?? "?")」失败: \(error)")
-                    log("❗️「\(library.Name ?? "?")」加载失败: \(error.localizedDescription)")
                     loaded.append(FNOSLibrarySection(library: library, items: []))
                 }
                 sections = loaded
@@ -296,7 +262,6 @@ struct FNOSMainView: View {
         } catch {
             isLoading = false
             print("FNOS❗️加载媒体库失败: \(error)")
-            log("❗️媒体库加载失败: \(error.localizedDescription)")
         }
     }
 
@@ -322,15 +287,6 @@ struct FNOSMainView: View {
             throw FNOSDirectError("解析 /Items 失败: \(error.localizedDescription)")
         }
     }
-
-    @MainActor
-    private func log(_ line: String) {
-        print("FNOSℹ️ \(line)")
-        logs.append(line)
-        if logs.count > 40 {
-            logs.removeFirst(logs.count - 40)
-        }
-    }
 }
 
 // MARK: - 海报卡片（2:3，圆角 12，文字恒显）
@@ -341,7 +297,7 @@ fileprivate struct FNOSItemCard: View {
     let client: FNOSDirectClient?
 
     var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 10) {
             FNOSAsyncImage(
                 url: client?.posterURL(
                     itemID: item.Id,

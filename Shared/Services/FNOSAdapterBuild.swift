@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v22"
+    static let version = "v23"
 
     /// 本版主要变更摘要
-    static let changes = "纯色选中高亮+放大动画；ATV+ Hero轮播首页（3秒正片中间30秒预告）；加速快进快退10-120s"
+    static let changes = "沉浸式首页：去顶栏去日志、Hero真全屏铺满+暗角、信息左下角常驻、卡片加大"
 }

@@ -14,7 +14,7 @@ import SwiftUI
 extension FNOSDirectClient {
 
     /// Hero 大图 URL：优先 Backdrop（16:9 横图），退化用 Primary 海报
-    func heroImageURL(item: FNOSItem, maxWidth: Int = 1600) -> URL? {
+    func heroImageURL(item: FNOSItem, maxWidth: Int = 1920) -> URL? {
         let tags = item.ImageTags ?? [:]
         let imageType = tags["Backdrop"] != nil ? "Backdrop" : "Primary"
         guard let tag = tags[imageType], !tag.isEmpty else {
@@ -24,7 +24,7 @@ extension FNOSDirectClient {
         do {
             return try url(
                 path: "Items/\(item.Id)/Images/\(imageType)",
-                query: ["maxWidth": String(maxWidth), "quality": "85", "tag": tag]
+                query: ["maxWidth": String(maxWidth), "quality": "90", "tag": tag]
             )
         } catch {
             print("FNOS❗️Hero 图片 URL 构造失败 \(item.Id): \(error.localizedDescription)")
@@ -33,10 +33,11 @@ extension FNOSDirectClient {
     }
 }
 
-// MARK: - Apple TV+ 式全屏 Hero Banner（TabView 分页 + 渐变 + 智能视频预告）
+// MARK: - Apple TV+ 式全屏 Hero Banner
 
-/// 智能预告：切页 2 秒无操作后自动淡入静音循环视频（仅 AVPlayer 兼容容器）；
-/// 再次滑动立即停止。绝不动 KSPlayer 底层 —— 预告用原生 AVPlayer 独立实例。
+/// 结构与 ATV+ 一致：轮播页里只有图；标题/简介/按钮/遮罩/指示器全部是
+/// 叠在 TabView 之上的静态覆盖层（随 currentIndex 切换数据，不随页滑动）。
+/// 智能预告：3 秒无操作 → 独立 AVPlayer 静音播正片中间 30 秒 → 淡出回海报。
 struct FNOSHeroBanner: View {
 
     let items: [FNOSItem]
@@ -62,16 +63,18 @@ struct FNOSHeroBanner: View {
 
     var body: some View {
         GeometryReader { geo in
-            ZStack {
+            ZStack(alignment: .bottomLeading) {
+                // ---- 底层：全屏海报轮播（页内只有图）----
                 TabView(selection: $currentIndex) {
                     ForEach(Array(items.enumerated()), id: \.element.Id) { index, item in
-                        heroPage(item: item, isActive: index == currentIndex)
+                        heroBackdrop(item: item, size: geo.size)
                             .tag(index)
                     }
                 }
                 #if os(tvOS)
                     .tabViewStyle(.page(indexDisplayMode: .never))
                 #endif
+                .ignoresSafeArea()
                 .onMoveCommand { direction in
                     // 焦点在 Hero 内且左右无可移动目标时翻页
                     switch direction {
@@ -85,20 +88,52 @@ struct FNOSHeroBanner: View {
                         break
                     }
                 }
-                .task(id: currentIndex) {
-                    // 智能预告：3 秒无操作 → 正片中间 30 秒静音预览；滑动立即打断
-                    stopPreview()
-                    guard let item = current else { return }
-                    try? await Task.sleep(for: .seconds(3))
-                    guard !Task.isCancelled else { return }
-                    await startPreview(item: item)
-                    // 播 30 秒后淡出回海报
-                    try? await Task.sleep(for: .seconds(30))
-                    guard !Task.isCancelled else { return }
-                    stopPreview()
+
+                // ---- 智能预告视频层（海报之上、遮罩之下）----
+                if previewVisible, let player = previewPlayer {
+                    FNOSPreviewPlayerView(player: player)
+                        .ignoresSafeArea()
+                        .transition(.opacity)
                 }
 
-                // 自定义轮播指示器（底部正中 6 个白点）
+                // ---- 遮罩层：左黑右透 + 下黑上透 + 暗角 ----
+                LinearGradient(
+                    stops: [
+                        .init(color: .black.opacity(0.8), location: 0),
+                        .init(color: .black.opacity(0.4), location: 0.45),
+                        .init(color: .clear, location: 1),
+                    ],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+                .allowsHitTesting(false)
+
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: .black.opacity(0.75), location: 1),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .allowsHitTesting(false)
+
+                RadialGradient(
+                    colors: [.clear, .black.opacity(0.35)],
+                    center: .center,
+                    startRadius: geo.size.width * 0.3,
+                    endRadius: geo.size.width * 0.75
+                )
+                .allowsHitTesting(false)
+
+                // ---- 左下角：大标题 + 分类 + 简介 + 按钮组 ----
+                if let item = current {
+                    infoStack(item: item)
+                        .padding(.leading, 72)
+                        .padding(.bottom, 72)
+                }
+
+                // ---- 底部正中：轮播指示圆点 ----
                 HStack(spacing: 10) {
                     ForEach(items.indices, id: \.self) { index in
                         Circle()
@@ -107,139 +142,122 @@ struct FNOSHeroBanner: View {
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
-                .padding(.bottom, 18)
+                .padding(.bottom, 40)
                 .allowsHitTesting(false)
             }
-            .frame(height: geo.size.height)
+            .frame(width: geo.size.width, height: geo.size.height)
+            .animation(.easeInOut(duration: 0.3), value: currentIndex)
+        }
+        .task(id: currentIndex) {
+            // 智能预告：3 秒无操作 → 正片中间 30 秒静音预览；滑动立即打断
+            stopPreview()
+            guard let item = current else { return }
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            await startPreview(item: item)
+            // 播 30 秒后淡出回海报
+            try? await Task.sleep(for: .seconds(30))
+            guard !Task.isCancelled else { return }
+            stopPreview()
         }
         .onDisappear {
             stopPreview()
         }
     }
 
-    // MARK: 单页
+    // MARK: 轮播页（只有全屏海报图）
 
-    private func heroPage(item: FNOSItem, isActive: Bool) -> some View {
-        ZStack(alignment: .bottomLeading) {
-            // 底层：全屏海报大图
-            FNOSAsyncImage(
-                url: client.heroImageURL(item: item),
-                headers: client.mediaHeaders
-            )
-            .ignoresSafeArea()
+    private func heroBackdrop(item: FNOSItem, size: CGSize) -> some View {
+        FNOSAsyncImage(
+            url: client.heroImageURL(item: item),
+            headers: client.mediaHeaders
+        )
+        .frame(width: size.width, height: size.height)
+        .clipped()
+        .ignoresSafeArea()
+    }
 
-            // 智能预告视频层（海报之上、渐变之下）
-            if previewVisible, previewItemID == item.Id, let player = previewPlayer {
-                FNOSPreviewPlayerView(player: player)
-                    .ignoresSafeArea()
-                    .transition(.opacity)
+    // MARK: 左下角信息与操作区
+
+    private func infoStack(item: FNOSItem) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(item.Name ?? "未命名")
+                .font(.largeTitle.bold())
+                .lineLimit(2)
+                .foregroundColor(.white)
+
+            HStack(spacing: 12) {
+                Text(Self.categoryName(item))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 3)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 4)
+                            .stroke(.white.opacity(0.55), lineWidth: 1)
+                    )
+                if let year = item.ProductionYear {
+                    Text(String(year))
+                }
+            }
+            .font(.callout)
+            .foregroundColor(.white.opacity(0.85))
+
+            if let overview = item.Overview, !overview.isEmpty {
+                Text(overview)
+                    .font(.callout)
+                    .foregroundColor(.white.opacity(0.75))
+                    .lineLimit(2)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: 720, alignment: .leading)
             }
 
-            // 左侧深黑 → 右侧透明
-            LinearGradient(
-                stops: [
-                    .init(color: .black.opacity(0.85), location: 0),
-                    .init(color: .black.opacity(0.45), location: 0.45),
-                    .init(color: .clear, location: 1),
-                ],
-                startPoint: .leading,
-                endPoint: .trailing
-            )
-            .allowsHitTesting(false)
-
-            // 底部黑色渐变（文字清晰可见）
-            LinearGradient(
-                stops: [
-                    .init(color: .clear, location: 0),
-                    .init(color: .black.opacity(0.8), location: 1),
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-            .allowsHitTesting(false)
-
-            // 左下角信息与操作区
-            VStack(alignment: .leading, spacing: 14) {
-                Text(item.Name ?? "未命名")
-                    .font(.system(size: 52, weight: .bold))
-                    .lineLimit(2)
-
-                HStack(spacing: 12) {
-                    Text(Self.categoryName(item))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 3)
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(.white.opacity(0.55), lineWidth: 1)
-                        )
-                    if let year = item.ProductionYear {
-                        Text(String(year))
-                    }
+            HStack(spacing: 20) {
+                // ▶ 播放（剧集走选集，电影直进 KSPlayer+弹幕）
+                Button {
+                    onPlay(item)
+                } label: {
+                    Label(item.type == "Series" ? "选集" : "播放", systemImage: "play.fill")
+                        .font(.headline)
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 12)
                 }
-                .font(.callout)
-                .foregroundColor(.white.opacity(0.85))
+                #if os(tvOS)
+                    .buttonStyle(.card)
+                #endif
 
-                if let overview = item.Overview, !overview.isEmpty {
-                    Text(overview)
-                        .font(.callout)
-                        .foregroundColor(.white.opacity(0.75))
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: 760, alignment: .leading)
+                // + 稍后观看
+                Button {
+                    toggleWatchLater(item)
+                } label: {
+                    Label(
+                        isWatchLater(item) ? "已加入" : "稍后看",
+                        systemImage: isWatchLater(item) ? "checkmark.circle.fill" : "plus.circle"
+                    )
+                    .font(.headline)
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 12)
                 }
+                #if os(tvOS)
+                    .buttonStyle(.card)
+                #endif
 
-                HStack(spacing: 20) {
-                    // ▶ 播放
-                    Button {
-                        onPlay(item)
-                    } label: {
-                        Label(item.type == "Series" ? "选集" : "播放", systemImage: "play.fill")
-                            .font(.headline)
-                            .padding(.horizontal, 22)
-                            .padding(.vertical, 10)
-                    }
-                    #if os(tvOS)
-                        .buttonStyle(.card)
-                    #endif
-
-                    // + 稍后观看
-                    Button {
-                        toggleWatchLater(item)
-                    } label: {
-                        Label(
-                            isWatchLater(item) ? "已加入" : "稍后看",
-                            systemImage: isWatchLater(item) ? "checkmark.circle.fill" : "plus.circle"
-                        )
+                // 详情
+                Button {
+                    onDetail(item)
+                } label: {
+                    Label("详情", systemImage: "info.circle")
                         .font(.headline)
                         .padding(.horizontal, 18)
-                        .padding(.vertical, 10)
-                    }
-                    #if os(tvOS)
-                        .buttonStyle(.card)
-                    #endif
-
-                    // 详情
-                    Button {
-                        onDetail(item)
-                    } label: {
-                        Label("详情", systemImage: "info.circle")
-                            .font(.headline)
-                            .padding(.horizontal, 18)
-                            .padding(.vertical, 10)
-                    }
-                    #if os(tvOS)
-                        .buttonStyle(.card)
-                    #endif
+                        .padding(.vertical, 12)
                 }
-                .padding(.top, 4)
+                #if os(tvOS)
+                    .buttonStyle(.card)
+                #endif
             }
-            .padding(.leading, 64)
-            .padding(.bottom, 56)
-            .disabled(!isActive)
+            .padding(.top, 6)
         }
     }
 
-    // MARK: 智能预告（切页 2 秒无操作 → 静音循环视频）
+    // MARK: 智能预告（独立 AVPlayer，与正片 KSPlayer 完全隔离）
 
     @MainActor
     private func startPreview(item: FNOSItem) async {
@@ -249,7 +267,6 @@ struct FNOSHeroBanner: View {
         do {
             let source = try await client.playbackSource(itemID: item.Id, userID: userID)
             let container = (source.container ?? "").lowercased()
-            // 仅 AVPlayer 原生兼容容器（预告用独立 AVPlayer，与正片 KSPlayer 完全隔离）
             let playable = ["mp4", "mov", "m4v", "m3u8"].contains { container.contains($0) }
             guard playable else {
                 print("FNOSℹ️Hero 预告跳过（容器 \(container) 非 AVPlayer 原生兼容）")
@@ -275,7 +292,6 @@ struct FNOSHeroBanner: View {
             withAnimation(.easeIn(duration: 0.6)) {
                 previewVisible = true
             }
-            // 跳到正片中间开始播
             await player.seek(to: CMTime(seconds: total / 2, preferredTimescale: 600))
             player.play()
             print("FNOSℹ️Hero 预告开始: \(item.Name ?? "?") @\(Int(total / 2))s / 总长 \(Int(total))s")
@@ -321,7 +337,7 @@ struct FNOSHeroBanner: View {
     }
 }
 
-// MARK: - 原生 AVPlayerLayer 视图（预告专用，与正片 KSPlayer 完全隔离）
+// MARK: - 原生 AVPlayerLayer 视图（预告专用）
 
 struct FNOSPreviewPlayerView: UIViewRepresentable {
 

@@ -421,3 +421,109 @@ final class FNOSNativeClient {
         return text.count > 60 ? String(text.prefix(60)) : text
     }
 }
+
+
+// MARK: - mpv 引擎（实验）：飞牛原生直链解析
+//
+// 为什么单独一条链路：
+// - 兼容层 8005 的播放流要求 `X-Emby-Authorization` 头，该头的值含逗号
+//   （`MediaBrowser Client="…", Device="…"`），而 mpv 的 `http-header-fields`
+//   是以逗号分隔的多值选项，没法原样透传。
+// - 实测原生 `GET /v/api/v1/media/range/{media_guid}` **只需要 `Authorization: <token>`
+//   一个头**（纯十六进制，无逗号），且支持 Range 随机读取（1GB/3GB 处均返回 206）。
+// 所以 mpv 走原生直链：head 少、字段无逗号、seek 可行。
+
+extension FNOSNativeClient {
+
+    /// 一次播放直链解析的结果
+    struct MediaRange {
+        let url: URL
+        /// 原生条目 guid（诊断用）
+        let itemGUID: String
+        /// 媒体 guid（`media/range` 用）
+        let mediaGUID: String
+        let durationSeconds: Int?
+    }
+
+    /// 解析播放直链。
+    /// - 剧集：`seriesTitle` + `episodeNumber` → 剧集 guid → 季 guid → 该集 guid
+    /// - 电影：`itemTitle` → 条目 guid
+    func mediaRange(itemTitle: String?, seriesTitle: String?, episodeNumber: Int?) async -> MediaRange? {
+        let log = DebugLog()
+        var itemGUID: String?
+
+        // 1) 剧集走「剧名 → 季 → 集」，因为分集标题常常是空的（实测第 23 集 title 为空串）
+        if let seriesTitle, !seriesTitle.isEmpty, let episodeNumber {
+            if let hit = await searchItem(title: seriesTitle, isSeries: true, log: log) {
+                if let seasonGUID = await firstSeasonGUID(tvGuid: hit.guid, log: log) {
+                    itemGUID = await episodeGUID(seasonGuid: seasonGUID, number: episodeNumber, log: log)
+                }
+            }
+        }
+
+        // 2) 电影 / 兜底：按标题搜索
+        if itemGUID == nil, let itemTitle, !itemTitle.isEmpty {
+            if let hit = await searchItem(title: itemTitle, isSeries: false, log: log) {
+                itemGUID = hit.guid
+            }
+        }
+
+        guard let itemGUID else {
+            print("FNOS❗️mpv 直链解析：找不到条目 \(log.lines.joined(separator: " | "))")
+            return nil
+        }
+
+        // 3) play/info 换 media_guid
+        let body = "{\"item_guid\":\"\(Self.escape(itemGUID))\"}"
+        guard let json = try? await post(path: "api/v1/play/info", body: body),
+              let data = json["data"] as? [String: Any],
+              let mediaGUID = data["media_guid"] as? String,
+              !mediaGUID.isEmpty
+        else {
+            print("FNOS❗️mpv 直链解析：play/info 失败 \(itemGUID)")
+            return nil
+        }
+
+        let itemBlock = data["item"] as? [String: Any]
+        let duration = (itemBlock?["duration"] as? NSNumber)?.intValue
+
+        let base = baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        guard let url = URL(string: "\(base)/v/api/v1/media/range/\(mediaGUID)") else { return nil }
+
+        print("FNOS✅mpv 直链就绪 media=\(mediaGUID) item=\(itemGUID) \(log.lines.joined(separator: " | "))")
+        return MediaRange(url: url, itemGUID: itemGUID, mediaGUID: mediaGUID, durationSeconds: duration)
+    }
+
+    // MARK: - 私有步骤
+
+    /// 剧集 → 第一个季的 guid（`GET /v/api/v1/season/list/{tv_guid}`，只支持 GET）
+    private func firstSeasonGUID(tvGuid: String, log: DebugLog) async -> String? {
+        do {
+            let json = try await get(path: "api/v1/season/list/\(tvGuid)")
+            let list = Self.extractList(json["data"])
+            log.add("季:\(list.count)")
+            return list.first?["guid"] as? String
+        } catch {
+            log.add("季列表失败")
+            return nil
+        }
+    }
+
+    /// 季 → 第 N 集 guid（`GET /v/api/v1/episode/list/{season_guid}`）
+    private func episodeGUID(seasonGuid: String, number: Int, log: DebugLog) async -> String? {
+        do {
+            let json = try await get(path: "api/v1/episode/list/\(seasonGuid)")
+            let list = Self.extractList(json["data"])
+            log.add("集:\(list.count)")
+            let hit = list.first {
+                let n = ($0["episode_number"] as? NSNumber)?.intValue
+                    ?? ($0["index_number"] as? NSNumber)?.intValue
+                return n == number
+            }
+            return hit?["guid"] as? String
+        } catch {
+            log.add("分集列表失败")
+            return nil
+        }
+    }
+}

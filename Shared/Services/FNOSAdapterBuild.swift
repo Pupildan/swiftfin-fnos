@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v55"
+    static let version = "v56"
 
     /// 本版主要变更摘要
-    static let changes = "色彩识别改读解码轨实测(飞牛 VideoRangeType 常误报 SDR)；实测为杜比视界时运行时把显示模式请求改回 HDR10，避免电视按 DV 解普通 PQ 画面导致紫绿"
+    static let changes = "新增 mpv 引擎（MPVUI/gpu-next，libplacebo 做 DoVi P5 色彩转换），设置里可切换；mpv 走飞牛原生 media/range 直链（仅需 Authorization 头），实验阶段只提供画面/进度/快进快退"
 }

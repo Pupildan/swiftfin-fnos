@@ -448,6 +448,9 @@ struct FNOSHomeSettingsView: View {
     // 杜比视界按 HDR10 输出（规避紫绿偏色）
     @AppStorage("fnos.play.hdr10Compat") private var hdr10Compat = true
 
+    // 播放器引擎：默认 KSPlayer；开启后走 mpv（MPVUI），用于杜比视界 P5 的色彩转换
+    @AppStorage("fnos.play.engineMPV") private var engineMPV = false
+
     var body: some View {
         NavigationStack {
             Form {
@@ -494,13 +497,17 @@ struct FNOSHomeSettingsView: View {
                 }
 
                 Section {
+                    Toggle(isOn: $engineMPV) {
+                        Label("使用 mpv 引擎播放（实验）", systemImage: "play.rectangle")
+                    }
+
                     Toggle(isOn: $hdr10Compat) {
                         Label("杜比视界按 HDR10 输出", systemImage: "tv")
                     }
                 } header: {
                     Text("播放（色彩）")
                 } footer: {
-                    Text("飞牛片源的杜比视界走电视的杜比视界显示模式时会紫绿偏色，开启后改为按 HDR10 输出，由电视自己做色调映射。若某片反而更差可关掉对比。")
+                    Text("mpv 引擎用 libplacebo 做杜比视界 P5 的色彩转换，可根治紫绿偏色；实验阶段只提供画面、进度与快进快退，弹幕与换集条暂不接入。KSPlayer 的「按 HDR10 输出」只在未启用 mpv 时生效。")
                 }
 
                 Section {

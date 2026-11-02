@@ -269,6 +269,14 @@ struct FNOSPlayerContainerView: View {
     @State private var notice = "准备播放…"
     @State private var didSetup = false
 
+    // MARK: mpv 引擎（实验）—— 解决杜比视界 P5 偏色
+    /// 设置里可切换播放器引擎；默认仍走 KSPlayer，mpv 为实验路径
+    @AppStorage("fnos.play.engineMPV") private var useMPVEngine = false
+    /// mpv 用的原生直链（media/range，只需 Authorization 头）
+    @State private var mpvURL: URL?
+    @State private var mpvToken: String?
+    @State private var mpvNotice = "准备 mpv…"
+
     // 控制条状态
     @State private var controlsVisible = true
     @State private var hideTask: Task<Void, Never>?
@@ -292,6 +300,76 @@ struct FNOSPlayerContainerView: View {
     private let rateOptions: [Float] = [0.5, 1.0, 1.5, 2.0]
 
     var body: some View {
+        Group {
+            if useMPVEngine {
+                mpvLayer
+            } else {
+                ksLayer
+            }
+        }
+    }
+
+    // MARK: mpv 引擎入口
+
+    @ViewBuilder
+    private var mpvLayer: some View {
+        if let mpvURL, let mpvToken {
+            FNOSMPVPlayerView(
+                url: mpvURL,
+                title: item.Name ?? seriesName ?? "",
+                authToken: mpvToken
+            ) {
+                dismiss()
+            }
+        } else {
+            VStack(spacing: 12) {
+                ProgressView()
+                Text(mpvNotice)
+                    .font(.footnote)
+                    .foregroundColor(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(Color.black.ignoresSafeArea())
+            .task {
+                await prepareMPV()
+            }
+            .onExitCommand {
+                dismiss()
+            }
+        }
+    }
+
+    /// 解析原生直链：剧名 + 集数 → 季 → 集 → play/info → media/range
+    @MainActor
+    private func prepareMPV() async {
+        guard let credentials = FNOSAuthStore.shared.credentials else {
+            mpvNotice = "未登录"
+            return
+        }
+        guard let nativeToken = credentials.nativeToken, !nativeToken.isEmpty else {
+            mpvNotice = "缺少飞牛原生 token，请在设置里重新登录"
+            return
+        }
+
+        let native = FNOSNativeClient(baseURL: credentials.serverURL, token: nativeToken)
+        let series = item.SeriesName ?? seriesName
+
+        guard let range = await native.mediaRange(
+            itemTitle: item.Name,
+            seriesTitle: series,
+            episodeNumber: item.IndexNumber
+        ) else {
+            mpvNotice = "原生直链解析失败（设置里可切回 KSPlayer）"
+            return
+        }
+
+        mpvToken = nativeToken
+        mpvURL = range.url
+    }
+
+    // MARK: - KSPlayer 引擎（原稳定链路）
+
+    private var ksLayer: some View {
         ZStack(alignment: .bottom) {
             if let streamURL {
                 playerView(url: streamURL)

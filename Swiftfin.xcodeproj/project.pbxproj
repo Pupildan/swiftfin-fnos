@@ -77,6 +77,7 @@
 		E176EBE92D050925009F4CF1 /* CollectionVGrid in Frameworks */ = {isa = PBXBuildFile; productRef = E176EBE82D050925009F4CF1 /* CollectionVGrid */; };
 		E18D6AA62BAA96F000A0D167 /* CollectionHStack in Frameworks */ = {isa = PBXBuildFile; productRef = E18D6AA52BAA96F000A0D167 /* CollectionHStack */; };
 		E19005010000000000000001 /* MPVUI in Frameworks */ = {isa = PBXBuildFile; productRef = E19005010000000000000003 /* MPVUI */; };
+		E1900501000000000000000A /* MPVUI in Frameworks (tvOS) */ = {isa = PBXBuildFile; productRef = E19005010000000000000004 /* MPVUI */; };
 		E19005020000000000000001 /* MediaAccessibilityKit in Frameworks */ = {isa = PBXBuildFile; productRef = E19005020000000000000003 /* MediaAccessibilityKit */; };
 		E19009260000000000000001 /* SwiftfinMacros in Frameworks */ = {isa = PBXBuildFile; productRef = E19009260000000000000003 /* SwiftfinMacros */; };
 		E19010180000000000000001 /* GoogleCastDynamic in Frameworks */ = {isa = PBXBuildFile; productRef = E19010180000000000000002 /* GoogleCastDynamic */; };
@@ -215,6 +216,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				E19005070000000000000003 /* KSPlayer in Frameworks */,
+				E1900501000000000000000A /* MPVUI in Frameworks (tvOS) */,
 				62666E1727E501CC00EC0ECD /* CFNetwork.framework in Frameworks */,
 				62666E3227E5021E00EC0ECD /* UIKit.framework in Frameworks */,
 				62666E2A27E5020A00EC0ECD /* OpenGLES.framework in Frameworks */,
@@ -417,6 +419,7 @@
 			name = "Swiftfin tvOS";
 			packageProductDependencies = (
 				E19005070000000000000002 /* KSPlayer */,
+				E19005010000000000000004 /* MPVUI */,
 			);
 			productName = "JellyfinPlayer tvOS";
 			productReference = 535870602669D21600D05A09 /* Swiftfin.app */;

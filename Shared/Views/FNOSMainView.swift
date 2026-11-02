@@ -56,8 +56,6 @@ struct FNOSMainView: View {
     // Hero 快照：只在 bootstrap / 刷新时赋值一次，绝不在 body 渲染中重新洗牌（洗牌会图文错位）
     @State private var heroSnapshot: [FNOSItem] = []
 
-    private let cardWidth: CGFloat = 300
-
     // MARK: - Body
 
     var body: some View {
@@ -114,7 +112,7 @@ struct FNOSMainView: View {
                                 // 媒体库横向海报墙（非懒容器：保证屏外行存在，焦点引擎才有落点）
                                 VStack(alignment: .leading, spacing: 44) {
                                     ForEach(sections) { section in
-                                        shelf(section)
+                                        shelf(section, screenWidth: geo.size.width)
                                     }
                                 }
                                 .padding(.vertical, 40)
@@ -256,32 +254,45 @@ struct FNOSMainView: View {
 
     // MARK: - 海报墙（每行一个媒体库，横向滚动）
 
-    private func shelf(_ section: FNOSLibrarySection) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+    private func shelf(_ section: FNOSLibrarySection, screenWidth: CGFloat) -> some View {
+        // ATV+ 版式：左右 72 边距，一屏正好 6 张，间距 36
+        let hPadding: CGFloat = 72
+        let spacing: CGFloat = 36
+        let visibleCount: CGFloat = 6
+        let tileWidth = max(
+            140,
+            (screenWidth - hPadding * 2 - spacing * (visibleCount - 1)) / visibleCount
+        )
+
+        return VStack(alignment: .leading, spacing: 18) {
             Text(section.library.Name ?? "未命名")
                 .font(.title2.bold())
-                .padding(.horizontal, 72)
+                .padding(.horizontal, hPadding)
 
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 24) {
+                LazyHStack(spacing: spacing) {
                     ForEach(section.items) { item in
+                        let isFocused = shelfCardFocused == item.Id
                         Button {
                             open(item: item)
                         } label: {
-                            FNOSItemCard(item: item, client: client)
-                                .frame(width: cardWidth)
+                            FNOSPosterTile(
+                                item: item,
+                                client: client,
+                                width: tileWidth,
+                                isFocused: isFocused
+                            )
                         }
-                        #if os(tvOS)
-                            .buttonStyle(.card)
-                        #else
-                            .buttonStyle(.plain)
-                        #endif
+                        .buttonStyle(.plain)
+                        // 关闭系统焦点特效，焦点视觉完全由 FNOSPosterTile 自绘
+                        .focusEffectDisabled()
                         // 每张卡注册独立焦点值（条目 Id 唯一，避免 Bool 歧义），供下键直达
                         .focused($shelfCardFocused, equals: item.Id)
                     }
                 }
-                .padding(.horizontal, 72)
-                .padding(.vertical, 8)
+                .padding(.horizontal, hPadding)
+                // 给聚焦放大（1.06）与阴影留出空间，避免被 ScrollView 裁掉
+                .padding(.vertical, 28)
             }
         }
     }
@@ -463,7 +474,73 @@ struct FNOSHomeSettingsView: View {
     }
 }
 
-// MARK: - 海报卡片（2:3，圆角 12，文字恒显）
+// MARK: - 媒体库海报瓦片（ATV+ 风格：无文字、圆角矩形、焦点放大 + 液态玻璃描边）
+
+/// 纯海报瓦片：不显示标题/年份，聚焦时轻微放大 + 自绘玻璃描边。
+///
+/// 注意：这里刻意不用系统 glassEffect / Material ——
+/// tvOS 焦点引擎检测到材质会在聚焦视图上叠系统高亮板（HANDOVER 红线 5）。
+/// 玻璃感全部由「渐变描边 + 顶部高光 + 阴影」自绘实现。
+fileprivate struct FNOSPosterTile: View {
+
+    let item: FNOSItem
+    let client: FNOSDirectClient?
+    let width: CGFloat
+    let isFocused: Bool
+
+    private var height: CGFloat { width * 3 / 2 }
+    private var cornerRadius: CGFloat { 14 }
+
+    var body: some View {
+        FNOSAsyncImage(
+            url: client?.posterURL(
+                itemID: item.Id,
+                tag: item.ImageTags?["Primary"]
+            ),
+            headers: client?.mediaHeaders ?? [:]
+        )
+        .frame(width: width, height: height)
+        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        // 液态玻璃描边：聚焦时白色高光渐变边框，非聚焦时几乎不可见
+        .overlay(
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .strokeBorder(
+                    LinearGradient(
+                        colors: isFocused
+                            ? [
+                                Color.white.opacity(0.95),
+                                Color.white.opacity(0.45),
+                                Color.white.opacity(0.85),
+                            ]
+                            : [Color.white.opacity(0.05), Color.white.opacity(0.05)],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ),
+                    lineWidth: isFocused ? 3 : 1
+                )
+        )
+        // 玻璃折射高光：顶部极淡白色渐变
+        .overlay(
+            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color.white.opacity(isFocused ? 0.16 : 0),
+                            Color.white.opacity(0),
+                        ],
+                        startPoint: .top,
+                        endPoint: .center
+                    )
+                )
+                .allowsHitTesting(false)
+        )
+        .shadow(color: .black.opacity(isFocused ? 0.6 : 0), radius: isFocused ? 24 : 0, y: 10)
+        .scaleEffect(isFocused ? 1.06 : 1.0)
+        .animation(.easeOut(duration: 0.18), value: isFocused)
+    }
+}
+
+// MARK: - 海报卡片（2:3，圆角 12，文字恒显）—— 剧集选集用
 
 fileprivate struct FNOSItemCard: View {
 

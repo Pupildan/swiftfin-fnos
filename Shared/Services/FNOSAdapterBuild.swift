@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v41"
+    static let version = "v42"
 
     /// 本版主要变更摘要
-    static let changes = "修复详情页播放失败(播放器改在详情页内打开，避免 cover 竞态取消请求)；详情页背景剧照每2秒轮播；删除关于区块；演员卡片加高显示完整角色名；Hero 按钮去掉外描边"
+    static let changes = "修复详情页背景图加载失败(修正 Backdrop 路径)；新增剧集详情页选集功能：1-10集分段+1:1复刻剧集卡片；主按钮改为播放第1集"
 }

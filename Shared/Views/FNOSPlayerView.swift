@@ -42,6 +42,7 @@ extension FNOSDirectClient {
         var mediaSourceID: String?
         var container: String?
         var runTimeTicks: Int64?
+        var backdropTags: [String]?
         var people: [FNOSPerson] = []
     }
 
@@ -72,6 +73,7 @@ extension FNOSDirectClient {
 
         var detail = FNOSItemDetail()
         detail.runTimeTicks = (root["RunTimeTicks"] as? NSNumber)?.int64Value
+        detail.backdropTags = root["BackdropImageTags"] as? [String]
 
         if let sources = root["MediaSources"] as? [[String: Any]], let first = sources.first {
             detail.mediaSourceID = (first["Id"] as? String) ?? (first["id"] as? String)

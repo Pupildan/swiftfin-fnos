@@ -158,6 +158,9 @@ struct FNOSItem: Decodable, Identifiable {
     let RunTimeTicks: Int64?
     let OfficialRating: String?
     let Genres: [String]?
+    // 剧集排序用的序号
+    let ParentIndexNumber: Int?
+    let IndexNumber: Int?
 
     var id: String { Id }
     var type: String? { ItemType }
@@ -168,6 +171,7 @@ struct FNOSItem: Decodable, Identifiable {
         case ItemType = "Type"
         case ProductionYear, Overview, ImageTags, BackdropImageTags
         case RunTimeTicks, OfficialRating, Genres
+        case ParentIndexNumber, IndexNumber
     }
 }
 

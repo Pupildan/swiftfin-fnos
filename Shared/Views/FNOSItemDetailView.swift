@@ -32,6 +32,14 @@ struct FNOSItemDetailView: View {
     @State private var loadError: String?
     // 从海报提取的主色（动态液态玻璃背景）
     @State private var themeColor: Color?
+    @State private var fetchedBackdropTags: [String]?
+
+    // 剧集选集状态
+    @State private var episodes: [FNOSItem] = []
+    @State private var episodeChunks: [[FNOSItem]] = []
+    @State private var selectedChunkIndex = 0
+    @FocusState private var focusedChunk: Int?
+    @FocusState private var focusedEpisode: String?
 
     // 三个按钮的焦点
     private enum DetailButton { case play, plus, info }
@@ -42,10 +50,17 @@ struct FNOSItemDetailView: View {
         guard let client else { return [] }
         var urls: [URL] = []
 
-        if let tags = item.BackdropImageTags, !tags.isEmpty {
+        // 优先使用详情接口返回的最新 tags，如果为空再退回列表传进来的 item
+        let tags = fetchedBackdropTags ?? item.BackdropImageTags
+
+        if let tags, !tags.isEmpty {
             for (index, tag) in tags.enumerated() where !tag.isEmpty {
+                // 飞牛只支持不带 index 后缀的 Backdrop 接口
+                let path = index == 0
+                    ? "Items/\(item.Id)/Images/Backdrop"
+                    : "Items/\(item.Id)/Images/Backdrop/\(index)"
                 if let url = try? client.url(
-                    path: "Items/\(item.Id)/Images/Backdrop/\(index)",
+                    path: path,
                     query: ["maxWidth": "1920", "quality": "90", "tag": tag]
                 ) {
                     urls.append(url)
@@ -128,6 +143,12 @@ struct FNOSItemDetailView: View {
                     ScrollView(.vertical, showsIndicators: false) {
                         VStack(spacing: 0) {
                             heroSection(size: geo.size, proxy: proxy)
+
+                            if item.type == "Series" && !episodeChunks.isEmpty {
+                                episodeSection
+                                    .padding(.top, 20)
+                                    .padding(.bottom, 10)
+                            }
 
                             infoSection
                                 .padding(.horizontal, 60)
@@ -281,7 +302,7 @@ struct FNOSItemDetailView: View {
                     detailButton(.play, isPrimary: true) {
                         playNow()
                     } label: {
-                        Text(item.type == "Series" ? "选集" : "立即播放")
+                        Text(item.type == "Series" ? "播放第 1 集" : "立即播放")
                             .font(.system(size: 21, weight: .semibold))
                     }
                     .onMoveCommand { direction in
@@ -354,6 +375,138 @@ struct FNOSItemDetailView: View {
         .buttonStyle(FNOSBareButtonStyle())
         .focused($focusedButton, equals: id)
         .focusEffectDisabled()
+    }
+
+    // MARK: - 剧集选集区域
+
+    private var episodeSection: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            // 10 集为一组的分段标签
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 16) {
+                    ForEach(Array(episodeChunks.enumerated()), id: \.offset) { index, chunk in
+                        if let first = chunk.first, let last = chunk.last {
+                            let start = first.IndexNumber ?? (index * 10 + 1)
+                            let end = last.IndexNumber ?? ((index + 1) * 10)
+                            let isSelected = selectedChunkIndex == index
+                            let isFocused = focusedChunk == index
+                            Button {
+                                withAnimation { selectedChunkIndex = index }
+                            } label: {
+                                Text("\(start)-\(end)集")
+                                    .font(.system(size: 18, weight: .medium))
+                                    .foregroundColor(isFocused ? .black : .white)
+                                    .padding(.horizontal, 20)
+                                    .padding(.vertical, 8)
+                                    .background(
+                                        Capsule().fill(
+                                            isFocused ? Color.white :
+                                            (isSelected ? Color.white.opacity(0.25) : Color.white.opacity(0.08))
+                                        )
+                                    )
+                            }
+                            .buttonStyle(FNOSBareButtonStyle())
+                            .focusEffectDisabled()
+                            .focused($focusedChunk, equals: index)
+                        }
+                    }
+                }
+                .padding(.horizontal, 60)
+                .padding(.vertical, 8)
+            }
+
+            // 集数卡片列表
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 24) {
+                    let chunk = episodeChunks[selectedChunkIndex]
+                    ForEach(chunk) { ep in
+                        let isFocused = focusedEpisode == ep.Id
+                        Button {
+                            playEpisode(ep)
+                        } label: {
+                            episodeCard(ep: ep, isFocused: isFocused)
+                        }
+                        .buttonStyle(FNOSBareButtonStyle())
+                        .focusEffectDisabled()
+                        .focused($focusedEpisode, equals: ep.Id)
+                    }
+                }
+                .padding(.horizontal, 60)
+                .padding(.vertical, 16)
+            }
+        }
+    }
+
+    private func episodeCard(ep: FNOSItem, isFocused: Bool) -> some View {
+        VStack(spacing: 0) {
+            // 剧照与时长
+            ZStack(alignment: .bottomTrailing) {
+                FNOSAsyncImage(
+                    url: client?.posterURL(itemID: ep.Id, tag: ep.ImageTags?["Primary"], maxWidth: 600),
+                    headers: client?.mediaHeaders ?? [:],
+                    contentMode: .fill
+                )
+                .frame(width: 460, height: 260)
+                .clipped()
+
+                if let duration = ep.durationString {
+                    Text(duration)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(Capsule().fill(Color.black.opacity(0.65)))
+                        .padding(14)
+                }
+            }
+
+            // 文本区域
+            VStack(alignment: .leading, spacing: 8) {
+                Text("第 \(ep.IndexNumber ?? 0) 集")
+                    .font(.system(size: 14))
+                    .foregroundColor(.white.opacity(0.5))
+
+                Text(ep.Name ?? "未命名")
+                    .font(.system(size: 20, weight: .bold))
+                    .foregroundColor(.white)
+                    .lineLimit(1)
+
+                if let overview = ep.Overview, !overview.isEmpty {
+                    Text(overview)
+                        .font(.system(size: 14))
+                        .foregroundColor(.white.opacity(0.6))
+                        .lineLimit(3)
+                        .multilineTextAlignment(.leading)
+                        .frame(height: 60, alignment: .top)
+                } else {
+                    Spacer().frame(height: 60)
+                }
+
+                HStack {
+                    if let year = ep.ProductionYear {
+                        Text("\(year)")
+                            .font(.system(size: 14))
+                            .foregroundColor(.white.opacity(0.5))
+                    }
+                    Spacer()
+                    if let rating = ep.OfficialRating {
+                        Text(rating)
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 2)
+                            .background(RoundedRectangle(cornerRadius: 3).fill(Color.yellow))
+                    }
+                }
+                .padding(.top, 4)
+            }
+            .padding(24)
+            .frame(width: 460, alignment: .leading)
+            .background(isFocused ? Color.white.opacity(0.2) : Color.white.opacity(0.08))
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .scaleEffect(isFocused ? 1.03 : 1.0)
+        .animation(.easeOut(duration: 0.16), value: isFocused)
     }
 
     // MARK: - 下方信息区块
@@ -454,10 +607,34 @@ struct FNOSItemDetailView: View {
             mediaSourceID = detail.mediaSourceID
             runtimeTicks = detail.runTimeTicks
             people = detail.people
+            if let tags = detail.backdropTags, !tags.isEmpty {
+                fetchedBackdropTags = tags
+            }
             if mediaSourceID == nil {
                 loadError = "未获取到媒体源"
             }
             print("FNOSℹ️详情 \(item.Name ?? "?") 时长ticks=\(runtimeTicks ?? -1) 源=\(mediaSourceID ?? "nil") 演员=\(people.count)")
+
+            // 如果是剧集，请求所有集数
+            if item.type == "Series" {
+                let epsData = try await client.get(
+                    path: "Shows/\(item.Id)/Episodes",
+                    query: ["Fields": "PrimaryImageAspectRatio,ProductionYear,Overview,RunTimeTicks,OfficialRating,ParentIndexNumber,IndexNumber"]
+                )
+                let epsEnvelope = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: epsData)
+                let sortedEps = epsEnvelope.Items.sorted { a, b in
+                    let sa = a.ParentIndexNumber ?? 0
+                    let sb = b.ParentIndexNumber ?? 0
+                    if sa != sb { return sa < sb }
+                    return (a.IndexNumber ?? 0) < (b.IndexNumber ?? 0)
+                }
+                episodes = sortedEps
+                // 按 10 集分块
+                episodeChunks = stride(from: 0, to: sortedEps.count, by: 10).map {
+                    Array(sortedEps[$0..<min($0 + 10, sortedEps.count)])
+                }
+                print("FNOSℹ️剧集 \(item.Name ?? "?") 共 \(sortedEps.count) 集，分 \(episodeChunks.count) 组")
+            }
 
             // 从海报提取主题色（失败就保持黑底，不影响功能）
             if let url = backdropURL {
@@ -471,7 +648,11 @@ struct FNOSItemDetailView: View {
 
     private func playNow() {
         if item.type == "Series" {
-            onEpisodes(item)
+            if let first = episodes.first {
+                playEpisode(first)
+            } else {
+                loadError = "暂无剧集数据"
+            }
             return
         }
         guard let client else {
@@ -479,8 +660,12 @@ struct FNOSItemDetailView: View {
             return
         }
         loadError = nil
-        // 在本页内打开播放器（详情页不关闭），彻底避免 cover 竞态导致请求被取消
         playbackTarget = FNOSPlaybackTarget(item: item, client: client, userID: userID)
+    }
+
+    private func playEpisode(_ ep: FNOSItem) {
+        guard let client else { return }
+        playbackTarget = FNOSPlaybackTarget(item: ep, client: client, userID: userID)
     }
 
     @AppStorage("fnos.watchlater") private var watchLaterIDs = ""

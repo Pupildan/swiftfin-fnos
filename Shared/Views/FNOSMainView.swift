@@ -160,12 +160,8 @@ struct FNOSMainView: View {
                 item: item,
                 client: client,
                 userID: userID,
-                onEpisodes: { series in
-                    // 剧集才需要回主页弹选集面板；电影在详情页内直接播放
-                    detailItem = nil
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                        seriesItem = series
-                    }
+                onEpisodes: { _ in
+                    // 剧集现在直接在详情页内选集，不再回调
                 }
             )
         }

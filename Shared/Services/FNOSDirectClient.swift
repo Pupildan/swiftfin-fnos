@@ -153,6 +153,11 @@ struct FNOSItem: Decodable, Identifiable {
     let ProductionYear: Int?
     let Overview: String?
     let ImageTags: [String: String]?
+    // Jellyfin/Emby 标准：Backdrop 的 tag 在独立数组里，不在 ImageTags 字典中
+    let BackdropImageTags: [String]?
+    let RunTimeTicks: Int64?
+    let OfficialRating: String?
+    let Genres: [String]?
 
     var id: String { Id }
     var type: String? { ItemType }
@@ -161,6 +166,22 @@ struct FNOSItem: Decodable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case Id, Name
         case ItemType = "Type"
-        case ProductionYear, Overview, ImageTags
+        case ProductionYear, Overview, ImageTags, BackdropImageTags
+        case RunTimeTicks, OfficialRating, Genres
+    }
+}
+
+extension FNOSItem {
+    /// 时长展示文案（RunTimeTicks 单位为 100 纳秒）
+    var durationString: String? {
+        guard let ticks = RunTimeTicks, ticks > 0 else { return nil }
+        let seconds = ticks / 10_000_000
+        let hours = seconds / 3600
+        let minutes = (seconds % 3600) / 60
+        if hours > 0 {
+            return minutes > 0 ? "\(hours) 小时 \(minutes) 分钟" : "\(hours) 小时"
+        } else {
+            return "\(minutes) 分钟"
+        }
     }
 }

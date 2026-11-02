@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v37"
+    static let version = "v38"
 
     /// 本版主要变更摘要
-    static let changes = "海报墙彻底移除系统焦点白框(自定义 ButtonStyle)、间距与上下留白一致、聚焦改为液态玻璃高光；Hero 竖版海报改用等比显示+模糊背景填充，不再被裁成一条"
+    static let changes = "新增影视详情页(1:1 复刻 Apple TV+)；修复 Hero 一直拿不到横版大图的 bug(Backdrop tag 在 BackdropImageTags 数组)；海报改后台解码消除切换卡顿；去掉无效的液态玻璃高光"
 }

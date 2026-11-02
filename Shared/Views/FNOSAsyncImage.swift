@@ -151,7 +151,20 @@ struct FNOSAsyncImage: View {
             guard (200..<300).contains(http.statusCode) else {
                 throw FNOSDirectError("海报 HTTP \(http.statusCode): \(url.absoluteString)")
             }
-            guard let decoded = UIImage(data: data) else {
+            // 后台解码：UIImage(data:) 的解码发生在首次绘制时（主线程），
+            // 大图会让滚动/翻页掉帧。这里用 ImageIO 在后台线程完成解码。
+            let imageData = data
+            let decodedImage = await Task.detached(priority: .userInitiated) { () -> UIImage? in
+                guard let sourceData = imageData as NSData?,
+                      let source = CGImageSourceCreateWithData(sourceData, nil),
+                      let cgImage = CGImageSourceCreateImageAtIndex(source, 0, nil)
+                else {
+                    return UIImage(data: imageData)
+                }
+                return UIImage(cgImage: cgImage)
+            }.value
+
+            guard let decoded = decodedImage else {
                 throw FNOSDirectError("海报解码失败: \(url.absoluteString)")
             }
 

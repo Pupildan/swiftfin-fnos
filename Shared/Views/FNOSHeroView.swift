@@ -22,18 +22,25 @@ extension FNOSDirectClient {
     /// - preferBackdrop = false：强制 Primary 海报（当飞牛刮削的 Backdrop 挂错电影时可切换规避）
     func heroImageURL(item: FNOSItem, maxWidth: Int = 1920, preferBackdrop: Bool = true) -> URL? {
         let tags = item.ImageTags ?? [:]
-        let imageType: String
-        if preferBackdrop, tags["Backdrop"] != nil {
+        var imageType = "Primary"
+        var imageTag: String?
+
+        // 关键修复：Backdrop 的 tag 在独立的 BackdropImageTags 数组里，
+        // 之前错误地在 ImageTags 字典里找 "Backdrop"，永远是 nil → 一直退化成竖版海报。
+        let backdropTag = item.BackdropImageTags?.first
+
+        if preferBackdrop, let backdropTag, !backdropTag.isEmpty {
             imageType = "Backdrop"
-        } else if tags["Primary"] != nil {
+            imageTag = backdropTag
+        } else if let primaryTag = tags["Primary"], !primaryTag.isEmpty {
             imageType = "Primary"
-        } else if tags["Backdrop"] != nil {
+            imageTag = primaryTag
+        } else if let backdropTag, !backdropTag.isEmpty {
             imageType = "Backdrop"
-        } else {
-            print("FNOS❗️Hero 无可用图片: \(item.Name ?? "?")")
-            return nil
+            imageTag = backdropTag
         }
-        guard let tag = tags[imageType], !tag.isEmpty else {
+
+        guard let tag = imageTag else {
             print("FNOS❗️Hero 无可用图片: \(item.Name ?? "?")")
             return nil
         }
@@ -263,7 +270,7 @@ struct FNOSHeroBanner: View {
     private func heroBackdrop(item: FNOSItem, index: Int, size: CGSize) -> some View {
         // 是否是竖版海报（无 Backdrop，或用户强制 Primary）
         let preferBackdrop = heroImageSource != "primary"
-        let hasBackdrop = preferBackdrop && (item.ImageTags?["Backdrop"] != nil)
+        let hasBackdrop = preferBackdrop && (item.BackdropImageTags?.isEmpty == false)
         let url = client.heroImageURL(item: item, preferBackdrop: preferBackdrop)
 
         return ZStack {

@@ -44,6 +44,8 @@ struct FNOSMainView: View {
 
     @State private var playbackTarget: FNOSPlaybackTarget?
     @State private var seriesItem: FNOSItem?
+    // 影视详情页（1:1 复刻 ATV+）
+    @State private var detailItem: FNOSItem?
 
     // 首页设置面板（刷新/退出集成在内）
     @State private var showSettings = false
@@ -151,6 +153,24 @@ struct FNOSMainView: View {
         }
         .fullScreenCover(item: $playbackTarget) { target in
             FNOSPlayerContainerView(item: target.item, client: target.client, userID: target.userID)
+        }
+        .fullScreenCover(item: $detailItem) { item in
+            FNOSItemDetailView(
+                item: item,
+                client: client,
+                onPlay: {
+                    detailItem = nil
+                    if item.type == "Series" {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                            seriesItem = item
+                        }
+                    } else {
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                            openPlayback(item: item)
+                        }
+                    }
+                }
+            )
         }
         .sheet(isPresented: $showSettings) {
             FNOSHomeSettingsView(
@@ -304,11 +324,8 @@ struct FNOSMainView: View {
     // MARK: - 导航
 
     private func open(item: FNOSItem) {
-        if item.type == "Series" {
-            seriesItem = item
-        } else {
-            openPlayback(item: item)
-        }
+        // 统一进入详情页，详情页里的播放按钮再决定是直播还是选集
+        detailItem = item
     }
 
     private func openPlayback(item: FNOSItem) {
@@ -391,7 +408,7 @@ struct FNOSMainView: View {
                 "Limit": "100",
                 "SortBy": "SortName",
                 "SortOrder": "Ascending",
-                "Fields": "PrimaryImageAspectRatio,ProductionYear,Overview",
+                "Fields": "PrimaryImageAspectRatio,ProductionYear,Overview,BackdropImageTags,RunTimeTicks,OfficialRating,Genres",
             ]
         )
 
@@ -516,20 +533,6 @@ fileprivate struct FNOSPosterTile: View {
         )
         .frame(width: width, height: height)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        // 液态玻璃高光：聚焦时顶部斜向一层极淡白色渐变（模拟玻璃折射，不是描边）
-        .overlay(
-            RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .fill(
-                    LinearGradient(
-                        colors: isFocused
-                            ? [Color.white.opacity(0.22), Color.white.opacity(0.0)]
-                            : [Color.white.opacity(0.0), Color.white.opacity(0.0)],
-                        startPoint: .topLeading,
-                        endPoint: .center
-                    )
-                )
-                .allowsHitTesting(false)
-        )
         .shadow(color: .black.opacity(isFocused ? 0.55 : 0), radius: isFocused ? 22 : 0, y: 10)
         .scaleEffect(isFocused ? 1.06 : 1.0)
         .animation(.easeOut(duration: 0.18), value: isFocused)

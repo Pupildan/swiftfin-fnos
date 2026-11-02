@@ -422,7 +422,6 @@ final class FNOSNativeClient {
     }
 }
 
-
 // MARK: - mpv 引擎（实验）：飞牛原生直链解析
 //
 // 为什么单独一条链路：
@@ -431,32 +430,41 @@ final class FNOSNativeClient {
 //   是以逗号分隔的多值选项，没法原样透传。
 // - 实测原生 `GET /v/api/v1/media/range/{media_guid}` **只需要 `Authorization: <token>`
 //   一个头**（纯十六进制，无逗号），且支持 Range 随机读取（1GB/3GB 处均返回 206）。
-// 所以 mpv 走原生直链：head 少、字段无逗号、seek 可行。
+// 所以 mpv 走原生直链：头少、字段无逗号、seek 可行。
 
 extension FNOSNativeClient {
+
+    /// 分集引用（换集用；飞牛原生 guid 与兼容层 Id 不是一套）
+    struct EpisodeRef: Identifiable, Hashable {
+        let number: Int
+        let guid: String
+        var id: Int { number }
+    }
 
     /// 一次播放直链解析的结果
     struct MediaRange {
         let url: URL
-        /// 原生条目 guid（诊断用）
         let itemGUID: String
-        /// 媒体 guid（`media/range` 用）
         let mediaGUID: String
-        let durationSeconds: Int?
+        let episodeNumber: Int?
+        /// 同季全部分集（电影为空）
+        let episodes: [EpisodeRef]
     }
 
     /// 解析播放直链。
-    /// - 剧集：`seriesTitle` + `episodeNumber` → 剧集 guid → 季 guid → 该集 guid
+    /// - 剧集：`seriesTitle` + `episodeNumber` → 剧集 guid → 季 guid → 该集 guid，并带回整季分集
     /// - 电影：`itemTitle` → 条目 guid
     func mediaRange(itemTitle: String?, seriesTitle: String?, episodeNumber: Int?) async -> MediaRange? {
         let log = DebugLog()
         var itemGUID: String?
+        var episodes: [EpisodeRef] = []
 
         // 1) 剧集走「剧名 → 季 → 集」，因为分集标题常常是空的（实测第 23 集 title 为空串）
-        if let seriesTitle, !seriesTitle.isEmpty, let episodeNumber {
+        if let seriesTitle, !seriesTitle.isEmpty, let episodeNumber, episodeNumber > 0 {
             if let hit = await searchItem(title: seriesTitle, isSeries: true, log: log) {
                 if let seasonGUID = await firstSeasonGUID(tvGuid: hit.guid, log: log) {
-                    itemGUID = await episodeGUID(seasonGuid: seasonGUID, number: episodeNumber, log: log)
+                    episodes = await episodeRefs(seasonGuid: seasonGUID, log: log)
+                    itemGUID = episodes.first { $0.number == episodeNumber }?.guid
                 }
             }
         }
@@ -468,33 +476,55 @@ extension FNOSNativeClient {
             }
         }
 
-        guard let itemGUID else {
-            print("FNOS❗️mpv 直链解析：找不到条目 \(log.lines.joined(separator: " | "))")
+        guard let itemGUID, let info = await playInfo(itemGUID: itemGUID, log: log) else {
+            print("FNOS❗️mpv 直链解析失败 \(log.lines.joined(separator: " | "))")
             return nil
         }
 
-        // 3) play/info 换 media_guid
+        print("FNOS✅mpv 直链就绪 media=\(info.mediaGUID) item=\(itemGUID) 分集 \(episodes.count)")
+        return MediaRange(
+            url: mediaURL(mediaGUID: info.mediaGUID),
+            itemGUID: itemGUID,
+            mediaGUID: info.mediaGUID,
+            episodeNumber: episodeNumber,
+            episodes: episodes
+        )
+    }
+
+    /// 已知条目 guid 时直接换直链（播放器内换集用）
+    func mediaRange(itemGUID: String) async -> MediaRange? {
+        let log = DebugLog()
+        guard let info = await playInfo(itemGUID: itemGUID, log: log) else { return nil }
+        return MediaRange(
+            url: mediaURL(mediaGUID: info.mediaGUID),
+            itemGUID: itemGUID,
+            mediaGUID: info.mediaGUID,
+            episodeNumber: nil,
+            episodes: []
+        )
+    }
+
+    // MARK: - 私有步骤
+
+    private func mediaURL(mediaGUID: String) -> URL {
+        let base = baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return URL(string: "\(base)/v/api/v1/media/range/\(mediaGUID)")!
+    }
+
+    /// `POST /v/api/v1/play/info` → media_guid
+    private func playInfo(itemGUID: String, log: DebugLog) async -> (mediaGUID: String, duration: Int?)? {
         let body = "{\"item_guid\":\"\(Self.escape(itemGUID))\"}"
         guard let json = try? await post(path: "api/v1/play/info", body: body),
               let data = json["data"] as? [String: Any],
               let mediaGUID = data["media_guid"] as? String,
               !mediaGUID.isEmpty
         else {
-            print("FNOS❗️mpv 直链解析：play/info 失败 \(itemGUID)")
+            log.add("play/info 失败")
             return nil
         }
-
-        let itemBlock = data["item"] as? [String: Any]
-        let duration = (itemBlock?["duration"] as? NSNumber)?.intValue
-
-        let base = baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        guard let url = URL(string: "\(base)/v/api/v1/media/range/\(mediaGUID)") else { return nil }
-
-        print("FNOS✅mpv 直链就绪 media=\(mediaGUID) item=\(itemGUID) \(log.lines.joined(separator: " | "))")
-        return MediaRange(url: url, itemGUID: itemGUID, mediaGUID: mediaGUID, durationSeconds: duration)
+        let duration = ((data["item"] as? [String: Any])?["duration"] as? NSNumber)?.intValue
+        return (mediaGUID, duration)
     }
-
-    // MARK: - 私有步骤
 
     /// 剧集 → 第一个季的 guid（`GET /v/api/v1/season/list/{tv_guid}`，只支持 GET）
     private func firstSeasonGUID(tvGuid: String, log: DebugLog) async -> String? {
@@ -509,21 +539,23 @@ extension FNOSNativeClient {
         }
     }
 
-    /// 季 → 第 N 集 guid（`GET /v/api/v1/episode/list/{season_guid}`）
-    private func episodeGUID(seasonGuid: String, number: Int, log: DebugLog) async -> String? {
+    /// 季 → 全部分集（`GET /v/api/v1/episode/list/{season_guid}`）
+    private func episodeRefs(seasonGuid: String, log: DebugLog) async -> [EpisodeRef] {
         do {
             let json = try await get(path: "api/v1/episode/list/\(seasonGuid)")
             let list = Self.extractList(json["data"])
             log.add("集:\(list.count)")
-            let hit = list.first {
-                let n = ($0["episode_number"] as? NSNumber)?.intValue
-                    ?? ($0["index_number"] as? NSNumber)?.intValue
-                return n == number
+            return list.compactMap { item in
+                guard let guid = item["guid"] as? String else { return nil }
+                let number = (item["episode_number"] as? NSNumber)?.intValue
+                    ?? (item["index_number"] as? NSNumber)?.intValue
+                guard let number, number > 0 else { return nil }
+                return EpisodeRef(number: number, guid: guid)
             }
-            return hit?["guid"] as? String
+            .sorted { $0.number < $1.number }
         } catch {
             log.add("分集列表失败")
-            return nil
+            return []
         }
     }
 }

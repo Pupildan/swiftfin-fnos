@@ -14,37 +14,42 @@ import SwiftUI
 //    值里没有逗号（该选项按逗号切分多值，含逗号的 X-Emby-Authorization 会切坏）。
 // 3. `setTextSubtitleInterceptionEnabled(true)` —— mpv 侧不带字体，内封中文字幕会因缺字体
 //    变乱码；拦截成文本交给我们用系统字体渲染，编码与字体问题一次解决。
+//
+// 焦点设计（v58 修正）：控制条常显，不再自动隐藏。
+// 之前体验差的原因：控制条隐藏时把根视图设成 `focusable(true)`，唤出控制条后根视图又变回
+// 不可聚焦，焦点当场丢失 → 方向键彻底没反应、按钮再也够不着。
 
 @MainActor
 struct FNOSMPVPlayerView: View {
 
     let item: FNOSItem
-    let url: URL
-    let authToken: String
     let title: String
-    /// 同剧分集（换集条）
-    var episodes: [FNOSItem] = []
-    var onSelectEpisode: ((FNOSItem) -> Void)? = nil
+    let authToken: String
+    let native: FNOSNativeClient
+    let range: FNOSNativeClient.MediaRange
     var onExit: () -> Void
 
     @State private var player: MPVPlayer?
     @StateObject private var danmu = FNOSDanmuEngine()
+
+    @State private var currentURL: URL
+    @State private var currentGUID: String
+    @State private var currentNumber: Int?
+    @State private var episodes: [FNOSNativeClient.EpisodeRef]
 
     @State private var ticker: Task<Void, Never>?
     @State private var subtitleTask: Task<Void, Never>?
     @State private var subtitleText: String = ""
 
     @State private var showDanmu = true
-    @State private var controlsVisible = true
-    @State private var hideTask: Task<Void, Never>?
-
-    @State private var scrubActive = false
-    @State private var scrubValue: Double = 0
-    @State private var lastPersist: Double = 0
-
     @State private var showEpisodeStrip = false
     @State private var showInfo = false
     @State private var infoText = ""
+    @State private var switching = false
+
+    @State private var lastPersist: Double = 0
+    @State private var lastSeekAt = Date.distantPast
+    @State private var seekBurst = 0
 
     @FocusState private var focus: Control?
 
@@ -52,7 +57,27 @@ struct FNOSMPVPlayerView: View {
         case rewind, playPause, forward, danmuToggle, episode, info, scrubber
     }
 
-    private var resumeKey: String { "fnos.resume.\(item.Id)" }
+    init(
+        item: FNOSItem,
+        title: String,
+        authToken: String,
+        native: FNOSNativeClient,
+        range: FNOSNativeClient.MediaRange,
+        onExit: @escaping () -> Void
+    ) {
+        self.item = item
+        self.title = title
+        self.authToken = authToken
+        self.native = native
+        self.range = range
+        self.onExit = onExit
+        _currentURL = State(initialValue: range.url)
+        _currentGUID = State(initialValue: range.itemGUID)
+        _currentNumber = State(initialValue: range.episodeNumber)
+        _episodes = State(initialValue: range.episodes)
+    }
+
+    private var resumeKey: String { "fnos.resume.native.\(currentGUID)" }
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -61,39 +86,40 @@ struct FNOSMPVPlayerView: View {
             if let player {
                 MPVVideoPlayer(player: player)
                     .ignoresSafeArea()
-            }
-
-            // 弹幕层
-            if showDanmu {
-                FNOSDanmuView(engine: danmu)
-                    .ignoresSafeArea()
                     .allowsHitTesting(false)
-            }
 
-            // 字幕层（mpv 文本拦截 + 系统字体渲染，规避缺字体乱码）
-            if !subtitleText.isEmpty {
-                subtitleOverlay
-                    .allowsHitTesting(false)
-            }
+                // 弹幕层
+                if showDanmu {
+                    FNOSDanmuView(engine: danmu)
+                        .ignoresSafeArea()
+                        .allowsHitTesting(false)
+                }
 
-            if controlsVisible, let player {
+                // 字幕层（mpv 文本拦截 + 系统字体渲染）
+                if !subtitleText.isEmpty {
+                    subtitleOverlay
+                        .allowsHitTesting(false)
+                }
+
                 controlBar(player)
-                    .transition(.opacity)
-            }
 
-            if showInfo {
-                infoPanel
-                    .allowsHitTesting(false)
+                if showInfo {
+                    infoPanel
+                        .allowsHitTesting(false)
+                }
+            } else {
+                VStack(spacing: 12) {
+                    ProgressView()
+                    Text("正在启动 mpv…")
+                        .font(.footnote)
+                        .foregroundColor(.secondary)
+                }
             }
         }
         .onAppear(perform: startIfNeeded)
         .onDisappear(perform: teardown)
         .onExitCommand { onExit() }
         .onPlayPauseCommand { togglePlayPause() }
-        // 控制条隐藏时自身可聚焦，任意方向键唤出控制条
-        .focusable(!controlsVisible)
-        .onMoveCommand { _ in revealControls() }
-        .onTapGesture { revealControls() }
     }
 
     // MARK: - 字幕
@@ -102,28 +128,26 @@ struct FNOSMPVPlayerView: View {
         VStack {
             Spacer()
             Text(subtitleText)
-                .font(.system(size: 44, weight: .semibold))
+                .font(.system(size: 42, weight: .semibold))
                 .foregroundColor(.white)
                 .multilineTextAlignment(.center)
                 .shadow(color: .black.opacity(0.9), radius: 6, y: 2)
                 .padding(.horizontal, 120)
-                .padding(.bottom, 150)
+                .padding(.bottom, 170)
         }
     }
 
     // MARK: - 控制条
 
     private func controlBar(_ player: MPVPlayer) -> some View {
-        VStack(alignment: .leading, spacing: 14) {
-            // 换集条（按需展开，避免一上来渲染一堆缩略图）
+        VStack(alignment: .leading, spacing: 12) {
             if showEpisodeStrip, !episodes.isEmpty {
                 episodeStrip
             }
 
-            HStack(spacing: 22) {
+            HStack(spacing: 20) {
                 controlButton(.rewind, systemImage: "gobackward.10") {
                     player.seek(by: .seconds(-10))
-                    revealControls()
                 }
 
                 controlButton(
@@ -136,7 +160,6 @@ struct FNOSMPVPlayerView: View {
 
                 controlButton(.forward, systemImage: "goforward.10") {
                     player.seek(by: .seconds(10))
-                    revealControls()
                 }
 
                 controlButton(
@@ -146,81 +169,90 @@ struct FNOSMPVPlayerView: View {
                 ) {
                     showDanmu.toggle()
                     danmu.setRate(showDanmu ? 1 : 0)
-                    revealControls()
                 }
 
-                if !episodes.isEmpty {
-                    controlButton(.episode, systemImage: "rectangle.stack") {
+                if episodes.count > 1 {
+                    controlButton(
+                        .episode,
+                        systemImage: "rectangle.stack",
+                        subtitle: showEpisodeStrip ? "收起" : "选集",
+                        wide: showEpisodeStrip
+                    ) {
                         showEpisodeStrip.toggle()
-                        revealControls()
                     }
                 }
 
                 controlButton(.info, systemImage: "info.circle") {
                     showInfo.toggle()
                     infoText = infoSummary(player)
-                    revealControls()
                 }
 
-                Spacer()
+                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 60)
+            .padding(.horizontal, 52)
+            .focusSection()
 
-            HStack(spacing: 18) {
+            HStack(spacing: 16) {
                 Text(timeText(seconds(player.position)))
-                    .font(.system(size: 20, weight: .medium, design: .rounded))
-                    .foregroundColor(.white.opacity(0.85))
-                    .frame(width: 84, alignment: .leading)
+                    .font(.system(size: 19, weight: .medium, design: .rounded))
+                    .foregroundColor(.white.opacity(0.8))
+                    .frame(width: 80, alignment: .leading)
 
                 scrubber(player)
 
                 Text(timeText(seconds(player.duration)))
-                    .font(.system(size: 20, weight: .medium, design: .rounded))
-                    .foregroundColor(.white.opacity(0.85))
-                    .frame(width: 84, alignment: .trailing)
+                    .font(.system(size: 19, weight: .medium, design: .rounded))
+                    .foregroundColor(.white.opacity(0.8))
+                    .frame(width: 80, alignment: .trailing)
             }
-            .padding(.horizontal, 60)
+            .padding(.horizontal, 52)
+            .focusSection()
         }
-        .padding(.bottom, 46)
-        .padding(.top, 26)
+        .padding(.top, 24)
+        .padding(.bottom, 40)
         .background(
             LinearGradient(
-                colors: [.clear, .black.opacity(0.75)],
+                colors: [.clear, .black.opacity(0.8)],
                 startPoint: .top,
                 endPoint: .bottom
             )
             .ignoresSafeArea()
         )
+        .defaultFocus($focus, .playPause)
     }
 
     private var episodeStrip: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            LazyHStack(spacing: 14) {
+            LazyHStack(spacing: 12) {
                 ForEach(episodes) { ep in
                     Button {
-                        onSelectEpisode?(ep)
+                        switchEpisode(to: ep)
                     } label: {
-                        Text("第 \(ep.IndexNumber ?? 0) 集")
-                            .font(.system(size: 20, weight: .semibold))
-                            .padding(.horizontal, 20)
-                            .padding(.vertical, 10)
+                        Text("第 \(ep.number) 集")
+                            .font(.system(size: 19, weight: .semibold))
+                            .padding(.horizontal, 18)
+                            .padding(.vertical, 9)
                             .background(
                                 Capsule()
-                                    .fill(ep.Id == item.Id ? Color.white : Color.white.opacity(0.18))
+                                    .fill(ep.number == currentNumber ? Color.white : Color.white.opacity(0.16))
                             )
-                            .foregroundColor(ep.Id == item.Id ? .black : .white)
+                            .foregroundColor(ep.number == currentNumber ? .black : .white)
+                            .overlay(
+                                Capsule().stroke(Color.white.opacity(0.35), lineWidth: 1)
+                            )
                     }
                     .buttonStyle(FNOSBareButtonStyle())
                 }
             }
-            .padding(.horizontal, 60)
+            .padding(.horizontal, 52)
         }
-        .frame(height: 56)
+        .frame(height: 54)
+        .focusSection()
     }
 
     private func scrubber(_ player: MPVPlayer) -> some View {
         let total = max(seconds(player.duration), 1)
-        let current = scrubActive ? scrubValue : seconds(player.position)
+        let current = seconds(player.position)
         let fraction = min(max(current / total, 0), 1)
 
         return GeometryReader { proxy in
@@ -236,9 +268,14 @@ struct FNOSMPVPlayerView: View {
                     .fill(Color.white)
                     .frame(width: 18, height: 18)
                     .offset(x: max(proxy.size.width * fraction - 9, -9))
-                    .opacity(focus == .scrubber ? 1 : 0)
+                    .opacity(focus == .scrubber ? 1 : 0.85)
             }
             .contentShape(Rectangle())
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(focus == .scrubber ? Color.white.opacity(0.14) : Color.clear)
+            )
         }
         .frame(height: 26)
         .focusable()
@@ -246,17 +283,14 @@ struct FNOSMPVPlayerView: View {
         .onMoveCommand { direction in
             switch direction {
             case .left:
-                let target = max(seconds(player.position) - 10, 0)
-                player.seek(to: .seconds(target))
+                quickSeek(player, by: -1)
             case .right:
-                let target = min(seconds(player.position) + 10, seconds(player.duration))
-                player.seek(to: .seconds(target))
+                quickSeek(player, by: 1)
             case .up:
                 focus = .playPause
             default:
                 break
             }
-            revealControls()
         }
     }
 
@@ -271,9 +305,9 @@ struct FNOSMPVPlayerView: View {
         return Button(action: action) {
             HStack(spacing: 8) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 22, weight: .semibold))
+                    .font(.system(size: 21, weight: .semibold))
                 if let subtitle {
-                    Text(subtitle).font(.system(size: 18, weight: .medium))
+                    Text(subtitle).font(.system(size: 17, weight: .medium))
                 }
             }
             .modifier(FNOSControlChrome(isFocused: isFocused, wide: wide))
@@ -287,13 +321,13 @@ struct FNOSMPVPlayerView: View {
     private var infoPanel: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(infoText)
-                .font(.system(size: 16, design: .monospaced))
+                .font(.system(size: 15, design: .monospaced))
                 .foregroundColor(.white)
         }
-        .padding(18)
-        .background(Color.black.opacity(0.7), in: RoundedRectangle(cornerRadius: 12))
-        .padding(.leading, 60)
-        .padding(.bottom, 190)
+        .padding(16)
+        .background(Color.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 12))
+        .padding(.leading, 52)
+        .padding(.bottom, 180)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
     }
 
@@ -308,10 +342,8 @@ struct FNOSMPVPlayerView: View {
 
         let decoder = diagnostics.decoder.selectedDecoder ?? "-"
         let hardware = diagnostics.decoder.videoToolboxSessionUsesHardware.map { $0 ? "硬解" : "软解" } ?? "-"
-        let startLatency = diagnostics.startLatencySeconds.map { String(format: "%.1fs", $0) } ?? "-"
 
         return """
-        mpv 状态 \(String(describing: player.state)) · 起播 \(startLatency)
         解码 \(decoder) \(hardware)
         丢帧 解码 \(num(diagnostics.decoderDroppedFrames)) / 输出 \(num(diagnostics.outputDroppedFrames)) / 错时 \(num(diagnostics.mistimedFrames))
         帧率 容器 \(fps(diagnostics.containerFramesPerSecond)) → 解码 \(fps(diagnostics.estimatedDecodedFramesPerSecond)) / 显示 \(fps(diagnostics.estimatedDisplayFramesPerSecond)) (面板 \(fps(diagnostics.nominalDisplayFramesPerSecond)))
@@ -327,14 +359,12 @@ struct FNOSMPVPlayerView: View {
         let configuration = MPVPlayerConfiguration(
             additionalOptions: [
                 "http-header-fields": "Authorization: \(authToken)",
-                // 中文字幕编码兜底（文本拦截失效时的保险）
-                "sub-codepage": "auto",
             ],
             autoPlay: true,
             hardwareDecoding: .videoToolbox,
             initialBufferSeconds: .seconds(2),
             logLevel: .warning,
-            networkCacheSeconds: .seconds(30),
+            networkCacheSeconds: .seconds(15),
             videoOutput: .metal
         )
 
@@ -342,26 +372,32 @@ struct FNOSMPVPlayerView: View {
         player.setTextSubtitleInterceptionEnabled(true)
         self.player = player
 
-        // 续播
         let resume = UserDefaults.standard.double(forKey: resumeKey)
-        if resume > 30, resume < 3600 * 4 {
-            player.load(url, startTime: .seconds(resume))
+        if resume > 30 {
+            player.load(currentURL, startTime: .seconds(resume))
         } else {
-            player.load(url)
+            player.load(currentURL)
         }
 
+        loadDanmu()
+        startTicker(player)
+        startSubtitleStream(player)
+
+        // 按钮要等 player 出现后才存在，这里延迟一次把焦点落到播放键
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            focus = .playPause
+        }
+    }
+
+    private func loadDanmu() {
         Task { @MainActor in
             await danmu.load(
                 title: item.Name ?? title,
                 seriesTitle: item.SeriesName,
-                episodeNumber: item.IndexNumber
+                episodeNumber: currentNumber ?? item.IndexNumber
             )
         }
-
-        startTicker(player)
-        startSubtitleStream(player)
-        revealControls()
-        focus = .playPause
     }
 
     private func startTicker(_ player: MPVPlayer) {
@@ -369,13 +405,9 @@ struct FNOSMPVPlayerView: View {
         ticker = Task { @MainActor in
             while !Task.isCancelled {
                 let position = seconds(player.position)
-                if !scrubActive {
-                    scrubValue = position
-                }
                 danmu.sync(mediaTime: position)
                 danmu.setRate(player.isPaused ? 0 : 1)
 
-                // 每 4 秒落一次进度，退出可续播
                 if abs(position - lastPersist) > 4 {
                     lastPersist = position
                     UserDefaults.standard.set(position, forKey: resumeKey)
@@ -414,17 +446,47 @@ struct FNOSMPVPlayerView: View {
         } else {
             player.pause()
         }
-        revealControls()
     }
 
-    private func revealControls() {
-        controlsVisible = true
-        hideTask?.cancel()
-        hideTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 5_000_000_000)
-            guard !Task.isCancelled else { return }
-            if focus == .scrubber { return }
-            controlsVisible = false
+    /// 连续按左右时自动加速：10s → 30s → 60s
+    private func quickSeek(_ player: MPVPlayer, by direction: Double) {
+        let now = Date()
+        if now.timeIntervalSince(lastSeekAt) < 1.2 {
+            seekBurst = min(seekBurst + 1, 4)
+        } else {
+            seekBurst = 0
+        }
+        lastSeekAt = now
+
+        let step: Double = seekBurst >= 3 ? 60 : (seekBurst >= 1 ? 30 : 10)
+        let target = min(max(seconds(player.position) + direction * step, 0), seconds(player.duration))
+        player.seek(to: .seconds(target))
+    }
+
+    private func switchEpisode(to ep: FNOSNativeClient.EpisodeRef) {
+        guard !switching, ep.number != currentNumber else { return }
+        switching = true
+
+        Task { @MainActor in
+            defer { switching = false }
+            guard let next = await native.mediaRange(itemGUID: ep.guid) else { return }
+
+            if let player, seconds(player.position) > 0 {
+                UserDefaults.standard.set(seconds(player.position), forKey: resumeKey)
+            }
+
+            currentGUID = ep.guid
+            currentNumber = ep.number
+            currentURL = next.url
+            lastPersist = 0
+            subtitleText = ""
+
+            guard let player else { return }
+            let resume = UserDefaults.standard.double(forKey: resumeKey)
+            let start: Duration? = resume > 30 ? .seconds(resume) : nil
+            player.load(next.url, startTime: start)
+            loadDanmu()
+            focus = .playPause
         }
     }
 
@@ -447,7 +509,6 @@ struct FNOSMPVPlayerView: View {
         return String(format: "%02d:%02d", minutes, secs)
     }
 
-    /// 把冗长的 MPVDolbyVisionStatus 浓缩成一行：源 profile / 生效 profile / 是否转换
     private func shortDV(_ player: MPVPlayer) -> String {
         let text = String(describing: player.dolbyVisionStatus)
 
@@ -460,9 +521,8 @@ struct FNOSMPVPlayerView: View {
         }
 
         let source = pick("sourceProfile") ?? "-"
-        let effective = pick("effectiveProfile") ?? "-"
         let conversion = pick("conversion") ?? "-"
-        return "源 \(source) / 生效 \(effective) / \(conversion)"
+        return "源 \(source) / \(conversion)"
     }
 }
 
@@ -476,11 +536,14 @@ private struct FNOSControlChrome: ViewModifier {
     func body(content: Content) -> some View {
         content
             .foregroundColor(isFocused ? .black : .white)
-            .padding(.horizontal, wide ? 30 : 20)
-            .frame(height: 56)
+            .padding(.horizontal, wide ? 28 : 18)
+            .frame(height: 54)
             .background(
                 Capsule()
                     .fill(isFocused ? Color.white : Color.black.opacity(0.45))
+            )
+            .overlay(
+                Capsule().stroke(Color.white.opacity(isFocused ? 0 : 0.28), lineWidth: 1.5)
             )
             .scaleEffect(isFocused ? 1.06 : 1.0)
             .animation(.easeOut(duration: 0.14), value: isFocused)

@@ -272,9 +272,12 @@ struct FNOSPlayerContainerView: View {
     // MARK: mpv 引擎（实验）—— 解决杜比视界 P5 偏色
     /// 设置里可切换播放器引擎；默认仍走 KSPlayer，mpv 为实验路径
     @AppStorage("fnos.play.engineMPV") private var useMPVEngine = false
-    /// mpv 用的原生直链（media/range，只需 Authorization 头）
-    @State private var mpvURL: URL?
+    /// mpv 用的原生直链解析结果（含整季分集，供播放器内换集）
+    @State private var mpvRange: FNOSNativeClient.MediaRange?
+    @State private var mpvClient: FNOSNativeClient?
     @State private var mpvToken: String?
+    /// 解析失败 → 自动退回 KSPlayer，避免停在黑屏
+    @State private var mpvFailed = false
     @State private var mpvNotice = "准备 mpv…"
 
     // 控制条状态
@@ -313,17 +316,19 @@ struct FNOSPlayerContainerView: View {
 
     @ViewBuilder
     private var mpvLayer: some View {
-        if let mpvURL, let mpvToken {
+        if let mpvRange, let mpvClient, let mpvToken {
             FNOSMPVPlayerView(
                 item: item,
-                url: mpvURL,
-                authToken: mpvToken,
                 title: item.Name ?? seriesName ?? "",
-                episodes: episodes,
-                onSelectEpisode: onSelectEpisode
+                authToken: mpvToken,
+                native: mpvClient,
+                range: mpvRange
             ) {
                 dismiss()
             }
+        } else if mpvFailed {
+            // 原生直链解析失败：不卡黑屏，直接回退到已跑通的 KSPlayer 链路
+            ksLayer
         } else {
             VStack(spacing: 12) {
                 ProgressView()
@@ -347,10 +352,12 @@ struct FNOSPlayerContainerView: View {
     private func prepareMPV() async {
         guard let credentials = FNOSAuthStore.shared.credentials else {
             mpvNotice = "未登录"
+            mpvFailed = true
             return
         }
         guard let nativeToken = credentials.nativeToken, !nativeToken.isEmpty else {
             mpvNotice = "缺少飞牛原生 token，请在设置里重新登录"
+            mpvFailed = true
             return
         }
 
@@ -362,12 +369,14 @@ struct FNOSPlayerContainerView: View {
             seriesTitle: series,
             episodeNumber: item.IndexNumber
         ) else {
-            mpvNotice = "原生直链解析失败（设置里可切回 KSPlayer）"
+            print("FNOS⚠️ mpv 直链解析失败，回退 KSPlayer")
+            mpvFailed = true
             return
         }
 
         mpvToken = nativeToken
-        mpvURL = range.url
+        mpvClient = native
+        mpvRange = range
     }
 
     // MARK: - KSPlayer 引擎（原稳定链路）

@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v57"
+    static let version = "v58"
 
     /// 本版主要变更摘要
-    static let changes = "mpv 引擎补齐功能：续播、弹幕、换集条、进度条、快进快退、诊断面板；字幕改走文本拦截用系统字体渲染（修乱码）；解码显式 VideoToolbox；设置页改为自绘列表，两侧留白且去掉系统灰焦点板"
+    static let changes = "mpv：控制条常显修复焦点丢失、进度条连续按左右自动加速(10/30/60s)、播放器内直接换集(整季列表)、直链解析失败自动回退 KSPlayer；首页设置按钮改成 Hero 同款胶囊按钮"
 }

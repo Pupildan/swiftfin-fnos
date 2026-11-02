@@ -51,6 +51,8 @@ struct FNOSMainView: View {
 
     // 首页设置面板（刷新/退出集成在内）
     @State private var showSettings = false
+    // 设置按钮焦点（与 Hero 按钮同一套视觉）
+    @FocusState private var settingsButtonFocused: Bool
     // 媒体库卡片焦点（下键从 Hero 跳入海报墙的落点）
     @FocusState private var shelfCardFocused: String?
 
@@ -136,12 +138,16 @@ struct FNOSMainView: View {
                             Button {
                                 showSettings = true
                             } label: {
-                                Image(systemName: "gearshape")
-                                    .font(.system(size: 24))
-                                    .foregroundColor(.white.opacity(0.7))
-                                    .padding(10)
+                                FNOSFocusButtonLabel(
+                                    isFocused: settingsButtonFocused,
+                                    isPrimary: false
+                                ) {
+                                    Image(systemName: "gearshape.fill")
+                                        .font(.system(size: 22, weight: .semibold))
+                                }
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(FNOSBareButtonStyle())
+                            .focused($settingsButtonFocused)
                             Spacer()
                         }
                         .padding(.leading, 36)

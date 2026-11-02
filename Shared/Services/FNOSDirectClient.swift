@@ -161,6 +161,8 @@ struct FNOSItem: Decodable, Identifiable {
     // 剧集排序用的序号
     let ParentIndexNumber: Int?
     let IndexNumber: Int?
+    // 首播日期（ISO8601 字符串，剧集卡片底部展示）
+    let PremiereDate: String?
 
     var id: String { Id }
     var type: String? { ItemType }
@@ -171,7 +173,7 @@ struct FNOSItem: Decodable, Identifiable {
         case ItemType = "Type"
         case ProductionYear, Overview, ImageTags, BackdropImageTags
         case RunTimeTicks, OfficialRating, Genres
-        case ParentIndexNumber, IndexNumber
+        case ParentIndexNumber, IndexNumber, PremiereDate
     }
 }
 
@@ -187,5 +189,25 @@ extension FNOSItem {
         } else {
             return "\(minutes) 分钟"
         }
+    }
+
+    /// 卡片角标用的紧凑时长（"54分钟" / "1小时6分钟"）
+    var compactDuration: String? {
+        durationString?.replacingOccurrences(of: " ", with: "")
+    }
+
+    /// 首播日期文案：PremiereDate(ISO8601) → "2022年3月25日"，失败退年份
+    var premiereDateText: String? {
+        if let raw = PremiereDate, raw.count >= 10 {
+            let head = String(raw.prefix(10))
+            let parts = head.split(separator: "-")
+            if parts.count == 3,
+               let y = Int(parts[0]), let m = Int(parts[1]), let d = Int(parts[2])
+            {
+                return "\(y)年\(m)月\(d)日"
+            }
+        }
+        if let year = ProductionYear { return String(year) }
+        return nil
     }
 }

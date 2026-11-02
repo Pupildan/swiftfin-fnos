@@ -39,6 +39,30 @@ extension FNOSDirectClient {
         }
     }
 
+    /// 剧集卡片横图：优先 Thumb（真正的 16:9 剧照）→ Primary → Backdrop
+    func episodeStillURL(item: FNOSItem, maxWidth: Int = 640) -> URL? {
+        let tags = item.ImageTags ?? [:]
+        let imageType: String
+        var tag: String?
+        if let thumb = tags["Thumb"], !thumb.isEmpty {
+            imageType = "Thumb"
+            tag = thumb
+        } else if let primary = tags["Primary"], !primary.isEmpty {
+            imageType = "Primary"
+            tag = primary
+        } else if let backdrop = item.BackdropImageTags?.first, !backdrop.isEmpty {
+            imageType = "Backdrop"
+            tag = backdrop
+        } else {
+            imageType = "Primary"
+        }
+        var query = ["maxWidth": String(maxWidth), "quality": "85"]
+        if let tag, !tag.isEmpty {
+            query["tag"] = tag
+        }
+        return try? url(path: "Items/\(item.Id)/Images/\(imageType)", query: query)
+    }
+
     /// 播放直链 —— 实测 static=true 返回原始媒体流
     func streamURL(itemID: String) -> URL? {
         do {

@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v42"
+    static let version = "v45"
 
     /// 本版主要变更摘要
-    static let changes = "修复详情页背景图加载失败(修正 Backdrop 路径)；新增剧集详情页选集功能：1-10集分段+1:1复刻剧集卡片；主按钮改为播放第1集"
+    static let changes = "剧集详情页选集(ATV+ 版式)：分段标签+16:9横图卡片+时长角标+简介/日期/分级；分集双端点兜底加载；剧集卡片优先Thumb剧照"
 }

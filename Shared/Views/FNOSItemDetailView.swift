@@ -571,6 +571,7 @@ struct FNOSItemDetailView: View {
             Text("演员阵容")
                 .font(.system(size: 26, weight: .bold))
                 .foregroundColor(.white)
+                .padding(.leading, 60)
 
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 28) {
@@ -601,6 +602,7 @@ struct FNOSItemDetailView: View {
                     }
                 }
                 .padding(.vertical, 4)
+                .padding(.horizontal, 60)
             }
         }
     }
@@ -631,7 +633,6 @@ struct FNOSItemDetailView: View {
     @MainActor
     private func loadDetail() async {
         guard let client else { return }
-        // 1) 详情接口：失败不阻断后续（剧集仍可选集，背景图仍可显示）
         do {
             let detail = try await client.fetchItemDetail(itemID: item.Id, userID: userID)
             mediaSourceID = detail.mediaSourceID
@@ -640,81 +641,40 @@ struct FNOSItemDetailView: View {
             if let tags = detail.backdropTags, !tags.isEmpty {
                 fetchedBackdropTags = tags
             }
+            if mediaSourceID == nil {
+                loadError = "未获取到媒体源"
+            }
             print("FNOSℹ️详情 \(item.Name ?? "?") 时长ticks=\(runtimeTicks ?? -1) 源=\(mediaSourceID ?? "nil") 演员=\(people.count)")
-        } catch {
-            print("FNOS⚠️ 详情接口失败（继续展示页面）: \(error.localizedDescription)")
-            if item.type != "Series" {
-                loadError = "获取播放信息失败：\(error.localizedDescription)"
-            }
-        }
 
-        // 2) 剧集：拉取分集
-        if item.type == "Series" {
-            await loadEpisodes(client: client)
-        }
-
-        // 3) 主题色
-        if let url = backdropURL {
-            themeColor = await FNOSDominantColor.color(for: url, headers: client.mediaHeaders)
-        }
-    }
-
-    /// 拉取剧集分集：先试 Shows/{id}/Episodes，失败再用 Users/{uid}/Items 兜底。
-    /// 全部失败只打日志，绝不影响详情页主体。
-    @MainActor
-    private func loadEpisodes(client: FNOSDirectClient) async {
-        var loaded: [FNOSItem] = []
-
-        // 端点 A
-        do {
-            let data = try await client.get(
-                path: "Shows/\(item.Id)/Episodes",
-                query: ["Fields": "Overview,RunTimeTicks,OfficialRating,ParentIndexNumber,IndexNumber"]
-            )
-            loaded = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items
-            print("FNOSℹ️分集(Shows/Episodes) \(loaded.count) 条")
-        } catch {
-            print("FNOS⚠️ Shows/Episodes 失败: \(error.localizedDescription)，改用 Items 兜底")
-        }
-
-        // 端点 B
-        if loaded.isEmpty {
-            do {
-                let data = try await client.get(
-                    path: "Users/\(userID)/Items",
-                    query: [
-                        "ParentId": item.Id,
-                        "Recursive": "true",
-                        "IncludeItemTypes": "Episode",
-                        "Limit": "500",
-                        "SortBy": "ParentIndexNumber,IndexNumber",
-                        "SortOrder": "Ascending",
-                        "Fields": "Overview,RunTimeTicks,OfficialRating,ParentIndexNumber,IndexNumber",
-                    ]
+            // 如果是剧集，请求所有集数
+            if item.type == "Series" {
+                let epsData = try await client.get(
+                    path: "Shows/\(item.Id)/Episodes",
+                    query: ["Fields": "PrimaryImageAspectRatio,ProductionYear,Overview,RunTimeTicks,OfficialRating,ParentIndexNumber,IndexNumber"]
                 )
-                loaded = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items
-                print("FNOSℹ️分集(Items?ParentId) \(loaded.count) 条")
-            } catch {
-                print("FNOS❗️分集兜底也失败: \(error)")
+                let epsEnvelope = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: epsData)
+                let sortedEps = epsEnvelope.Items.sorted { a, b in
+                    let sa = a.ParentIndexNumber ?? 0
+                    let sb = b.ParentIndexNumber ?? 0
+                    if sa != sb { return sa < sb }
+                    return (a.IndexNumber ?? 0) < (b.IndexNumber ?? 0)
+                }
+                episodes = sortedEps
+                // 按 10 集分块
+                episodeChunks = stride(from: 0, to: sortedEps.count, by: 10).map {
+                    Array(sortedEps[$0..<min($0 + 10, sortedEps.count)])
+                }
+                print("FNOSℹ️剧集 \(item.Name ?? "?") 共 \(sortedEps.count) 集，分 \(episodeChunks.count) 组")
             }
-        }
 
-        guard !loaded.isEmpty else {
-            episodeChunks = []
-            return
+            // 从海报提取主题色（失败就保持黑底，不影响功能）
+            if let url = backdropURL {
+                themeColor = await FNOSDominantColor.color(for: url, headers: client.mediaHeaders)
+            }
+        } catch {
+            loadError = "获取播放信息失败：\(error.localizedDescription)"
+            print("FNOS❗️详情加载失败: \(error)")
         }
-
-        let sorted = loaded.sorted { a, b in
-            let sa = a.ParentIndexNumber ?? 0
-            let sb = b.ParentIndexNumber ?? 0
-            if sa != sb { return sa < sb }
-            return (a.IndexNumber ?? 0) < (b.IndexNumber ?? 0)
-        }
-        episodes = sorted
-        episodeChunks = stride(from: 0, to: sorted.count, by: 10).map {
-            Array(sorted[$0..<min($0 + 10, sorted.count)])
-        }
-        print("FNOSℹ️剧集 \(item.Name ?? "?") 共 \(sorted.count) 集，分 \(episodeChunks.count) 组")
     }
 
     private func playNow() {

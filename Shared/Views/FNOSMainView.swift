@@ -371,7 +371,7 @@ struct FNOSMainView: View {
             (screenWidth - hPadding * 2 - spacing * (visibleCount - 1)) / visibleCount
         )
         // 行副本对齐需要 tileWidth（行内容 frame 已由 .onPreferenceChange 写入）
-        rowFrames.tileWidths[section.Id] = tileWidth
+        rowFrames.tileWidths[section.id] = tileWidth
 
         return VStack(alignment: .leading, spacing: 14) {
             Text(section.library.Name ?? "未命名")
@@ -389,7 +389,7 @@ struct FNOSMainView: View {
                         let isFlightCard = detailItem?.Id == item.Id
                         // 飞行行窗口内的卡也隐藏（交给行副本渲染），避免与副本「重影」。
                         let isInFlightWindow: Bool = {
-                            guard let f = flight, f.rowSectionID == section.Id, let rowIndex else { return false }
+                            guard let f = flight, f.rowSectionID == section.id, let rowIndex else { return false }
                             return rowIndex >= f.focusIndex - 3 && rowIndex <= f.focusIndex + 3
                         }()
                         Button {
@@ -446,7 +446,7 @@ struct FNOSMainView: View {
                 // 双保险：把焦点特效关闭挂到内容容器上
                 .focusEffectDisabled()
                 .onPreferenceChange(FNOSRowContentFrameKey.self) { frame in
-                    rowFrames.frames[section.Id] = frame
+                    rowFrames.frames[section.id] = frame
                 }
             }
             .focusEffectDisabled()
@@ -494,9 +494,9 @@ struct FNOSMainView: View {
     private func buildFlightContext(item: FNOSItem, client: FNOSDirectClient) -> FNOSDetailFlightContext? {
         guard let section = sections.first(where: { $0.items.contains(where: { $0.Id == item.Id }) }),
               let rowIndex = section.items.firstIndex(where: { $0.Id == item.Id }),
-              let contentFrame = rowFrames.frames[section.Id],
+              let contentFrame = rowFrames.frames[section.id],
               contentFrame != .zero,
-              let tileWidth = rowFrames.tileWidths[section.Id] else {
+              let tileWidth = rowFrames.tileWidths[section.id] else {
             return nil
         }
         let spacing: CGFloat = 28
@@ -512,7 +512,7 @@ struct FNOSMainView: View {
             item: item,
             client: client,
             userID: userID,
-            rowSectionID: section.Id,
+            rowSectionID: section.id,
             rowItems: section.items,
             focusIndex: rowIndex,
             tileWidth: tileWidth,
@@ -1523,7 +1523,7 @@ struct FNOSDetailFlightContext {
     let item: FNOSItem
     let client: FNOSDirectClient?
     let userID: String
-    /// 条目所在行的 section.Id（窗口卡隐藏判断用）
+    /// 条目所在行的 section.id（窗口卡隐藏判断用）
     let rowSectionID: String?
     /// 该行全部条目（行副本数据源）
     let rowItems: [FNOSItem]
@@ -1539,8 +1539,8 @@ struct FNOSDetailFlightContext {
 
 /// 行内容 frame 存储（非响应式：滚动只写不触发重渲染，避免海报墙掉帧）
 final class FNOSRowFrameStore {
-    var frames: [String: CGRect] = [:]        // section.Id -> LazyHStack 内容 frame（全局）
-    var tileWidths: [String: CGFloat] = [:]   // section.Id -> tileWidth
+    var frames: [String: CGRect] = [:]        // section.id -> LazyHStack 内容 frame（全局）
+    var tileWidths: [String: CGFloat] = [:]   // section.id -> tileWidth
 }
 
 /// 行内容 frame 的 preference key

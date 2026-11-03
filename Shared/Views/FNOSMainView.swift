@@ -662,35 +662,42 @@ struct FNOSMainView: View {
 
     // MARK: - 导航（详情过渡）
 
-    /// v91：重建「继续播放」——服务端多端记录优先，本机记录（UserDefaults 索引）兜底合并。
+    /// v92：重建「继续播放」——本机记录优先（用户正在看的），服务端多端记录随后补位。
     /// 服务端 /Sessions 上报是空壳 204（接受不入库，诊断面板证实），本机播过的必须走本地兜底才可见。
     private func rebuildResumeEntries() {
         guard let client else { return }
         Task {
             var entries: [FNOSResumeEntry] = []
             var seen = Set<String>()
-            // 1) 服务端多端记录（UserData 位置/时长同响应，比值与飞牛 tick 单位无关）
-            for item in await client.fetchResumeItems(userID: userID, limit: 6) {
-                guard seen.insert(item.Id).inserted else { continue }
+            // 1) 本机记录（>30s 才上榜）：直接解码完整条目（单集自带海报/集号）——
+            //    不从海报墙反查：单集不在条目池里，反查会漏掉所有剧集记录
+            for p in FNOSProgressStore.localList() {
+                guard seen.insert(p.item.Id).inserted, p.seconds > 30 else { continue }
                 var fraction = 0.0
-                if let pos = item.UserData?.PlaybackPositionTicks, pos > 0,
-                   let runtime = item.RunTimeTicks, runtime > 0 {
-                    fraction = min(0.98, max(0.01, Double(pos) / Double(runtime)))
-                } else if let pct = item.UserData?.PlayedPercentage {
-                    fraction = min(0.98, max(0.01, pct / 100))
+                if let runtime = p.runtimeSeconds, runtime > 0 {
+                    fraction = min(0.98, p.seconds / runtime)
+                } else if let runtime = FNOSItem.plausibleSeconds(ticks: p.item.RunTimeTicks, isEpisode: p.item.type == "Episode") {
+                    fraction = min(0.98, p.seconds / runtime)
                 }
-                entries.append(FNOSResumeEntry(item: item, fraction: fraction, startSeconds: nil))
+                entries.append(FNOSResumeEntry(item: p.item, fraction: fraction, startSeconds: p.seconds))
             }
-            // 2) 本机记录兜底（>30s 才上榜，与详情页续播阈值一致）
-            for (itemID, seconds) in FNOSProgressStore.recentItems(limit: 6) {
-                guard seen.insert(itemID).inserted, seconds > 30,
-                      let item = allItems.first(where: { $0.Id == itemID }) else { continue }
-                var fraction = 0.0
-                if let runtime = FNOSItem.plausibleSeconds(ticks: item.RunTimeTicks, isEpisode: item.type == "Episode") {
-                    fraction = min(0.98, seconds / runtime)
+            let localCount = entries.count
+            // 2) 服务端多端记录补位（其他设备的进度；UserData 位置/时长同响应，比值与飞牛 tick 单位无关）
+            if let client {
+                for item in await client.fetchResumeItems(userID: userID, limit: 6) {
+                    guard seen.insert(item.Id).inserted else { continue }
+                    var fraction = 0.0
+                    if let pos = item.UserData?.PlaybackPositionTicks, pos > 0,
+                       let runtime = item.RunTimeTicks, runtime > 0 {
+                        fraction = min(0.98, max(0.01, Double(pos) / Double(runtime)))
+                    } else if let pct = item.UserData?.PlayedPercentage {
+                        fraction = min(0.98, max(0.01, pct / 100))
+                    }
+                    entries.append(FNOSResumeEntry(item: item, fraction: fraction, startSeconds: nil))
                 }
-                entries.append(FNOSResumeEntry(item: item, fraction: fraction, startSeconds: seconds))
             }
+            let serverCount = entries.count - localCount
+            FNOSDiag.shared.add("继续播放合并: 本机\(localCount) + 服务端\(serverCount) → \(min(entries.count, 6)) 条")
             resumeEntries = Array(entries.prefix(6))
         }
     }

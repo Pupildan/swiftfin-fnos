@@ -441,11 +441,16 @@ struct FNOSPlayerContainerView: View {
                 range: mpvRange,
                 initialSeek: handoffPosition > 1 ? handoffPosition : resumeStartSeconds,
                 autoSelected: !useMPVEngine,
-                onProgress: { position in
+                onProgress: { position, duration in
                     lastMPVPosition = position
                     throttledProgressReport(position)
-                    // v90：本地进度 + 剧集观看位置（mpv 侧补齐，含秒数）
-                    FNOSProgressStore.save(itemID: item.Id, seconds: position)
+                    // v92：本地进度存完整条目 + 剧集观看位置（mpv 侧补齐）
+                    FNOSProgressStore.save(
+                        itemID: item.Id,
+                        seconds: position,
+                        item: item,
+                        runtimeSeconds: duration > 0 ? duration : nil
+                    )
                     if item.type == "Episode", let sid = seriesID {
                         FNOSProgressStore.saveSeriesProgress(
                             seriesID: sid,
@@ -621,10 +626,16 @@ struct FNOSPlayerContainerView: View {
                     coordinator.seek(time: target)
                     print("FNOSℹ️继续播放: seek → \(Int(target))s")
                 }
-                // v87 本地进度（续播主链路）+ 剧集观看位置（5s 节流落盘；v90 位置秒数入剧级映射）
+                // v87 本地进度（续播主链路）+ 剧集观看位置（5s 节流落盘；v92 存完整条目供首页合并）
                 if Date().timeIntervalSince(lastLocalSaveAt) > 5 {
                     lastLocalSaveAt = Date()
-                    FNOSProgressStore.save(itemID: item.Id, seconds: currentTime)
+                    let total = Double(coordinator.timemodel.totalTime)
+                    FNOSProgressStore.save(
+                        itemID: item.Id,
+                        seconds: currentTime,
+                        item: item,
+                        runtimeSeconds: total > 0 ? total : nil
+                    )
                     if item.type == "Episode", let sid = seriesID {
                         FNOSProgressStore.saveSeriesProgress(
                             seriesID: sid,

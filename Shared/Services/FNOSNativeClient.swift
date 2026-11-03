@@ -568,6 +568,20 @@ extension FNOSNativeClient {
             print("FNOS❗️Hero 增强失败: \(log.lines.joined(separator: " | "))")
             return nil
         }
+        // v92：评分字段探针——用户确认飞牛有评分数据，但真实字段名未知。
+        // 把 play/info 的 item 字典完整 dump 进诊断（全屏诊断页截图即得），按真名接线。
+        if let dict = info.itemDict {
+            FNOSDiag.shared.add("play/info keys: \(dict.keys.sorted().joined(separator: ","))", dedupeKey: "pi.keys")
+            do {
+                let data = try JSONSerialization.data(withJSONObject: dict, options: [.sortedKeys])
+                let raw = String(data: data.prefix(700), encoding: .utf8) ?? "(截断)"
+                FNOSDiag.shared.add("play/info item: \(raw)", dedupeKey: "pi.raw")
+            } catch {
+                FNOSDiag.shared.add("play/info 序列化失败: \(error.localizedDescription)", dedupeKey: "pi.ser")
+            }
+        } else {
+            FNOSDiag.shared.add("play/info 无 item 字典（评分不在此接口，需另寻端点）", dedupeKey: "pi.nodict")
+        }
         let ratings = Self.parseRatings(info.itemDict)
 
         var badge: String?

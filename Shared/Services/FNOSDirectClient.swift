@@ -196,22 +196,37 @@ final class FNOSDirectClient {
 
 // MARK: - 本地播放进度（v87 续播主链路：UserDefaults，无服务端依赖）
 
+/// 本地记录条目（v92）：存完整 FNOSItem（剧集=单集，自带海报 tags/集号），
+/// 首页合并直接解码渲染——服务端 /Sessions 是空壳 204（接受不入库），
+/// 单集也不在海报墙的条目池里，必须自带元数据才能上榜。
+struct FNOSLocalProgress: Codable {
+    let item: FNOSItem
+    let seconds: Double
+    let runtimeSeconds: Double?
+    let updatedAt: Date
+}
+
 /// 本地进度存储。服务端 /Sessions/Playing* 上报的兼容性未验证（真机无日志），
 /// 续播功能以本地记录为可靠主链路；服务端上报继续尽力而为（多端同步）。
 enum FNOSProgressStore {
     private static let prefix = "fnos.prog."
     private static let seriesPrefix = "fnos.prog.series."
-    private static let indexKey = "fnos.prog.index"
+    private static let listKey = "fnos.prog.list"
 
-    /// 条目播放进度（秒）；同时维护最近记录索引（首页「继续播放」本地兜底用）
-    static func save(itemID: String, seconds: Double) {
+    /// 条目播放进度（秒）；完整条目进本地列表（首页「继续播放」兜底，新→旧，上限 12）
+    static func save(itemID: String, seconds: Double, item: FNOSItem? = nil, runtimeSeconds: Double? = nil) {
         guard seconds > 0 else { return }
         UserDefaults.standard.set(seconds, forKey: prefix + itemID)
-        var ids = UserDefaults.standard.stringArray(forKey: indexKey) ?? []
-        ids.removeAll { $0 == itemID }
-        ids.insert(itemID, at: 0)
-        if ids.count > 20 { ids = Array(ids.prefix(20)) }
-        UserDefaults.standard.set(ids, forKey: indexKey)
+        guard let item else { return }
+        var list = localList()
+        list.removeAll { $0.item.Id == itemID }
+        list.insert(FNOSLocalProgress(item: item, seconds: seconds, runtimeSeconds: runtimeSeconds, updatedAt: Date()), at: 0)
+        if list.count > 12 { list = Array(list.prefix(12)) }
+        do {
+            UserDefaults.standard.set(try JSONEncoder().encode(list), forKey: listKey)
+        } catch {
+            FNOSDiag.shared.add("本地记录列表编码失败: \(error.localizedDescription)", dedupeKey: "prog.enc")
+        }
     }
 
     static func load(itemID: String) -> Double? {
@@ -221,23 +236,23 @@ enum FNOSProgressStore {
 
     static func clear(itemID: String) {
         UserDefaults.standard.removeObject(forKey: prefix + itemID)
-        var ids = UserDefaults.standard.stringArray(forKey: indexKey) ?? []
-        ids.removeAll { $0 == itemID }
-        UserDefaults.standard.set(ids, forKey: indexKey)
+        var list = localList()
+        list.removeAll { $0.item.Id == itemID }
+        do {
+            UserDefaults.standard.set(try JSONEncoder().encode(list), forKey: listKey)
+        } catch {
+            FNOSDiag.shared.add("本地记录列表回写失败: \(error.localizedDescription)", dedupeKey: "prog.enc")
+        }
     }
 
-    /// 最近有本地进度的条目（新→旧）：服务端 /Sessions 上报是空壳 204（接受不入库），
-    /// 首页「继续播放」用本地记录兜底合并，本机播过的立刻可见。
-    static func recentItems(limit: Int) -> [(itemID: String, seconds: Double)] {
-        let ids = UserDefaults.standard.stringArray(forKey: indexKey) ?? []
-        var out: [(itemID: String, seconds: Double)] = []
-        for id in ids {
-            if let s = load(itemID: id) {
-                out.append((id, s))
-                if out.count >= limit { break }
-            }
+    static func localList() -> [FNOSLocalProgress] {
+        guard let data = UserDefaults.standard.data(forKey: listKey) else { return [] }
+        do {
+            return try JSONDecoder().decode([FNOSLocalProgress].self, from: data)
+        } catch {
+            FNOSDiag.shared.add("本地记录列表解码失败: \(error.localizedDescription)", dedupeKey: "prog.dec")
+            return []
         }
-        return out
     }
 
     /// 剧集观看位置：剧 Id → 最近看的集（详情页「继续播放 第N集」用）。

@@ -466,6 +466,9 @@ struct FNOSHomeSettingsView: View {
     @AppStorage("fnos.danmu.opacity") private var danmuOpacity: Double = 1
     @AppStorage("fnos.danmu.offsetY") private var danmuOffsetY: Double = 0
 
+    // 过渡动画 Demo（验证 matchedGeometryEffect 在真机上的顺滑度，确认后再决定是否集成到海报墙）
+    @State private var showTransitionDemo = false
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -482,6 +485,12 @@ struct FNOSHomeSettingsView: View {
                         ) {
                             dismiss()
                             onLogout()
+                        }
+                        FNOSSettingRow(
+                            title: "过渡动画 Demo（实验）",
+                            systemImage: "wand.and.stars"
+                        ) {
+                            showTransitionDemo = true
                         }
                     }
 
@@ -598,6 +607,9 @@ struct FNOSHomeSettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
             }
             .navigationTitle("设置")
+            .fullScreenCover(isPresented: $showTransitionDemo) {
+                FNOSHeroTransitionDemo()
+            }
         }
     }
 
@@ -993,5 +1005,204 @@ fileprivate struct FNOSSeasonsSheet: View {
             print("FNOS❗️解析 \(label) 失败: \(error) 原文: \(raw)")
             throw FNOSDirectError("解析 \(label) 失败: \(error.localizedDescription)")
         }
+    }
+}
+
+// MARK: - 过渡动画 Demo（matchedGeometryEffect 可行性验证，独立于主工程逻辑）
+//
+// 验证目标：真机上"卡片 → 全屏 → 返回缩回"是否顺滑。
+// 实现：单次 withAnimation 驱动 matchedGeometryEffect 几何插值（SwiftUI 原生引擎，无分段 sleep）；
+// 信息层延迟淡入是独立图层动画，不参与、不打断几何插值。
+// 验证通过后再移植到海报墙；不通过则删除本结构体与设置入口即可。
+
+struct FNOSHeroTransitionDemo: View {
+
+    struct DemoItem: Identifiable, Hashable {
+        let id: String
+        let title: String
+        let colors: [Color]
+    }
+
+    private let items: [DemoItem] = [
+        .init(id: "d1", title: "星尘", colors: [Color(red: 0.36, green: 0.12, blue: 0.55), .black]),
+        .init(id: "d2", title: "远航", colors: [Color(red: 0.05, green: 0.35, blue: 0.60), .black]),
+        .init(id: "d3", title: "燃冬", colors: [Color(red: 0.65, green: 0.20, blue: 0.10), .black]),
+        .init(id: "d4", title: "雾山", colors: [Color(red: 0.10, green: 0.42, blue: 0.30), .black]),
+        .init(id: "d5", title: "长夜", colors: [Color(red: 0.45, green: 0.35, blue: 0.08), .black]),
+        .init(id: "d6", title: "回声", colors: [Color(red: 0.50, green: 0.10, blue: 0.28), .black]),
+    ]
+
+    @Namespace private var ns
+    @State private var selected: DemoItem?
+    @State private var infoVisible = false
+    @FocusState private var focusedCard: String?
+    @FocusState private var detailButtonFocused: Bool
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        ZStack {
+            Color.black.ignoresSafeArea()
+
+            // 海报墙（详情打开时整页压暗微缩，模拟"背景退后"）
+            ScrollView(.vertical, showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 48) {
+                    shelf(title: "正在热映", items: Array(items.prefix(3)))
+                    shelf(title: "经典片单", items: Array(items.suffix(3)))
+                }
+                .padding(.vertical, 60)
+            }
+            .opacity(selected == nil ? 1 : 0.35)
+            .scaleEffect(selected == nil ? 1 : 0.97)
+            .allowsHitTesting(selected == nil)
+
+            // 详情覆盖层（与卡片共用同一 matchedGeometryEffect）
+            if let item = selected {
+                detailOverlay(item)
+                    .zIndex(10)
+            }
+        }
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                focusedCard = items.first?.id
+            }
+        }
+        // 详情未打开时按 Menu = 退出 Demo（回到设置）
+        .onExitCommand {
+            if selected == nil { dismiss() }
+        }
+    }
+
+    // MARK: 海报行
+
+    private func shelf(title: String, items: [DemoItem]) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text(title)
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundColor(.white.opacity(0.9))
+                .padding(.horizontal, 72)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 28) {
+                    ForEach(items) { item in
+                        cardButton(item)
+                    }
+                }
+                .padding(.horizontal, 72)
+            }
+        }
+    }
+
+    private func cardButton(_ item: DemoItem) -> some View {
+        Button {
+            open(item)
+        } label: {
+            Group {
+                if selected?.id == item.id {
+                    // 该卡正处于放大态：占位隐藏，让位给详情层里的 matched 视图
+                    posterContent(item).opacity(0)
+                } else {
+                    posterContent(item)
+                        .matchedGeometryEffect(id: item.id, in: ns)
+                }
+            }
+            .aspectRatio(2 / 3, contentMode: .fit)
+            .scaleEffect(focusedCard == item.id ? 1.06 : 1.0)
+            .animation(.easeOut(duration: 0.18), value: focusedCard == item.id)
+        }
+        .buttonStyle(FNOSBareButtonStyle())
+        .focused($focusedCard, equals: item.id)
+    }
+
+    // 卡片与放大层共用同一份内容（几何插值前后是同一个视图，缩放全程无换图）
+    private func posterContent(_ item: DemoItem) -> some View {
+        ZStack {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(LinearGradient(colors: item.colors, startPoint: .topLeading, endPoint: .bottomTrailing))
+            Text(item.title)
+                .font(.system(size: 28, weight: .bold))
+                .foregroundColor(.white.opacity(0.9))
+                .opacity(selected == nil ? 1 : 0)
+                .animation(.easeOut(duration: 0.25), value: selected?.id)
+        }
+    }
+
+    // MARK: 详情覆盖层
+
+    private func detailOverlay(_ item: DemoItem) -> some View {
+        GeometryReader { geo in
+            ZStack(alignment: .bottomLeading) {
+                Color.black.ignoresSafeArea()
+
+                // 放大画面：与卡片 matched，从卡片位置连续插值到顶部 16:9 大图
+                posterContent(item)
+                    .matchedGeometryEffect(id: item.id, in: ns)
+                    .frame(width: geo.size.width, height: geo.size.width * 9 / 16)
+                    .clipped()
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .ignoresSafeArea()
+
+                // 底部渐变 + 信息层（延迟淡入，独立于几何插值）
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.4),
+                        .init(color: .black.opacity(0.9), location: 1),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .opacity(infoVisible ? 1 : 0)
+
+                VStack(alignment: .leading, spacing: 18) {
+                    Text(item.title)
+                        .font(.system(size: 56, weight: .bold))
+                        .foregroundColor(.white)
+                    Text("matchedGeometryEffect Demo —— 按 Menu 键返回")
+                        .font(.system(size: 20))
+                        .foregroundColor(.white.opacity(0.65))
+                    Button {
+                        // Demo 占位
+                    } label: {
+                        Text("立即播放")
+                            .font(.system(size: 22, weight: .semibold))
+                            .foregroundColor(.black)
+                            .padding(.horizontal, 34)
+                            .padding(.vertical, 15)
+                            .background(Capsule().fill(Color.white))
+                    }
+                    .buttonStyle(FNOSBareButtonStyle())
+                    .focused($detailButtonFocused)
+                }
+                .padding(72)
+                .opacity(infoVisible ? 1 : 0)
+                .offset(y: infoVisible ? 0 : 16)
+            }
+        }
+        .ignoresSafeArea()
+        .onAppear {
+            // 形变启动后再淡入信息层并落焦点（延迟的是独立图层，不是几何插值本身）
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) {
+                withAnimation(.easeOut(duration: 0.35)) { infoVisible = true }
+                detailButtonFocused = true
+            }
+        }
+        .onExitCommand { close() }
+    }
+
+    // MARK: 打开 / 关闭（各一次 withAnimation，几何插值全程连续）
+
+    private func open(_ item: DemoItem) {
+        infoVisible = false
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+            selected = item
+        }
+    }
+
+    private func close() {
+        let returning = selected
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+            infoVisible = false
+            selected = nil
+        }
+        if let returning { focusedCard = returning.id }
     }
 }

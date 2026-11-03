@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v71"
+    static let version = "v72"
 
     /// 本版主要变更摘要
-    static let changes = "回滚详情页过渡动画：恢复为 v61 的 fullScreenCover 直接全屏弹出详情页（无任何过渡动画）。过渡动画（v62~v70）全部废弃，因 tvOS 官方不支持 .navigationTransition(.zoom)（系统回退 automatic），手搓方案又卡顿割裂"
+    static let changes = "新增「设置 → 过渡动画 Demo（实验）」：matchedGeometryEffect 卡片放大过渡可行性验证（单次 withAnimation 几何插值 + 信息层延迟淡入）。主流程无任何改动，验证通过后再决定是否移植到海报墙"
 }

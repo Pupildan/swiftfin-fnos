@@ -201,11 +201,17 @@ final class FNOSDirectClient {
 enum FNOSProgressStore {
     private static let prefix = "fnos.prog."
     private static let seriesPrefix = "fnos.prog.series."
+    private static let indexKey = "fnos.prog.index"
 
-    /// 条目播放进度（秒）
+    /// 条目播放进度（秒）；同时维护最近记录索引（首页「继续播放」本地兜底用）
     static func save(itemID: String, seconds: Double) {
         guard seconds > 0 else { return }
         UserDefaults.standard.set(seconds, forKey: prefix + itemID)
+        var ids = UserDefaults.standard.stringArray(forKey: indexKey) ?? []
+        ids.removeAll { $0 == itemID }
+        ids.insert(itemID, at: 0)
+        if ids.count > 20 { ids = Array(ids.prefix(20)) }
+        UserDefaults.standard.set(ids, forKey: indexKey)
     }
 
     static func load(itemID: String) -> Double? {
@@ -215,6 +221,23 @@ enum FNOSProgressStore {
 
     static func clear(itemID: String) {
         UserDefaults.standard.removeObject(forKey: prefix + itemID)
+        var ids = UserDefaults.standard.stringArray(forKey: indexKey) ?? []
+        ids.removeAll { $0 == itemID }
+        UserDefaults.standard.set(ids, forKey: indexKey)
+    }
+
+    /// 最近有本地进度的条目（新→旧）：服务端 /Sessions 上报是空壳 204（接受不入库），
+    /// 首页「继续播放」用本地记录兜底合并，本机播过的立刻可见。
+    static func recentItems(limit: Int) -> [(itemID: String, seconds: Double)] {
+        let ids = UserDefaults.standard.stringArray(forKey: indexKey) ?? []
+        var out: [(itemID: String, seconds: Double)] = []
+        for id in ids {
+            if let s = load(itemID: id) {
+                out.append((id, s))
+                if out.count >= limit { break }
+            }
+        }
+        return out
     }
 
     /// 剧集观看位置：剧 Id → 最近看的集（详情页「继续播放 第N集」用）。

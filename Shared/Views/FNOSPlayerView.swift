@@ -252,6 +252,8 @@ struct FNOSPlayerContainerView: View {
     var seriesID: String? = nil
     /// 继续播放起点（0~1 比例，来自服务端多端同步进度；nil = 从头播）
     var startFraction: Double? = nil
+    /// 继续播放起点（秒，v91 直通——详情页本地记录不再经 RunTimeTicks 换算）
+    var startSeconds: Double? = nil
 
     @Environment(\.dismiss)
     private var dismiss
@@ -367,15 +369,21 @@ struct FNOSPlayerContainerView: View {
     /// - `dv_profile = 5`（IPTPQc2，无 HDR10 基线层）→ KS 必偏色 → 切 mpv
     /// - `dv_profile = 8`（如《阿凡达：火与烬》compat_id=1）→ 自带 HDR10 基线层，KS 解出来就是对的 → 留 KS
     @MainActor
-    /// 继续播放起点（秒）：首页按「服务端进度 tick / 条目时长 tick」换算的比例，
-    /// 这里再乘以条目时长秒数（plausibleSeconds 处理飞牛 tick 单位不统一问题）
+    /// 继续播放起点（秒）：v91 秒数直通优先；比例路径在条目 RunTimeTicks
+    /// 缺失/单位出格（plausibleSeconds 判 nil）时按标准 100ns 兜底估算
     private var resumeStartSeconds: Double? {
+        if let startSeconds { return startSeconds }
         guard let startFraction else { return nil }
-        guard let seconds = FNOSItem.plausibleSeconds(
+        if let seconds = FNOSItem.plausibleSeconds(
             ticks: item.RunTimeTicks,
             isEpisode: item.type == "Episode"
-        ) else { return nil }
-        return startFraction * seconds
+        ) {
+            return startFraction * seconds
+        }
+        if let ticks = item.RunTimeTicks, ticks > 0 {
+            return startFraction * Double(ticks) / 10_000_000
+        }
+        return nil
     }
 
     private func probeProfile() async {

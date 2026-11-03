@@ -235,7 +235,8 @@ struct FNOSItemDetailView: View {
                     playbackTarget = nil
                 },
                 seriesID: target.seriesID,
-                startFraction: target.startFraction
+                startFraction: target.startFraction,
+                startSeconds: target.startSeconds
             )
         }
         // v82：拦截 Menu 交给外层——有卡片来源时反向缩回，无来源时普通关闭。
@@ -267,13 +268,6 @@ struct FNOSItemDetailView: View {
             return "继续播放"
         }
         return "立即播放"
-    }
-
-    /// 本地进度秒 → 0~1 播放比例（与播放器 resumeStartSeconds 同基准：plausibleSeconds 兜底单位换算）
-    private func resumeFraction(seconds: Double?, for target: FNOSItem) -> Double? {
-        guard let seconds, seconds > 30 else { return nil }
-        guard let runtime = FNOSItem.plausibleSeconds(ticks: target.RunTimeTicks, isEpisode: target.type == "Episode") else { return nil }
-        return min(0.98, seconds / runtime)
     }
 
     // MARK: - Hero 信息增强（v85：色彩档位 + 评分）
@@ -1072,17 +1066,16 @@ struct FNOSItemDetailView: View {
 
     private func playNow() {
         if item.type == "Series" {
-            // v87 续播：优先本地记录的最近集（当前列表 + 跨季池查找），带进度。
-            // v90：秒数兜底——单集条目记录缺失时用剧级映射里的秒数，不再回退从头播。
+            // v91 续播：秒数直通（单集记录缺失时用剧级映射秒数），不再经 RunTimeTicks 换算
             if let resume = seriesResume {
                 let pool = episodes + episodesBySeason.values.flatMap { $0 }
                 let ep = pool.first { $0.Id == resume.episodeItemID }
                     ?? pool.first { $0.IndexNumber == resume.episodeNumber }
                 if let ep {
                     let seconds = FNOSProgressStore.load(itemID: ep.Id) ?? resume.seconds
-                    let fraction = resumeFraction(seconds: seconds, for: ep)
-                    FNOSDiag.shared.add("剧集续播: 第\(resume.episodeNumber)集 起始\(seconds.map { Int($0) }.map(String.init) ?? "0")s → \(fraction != nil ? "带进度" : "从头（无记录/过短）")")
-                    playEpisode(ep, startFraction: fraction)
+                    let start = (seconds ?? 0) > 30 ? seconds : nil
+                    FNOSDiag.shared.add("剧集续播: 第\(resume.episodeNumber)集 起始\(seconds.map { Int($0) }.map(String.init) ?? "0")s → \(start != nil ? "带进度" : "从头（无记录/过短）")")
+                    playEpisode(ep, startSeconds: start)
                     return
                 }
                 FNOSDiag.shared.add("剧集续播: 记录的第\(resume.episodeNumber)集不在列表 → 回退第1集", dedupeKey: "series.ep.\(item.Id)")
@@ -1099,16 +1092,16 @@ struct FNOSItemDetailView: View {
             return
         }
         loadError = nil
-        // v87：有本地记录 → 直接带进度续播
+        // v91：有本地记录 → 秒数直通续播
         playbackTarget = FNOSPlaybackTarget(
             item: item,
             client: client,
             userID: userID,
-            startFraction: resumeFraction(seconds: localResumeSeconds, for: item)
+            startSeconds: (localResumeSeconds ?? 0) > 30 ? localResumeSeconds : nil
         )
     }
 
-    private func playEpisode(_ ep: FNOSItem, startFraction: Double? = nil) {
+    private func playEpisode(_ ep: FNOSItem, startSeconds: Double? = nil) {
         guard let client else { return }
         // 保持传完整剧集列表给播放器（启用换集面板与集数信息）；seriesID 供剧集续播位置记录
         playbackTarget = FNOSPlaybackTarget(
@@ -1117,7 +1110,7 @@ struct FNOSItemDetailView: View {
             userID: userID,
             seriesName: item.Name,
             seriesID: item.Id,
-            startFraction: startFraction
+            startSeconds: startSeconds
         )
     }
 

@@ -20,6 +20,8 @@ struct FNOSPlaybackTarget: Identifiable {
     var seriesID: String? = nil
     /// 继续播放起点（0~1 比例；由服务端/本地进度换算，与飞牛 tick 单位无关）
     var startFraction: Double? = nil
+    /// 继续播放起点（秒，v91 直通——绕开条目 RunTimeTicks 缺失导致的换算失败）
+    var startSeconds: Double? = nil
 }
 
 /// 单个媒体库的横向海报墙数据
@@ -28,6 +30,15 @@ struct FNOSLibrarySection: Identifiable {
     var items: [FNOSItem]
 
     var id: String { library.Id }
+}
+
+/// 继续播放条目（v91）：服务端记录（多端）+ 本地记录兜底合并后的展示单元。
+/// startSeconds 非空 = 本机记录（直接按秒续播）；否则按 fraction（服务端 UserData 比例）。
+struct FNOSResumeEntry: Identifiable {
+    let item: FNOSItem
+    let fraction: Double
+    let startSeconds: Double?
+    var id: String { item.Id }
 }
 
 /// 飞牛影视（fnOS）主界面 —— Apple TV+ 沉浸式布局。
@@ -45,8 +56,8 @@ struct FNOSMainView: View {
     @State private var userID = ""
 
     @State private var sections: [FNOSLibrarySection] = []
-    /// 继续播放（/Items/Resume，飞牛服务端多端同步记录）；为空 → 行隐藏
-    @State private var resumeItems: [FNOSItem] = []
+    /// 继续播放（v91：服务端记录 + 本地记录兜底合并）；为空 → 行隐藏
+    @State private var resumeEntries: [FNOSResumeEntry] = []
     @State private var isLoading = false
     @State private var didBootstrap = false
 
@@ -133,7 +144,7 @@ struct FNOSMainView: View {
                                             Task { @MainActor in
                                                 try? await Task.sleep(for: .milliseconds(450))
                                                 // 有继续播放记录时优先落「继续播放」首卡，其次媒体库首卡
-                                                if let lead = resumeItems.first?.Id
+                                                if let lead = resumeEntries.first?.item.Id
                                                     ?? sections.first(where: { !$0.items.isEmpty })?.items.first?.Id {
                                                     shelfCardFocused = lead
                                                 }
@@ -145,8 +156,8 @@ struct FNOSMainView: View {
 
                                 // 媒体库横向海报墙（非懒容器：保证屏外行存在，焦点引擎才有落点）
                                 VStack(alignment: .leading, spacing: 44) {
-                                    // 继续播放（多端同步记录）：有记录才显示
-                                    if !resumeItems.isEmpty {
+                                    // 继续播放（服务端 + 本机记录合并）：有记录才显示
+                                    if !resumeEntries.isEmpty {
                                         resumeShelf(screenWidth: geo.size.width)
                                     }
                                     ForEach(sections.filter { !$0.items.isEmpty }) { section in
@@ -234,7 +245,7 @@ struct FNOSMainView: View {
             await bootstrapIfNeeded()
         }
         .fullScreenCover(item: $playbackTarget, onDismiss: {
-            refreshResumeItems()
+            rebuildResumeEntries()
         }) { target in
             FNOSPlayerContainerView(
                 item: target.item,
@@ -242,7 +253,8 @@ struct FNOSMainView: View {
                 userID: target.userID,
                 seriesName: target.seriesName,
                 seriesID: target.seriesID,
-                startFraction: target.startFraction
+                startFraction: target.startFraction,
+                startSeconds: target.startSeconds
             )
         }
         // 详情页走 fullScreenCover（系统原生处理 Menu，可靠关闭，v77 嵌入已回滚）。
@@ -250,7 +262,7 @@ struct FNOSMainView: View {
         // （有卡片来源时反向缩回）；onDismiss 兜底系统路径并负责还焦点 + v89 刷新继续播放。
         .fullScreenCover(item: $detailItem, onDismiss: {
             closeDetail()
-            refreshResumeItems()
+            rebuildResumeEntries()
         }) { item in
             FNOSItemDetailView(
                 item: item,
@@ -273,7 +285,7 @@ struct FNOSMainView: View {
                     // 索引与页面错位 → 标题与海报不是同一部（图文错位）。
                     sections = []
                     heroSnapshot = []
-                    resumeItems = []
+                    resumeEntries = []
                     // 立即进入加载态：避免清空数据到新数据回来之间闪一下「暂无内容」
                     isLoading = true
                     didBootstrap = false
@@ -543,8 +555,8 @@ struct FNOSMainView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: spacing) {
-                    ForEach(resumeItems) { item in
-                        resumeCard(item, width: cardWidth)
+                    ForEach(resumeEntries) { entry in
+                        resumeCard(entry, width: cardWidth)
                     }
                 }
                 .padding(.horizontal, hPadding)
@@ -553,18 +565,9 @@ struct FNOSMainView: View {
         }
     }
 
-    private func resumeCard(_ item: FNOSItem, width: CGFloat) -> some View {
-        let fraction: Double = {
-            // 位置与时长来自同一响应，tick 单位一致 → 比值与飞牛单位无关
-            if let pos = item.UserData?.PlaybackPositionTicks, pos > 0,
-               let runtime = item.RunTimeTicks, runtime > 0 {
-                return min(0.98, max(0.01, Double(pos) / Double(runtime)))
-            }
-            if let pct = item.UserData?.PlayedPercentage {
-                return min(0.98, max(0.01, pct / 100))
-            }
-            return 0
-        }()
+    private func resumeCard(_ entry: FNOSResumeEntry, width: CGFloat) -> some View {
+        let item = entry.item
+        let fraction = entry.fraction
         // ATV+ 版式：名称直接叠在图上；信息行 = 剧集「第N集 · 剩X分」/ 电影「剩 X小时Y分钟」
         let cardTitle: String = item.type == "Episode"
             ? (item.SeriesName ?? item.Name ?? "剧集")
@@ -582,7 +585,7 @@ struct FNOSMainView: View {
         }()
 
         return Button {
-            openResume(item: item)
+            openResume(entry: entry)
         } label: {
             ZStack(alignment: .bottomLeading) {
                 FNOSAsyncImage(
@@ -639,36 +642,56 @@ struct FNOSMainView: View {
         return "\(m)分钟"
     }
 
-    /// 继续播放卡点击：按服务端记录的进度直接续播（剧集单集直开，不弹选集面板）
-    private func openResume(item: FNOSItem) {
+    /// 继续播放卡点击：本机记录按秒直续；服务端记录按比例续播（剧集单集直开，不弹选集面板）
+    private func openResume(entry: FNOSResumeEntry) {
         guard let client else { return }
-        var fraction: Double?
-        if let pos = item.UserData?.PlaybackPositionTicks, pos > 0,
-           let runtime = item.RunTimeTicks, runtime > 0 {
-            fraction = min(0.98, max(0.01, Double(pos) / Double(runtime)))
-        } else if let pct = item.UserData?.PlayedPercentage {
-            fraction = min(0.98, max(0.01, pct / 100))
-        }
+        let item = entry.item
         lastOpenedCardID = nil
         lastFlightCtx = nil
-        print("FNOSℹ️继续播放: \(item.Name ?? "?") @\(String(format: "%.0f", (fraction ?? 0) * 100))%")
+        print("FNOSℹ️继续播放: \(item.Name ?? "?") @\(String(format: "%.0f", entry.fraction * 100))%")
         playbackTarget = FNOSPlaybackTarget(
             item: item,
             client: client,
             userID: userID,
             seriesName: item.SeriesName,
             seriesID: item.SeriesId,
-            startFraction: fraction
+            startFraction: entry.startSeconds == nil ? entry.fraction : nil,
+            startSeconds: entry.startSeconds
         )
     }
 
     // MARK: - 导航（详情过渡）
 
-    /// v89：静默刷新「继续播放」（播放器关闭 / 详情关闭后回主页时调用，播过的立刻上榜）
-    private func refreshResumeItems() {
+    /// v91：重建「继续播放」——服务端多端记录优先，本机记录（UserDefaults 索引）兜底合并。
+    /// 服务端 /Sessions 上报是空壳 204（接受不入库，诊断面板证实），本机播过的必须走本地兜底才可见。
+    private func rebuildResumeEntries() {
         guard let client else { return }
         Task {
-            resumeItems = await client.fetchResumeItems(userID: userID, limit: 6)
+            var entries: [FNOSResumeEntry] = []
+            var seen = Set<String>()
+            // 1) 服务端多端记录（UserData 位置/时长同响应，比值与飞牛 tick 单位无关）
+            for item in await client.fetchResumeItems(userID: userID, limit: 6) {
+                guard seen.insert(item.Id).inserted else { continue }
+                var fraction = 0.0
+                if let pos = item.UserData?.PlaybackPositionTicks, pos > 0,
+                   let runtime = item.RunTimeTicks, runtime > 0 {
+                    fraction = min(0.98, max(0.01, Double(pos) / Double(runtime)))
+                } else if let pct = item.UserData?.PlayedPercentage {
+                    fraction = min(0.98, max(0.01, pct / 100))
+                }
+                entries.append(FNOSResumeEntry(item: item, fraction: fraction, startSeconds: nil))
+            }
+            // 2) 本机记录兜底（>30s 才上榜，与详情页续播阈值一致）
+            for (itemID, seconds) in FNOSProgressStore.recentItems(limit: 6) {
+                guard seen.insert(itemID).inserted, seconds > 30,
+                      let item = allItems.first(where: { $0.Id == itemID }) else { continue }
+                var fraction = 0.0
+                if let runtime = FNOSItem.plausibleSeconds(ticks: item.RunTimeTicks, isEpisode: item.type == "Episode") {
+                    fraction = min(0.98, seconds / runtime)
+                }
+                entries.append(FNOSResumeEntry(item: item, fraction: fraction, startSeconds: seconds))
+            }
+            resumeEntries = Array(entries.prefix(6))
         }
     }
 
@@ -922,8 +945,8 @@ struct FNOSMainView: View {
             rollHeroIfNeeded()
             // Hero 快照只在此处（bootstrap / 下拉刷新）生成一次
             refreshHeroSnapshot()
-            // 继续播放（服务端多端同步记录）；失败/为空 → 行隐藏；只展示最近 6 条（ATV 版式）
-            resumeItems = await newClient.fetchResumeItems(userID: userID, limit: 6)
+            // 继续播放（v91：服务端 + 本机记录合并；只展示最近 6 条，ATV 版式）
+            rebuildResumeEntries()
         } catch {
             isLoading = false
             print("FNOS❗️加载媒体库失败: \(error)")
@@ -981,8 +1004,8 @@ struct FNOSHomeSettingsView: View {
     // 杜比视界按 HDR10 输出（规避紫绿偏色）
     @AppStorage("fnos.play.hdr10Compat") private var hdr10Compat = true
 
-    // v87 应用内诊断（真机无控制台，设置面板截图回报用）
-    @State private var diagLines: [String] = []
+    // v91 全屏诊断入口
+    @State private var showDiagFull = false
 
     // 播放器引擎：默认 KSPlayer；开启后走 mpv（MPVUI），用于杜比视界 P5 的色彩转换
     @AppStorage("fnos.play.engineMPV") private var engineMPV = false
@@ -1025,22 +1048,17 @@ struct FNOSHomeSettingsView: View {
 
                     section(
                         "诊断信息（真机无控制台）",
-                        footer: "最近的关键链路留痕。遇到「继续播放没记录 / 某媒体库没数据」时，把本区块截图发给开发者。"
+                        footer: "遇到「继续播放没记录 / 某媒体库没数据」时，打开全屏诊断整屏截图发给开发者。"
                     ) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            ForEach(diagLines, id: \.self) { line in
-                                Text(line)
-                                    .font(.system(size: 14, design: .monospaced))
-                                    .foregroundColor(.secondary)
-                                    .lineLimit(2)
-                            }
-                            if diagLines.isEmpty {
-                                Text("暂无诊断记录")
-                                    .font(.system(size: 14))
-                                    .foregroundColor(.secondary)
-                            }
+                        FNOSSettingRow(
+                            title: "打开全屏诊断（整屏截图用）",
+                            systemImage: "stethoscope"
+                        ) {
+                            showDiagFull = true
                         }
-                        .onAppear { diagLines = FNOSDiag.shared.snapshot() }
+                        .fullScreenCover(isPresented: $showDiagFull) {
+                            FNOSDiagView()
+                        }
                     }
 
                     section(
@@ -2101,5 +2119,49 @@ struct FNOSDetailFlightOverlay: View {
         .frame(width: hW, height: tileH)
         .position(x: posX, y: posY)
         .scaleEffect(rowScale, anchor: anchor)
+    }
+}
+
+// MARK: - 全屏诊断页（v91：真机无控制台，整屏截图回报用；最新在最上）
+
+struct FNOSDiagView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var lines: [String] = []
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("诊断信息")
+                    .font(.system(size: 36, weight: .bold))
+                    .foregroundColor(.white)
+                Text("最新在最上 · 整屏截图发给开发者 · 按 Menu 返回")
+                    .font(.system(size: 16))
+                    .foregroundColor(.white.opacity(0.55))
+                ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
+                    Text(line)
+                        .font(.system(size: 17, design: .monospaced))
+                        .foregroundColor(index == 0 ? .green : .white.opacity(0.92))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if lines.isEmpty {
+                    Text("暂无诊断记录")
+                        .font(.system(size: 17))
+                        .foregroundColor(.white.opacity(0.55))
+                }
+            }
+            .padding(50)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .background(Color.black.ignoresSafeArea())
+        .onAppear { lines = Array(FNOSDiag.shared.snapshot().reversed()) }
+        .task {
+            // 停留期间新留痕每秒上屏（最新置顶）
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                let snap = Array(FNOSDiag.shared.snapshot().reversed())
+                if snap != lines { lines = snap }
+            }
+        }
+        .onExitCommand { dismiss() }
     }
 }

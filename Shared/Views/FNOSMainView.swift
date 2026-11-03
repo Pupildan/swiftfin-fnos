@@ -1008,12 +1008,14 @@ fileprivate struct FNOSSeasonsSheet: View {
     }
 }
 
-// MARK: - 过渡动画 Demo（matchedGeometryEffect 可行性验证，独立于主工程逻辑）
+
+// MARK: - 过渡动画 Demo v2（matchedGeometryEffect 可行性验证，独立于主工程逻辑）
 //
-// 验证目标：真机上"卡片 → 全屏 → 返回缩回"是否顺滑。
-// 实现：单次 withAnimation 驱动 matchedGeometryEffect 几何插值（SwiftUI 原生引擎，无分段 sleep）；
-// 信息层延迟淡入是独立图层动画，不参与、不打断几何插值。
-// 验证通过后再移植到海报墙；不通过则删除本结构体与设置入口即可。
+// v2 修复（v1 两个致命问题的根因）：
+// 1. 卡片挤在一起：v1 卡片无固定尺寸，aspectRatio 在 ScrollView 里布局歧义 → 改固定 300x450
+// 2. 进入/返回全失效：v1 点卡片后原卡片只是 opacity(0)，仍占据焦点 —— tvOS 焦点引擎
+//    停在看不见的卡上，确认/Menu 全被它吃掉。v2 在详情打开时把海报行 .disabled，
+//    强制焦点转移到详情层；焦点样式改用系统 .card（全自动、最可靠）。
 
 struct FNOSHeroTransitionDemo: View {
 
@@ -1035,25 +1037,23 @@ struct FNOSHeroTransitionDemo: View {
     @Namespace private var ns
     @State private var selected: DemoItem?
     @State private var infoVisible = false
-    @FocusState private var focusedCard: String?
-    @FocusState private var detailButtonFocused: Bool
+    @FocusState private var playFocused: Bool
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
 
-            // 海报墙（详情打开时整页压暗微缩，模拟"背景退后"）
-            ScrollView(.vertical, showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 48) {
-                    shelf(title: "正在热映", items: Array(items.prefix(3)))
-                    shelf(title: "经典片单", items: Array(items.suffix(3)))
-                }
-                .padding(.vertical, 60)
+            // 海报墙（不用 ScrollView，固定尺寸 3 卡一行；详情打开时整行禁用+压暗）
+            VStack(alignment: .leading, spacing: 56) {
+                shelf(title: "正在热映", items: Array(items.prefix(3)))
+                shelf(title: "经典片单", items: Array(items.suffix(3)))
+                Spacer()
             }
+            .padding(.top, 70)
             .opacity(selected == nil ? 1 : 0.35)
             .scaleEffect(selected == nil ? 1 : 0.97)
-            .allowsHitTesting(selected == nil)
+            .disabled(selected != nil)
 
             // 详情覆盖层（与卡片共用同一 matchedGeometryEffect）
             if let item = selected {
@@ -1061,34 +1061,27 @@ struct FNOSHeroTransitionDemo: View {
                     .zIndex(10)
             }
         }
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                focusedCard = items.first?.id
-            }
-        }
-        // 详情未打开时按 Menu = 退出 Demo（回到设置）
+        // 详情未打开时按 Menu = 退出 Demo
         .onExitCommand {
             if selected == nil { dismiss() }
         }
     }
 
-    // MARK: 海报行
+    // MARK: 海报行（固定尺寸，系统 .card 焦点样式）
 
     private func shelf(title: String, items: [DemoItem]) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
+        VStack(alignment: .leading, spacing: 20) {
             Text(title)
-                .font(.system(size: 22, weight: .semibold))
+                .font(.system(size: 24, weight: .semibold))
                 .foregroundColor(.white.opacity(0.9))
-                .padding(.horizontal, 72)
+                .padding(.horizontal, 90)
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 28) {
-                    ForEach(items) { item in
-                        cardButton(item)
-                    }
+            HStack(spacing: 34) {
+                ForEach(items) { item in
+                    cardButton(item)
                 }
-                .padding(.horizontal, 72)
             }
+            .padding(.horizontal, 90)
         }
     }
 
@@ -1105,12 +1098,10 @@ struct FNOSHeroTransitionDemo: View {
                         .matchedGeometryEffect(id: item.id, in: ns)
                 }
             }
-            .aspectRatio(2 / 3, contentMode: .fit)
-            .scaleEffect(focusedCard == item.id ? 1.06 : 1.0)
-            .animation(.easeOut(duration: 0.18), value: focusedCard == item.id)
+            // 固定尺寸：布局零歧义
+            .frame(width: 300, height: 450)
         }
-        .buttonStyle(FNOSBareButtonStyle())
-        .focused($focusedCard, equals: item.id)
+        .buttonStyle(.card)
     }
 
     // 卡片与放大层共用同一份内容（几何插值前后是同一个视图，缩放全程无换图）
@@ -1119,7 +1110,7 @@ struct FNOSHeroTransitionDemo: View {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
                 .fill(LinearGradient(colors: item.colors, startPoint: .topLeading, endPoint: .bottomTrailing))
             Text(item.title)
-                .font(.system(size: 28, weight: .bold))
+                .font(.system(size: 30, weight: .bold))
                 .foregroundColor(.white.opacity(0.9))
                 .opacity(selected == nil ? 1 : 0)
                 .animation(.easeOut(duration: 0.25), value: selected?.id)
@@ -1138,8 +1129,8 @@ struct FNOSHeroTransitionDemo: View {
                     .matchedGeometryEffect(id: item.id, in: ns)
                     .frame(width: geo.size.width, height: geo.size.width * 9 / 16)
                     .clipped()
-                    .frame(maxHeight: .infinity, alignment: .top)
-                    .ignoresSafeArea()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .ignoresSafeArea(edges: .top)
 
                 // 底部渐变 + 信息层（延迟淡入，独立于几何插值）
                 LinearGradient(
@@ -1151,8 +1142,9 @@ struct FNOSHeroTransitionDemo: View {
                     endPoint: .bottom
                 )
                 .opacity(infoVisible ? 1 : 0)
+                .allowsHitTesting(false)
 
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 20) {
                     Text(item.title)
                         .font(.system(size: 56, weight: .bold))
                         .foregroundColor(.white)
@@ -1163,16 +1155,12 @@ struct FNOSHeroTransitionDemo: View {
                         // Demo 占位
                     } label: {
                         Text("立即播放")
-                            .font(.system(size: 22, weight: .semibold))
-                            .foregroundColor(.black)
-                            .padding(.horizontal, 34)
-                            .padding(.vertical, 15)
-                            .background(Capsule().fill(Color.white))
+                            .font(.system(size: 24, weight: .semibold))
                     }
-                    .buttonStyle(FNOSBareButtonStyle())
-                    .focused($detailButtonFocused)
+                    .buttonStyle(.card)
+                    .focused($playFocused)
                 }
-                .padding(72)
+                .padding(90)
                 .opacity(infoVisible ? 1 : 0)
                 .offset(y: infoVisible ? 0 : 16)
             }
@@ -1182,9 +1170,10 @@ struct FNOSHeroTransitionDemo: View {
             // 形变启动后再淡入信息层并落焦点（延迟的是独立图层，不是几何插值本身）
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) {
                 withAnimation(.easeOut(duration: 0.35)) { infoVisible = true }
-                detailButtonFocused = true
+                playFocused = true
             }
         }
+        // 按 Menu = 关闭详情（此时海报行已 disabled，焦点必在本层，Menu 必达这里）
         .onExitCommand { close() }
     }
 
@@ -1198,11 +1187,10 @@ struct FNOSHeroTransitionDemo: View {
     }
 
     private func close() {
-        let returning = selected
         withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
             infoVisible = false
             selected = nil
         }
-        if let returning { focusedCard = returning.id }
+        // 海报行恢复 enabled 后，系统焦点引擎自动把焦点还给卡片
     }
 }

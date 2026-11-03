@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v72"
+    static let version = "v73"
 
     /// 本版主要变更摘要
-    static let changes = "新增「设置 → 过渡动画 Demo（实验）」：matchedGeometryEffect 卡片放大过渡可行性验证（单次 withAnimation 几何插值 + 信息层延迟淡入）。主流程无任何改动，验证通过后再决定是否移植到海报墙"
+    static let changes = "过渡动画 Demo v2：修卡片挤压（固定 300x450 尺寸）与进入/返回失效（根因是被隐藏的卡片仍占据 tvOS 焦点，现详情打开时禁用海报行强制焦点转移，焦点样式改系统 .card 全自动处理）"
 }

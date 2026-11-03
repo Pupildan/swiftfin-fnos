@@ -1072,15 +1072,20 @@ struct FNOSItemDetailView: View {
 
     private func playNow() {
         if item.type == "Series" {
-            // v87 续播：优先本地记录的最近集（当前列表 + 跨季池查找），带进度
+            // v87 续播：优先本地记录的最近集（当前列表 + 跨季池查找），带进度。
+            // v90：秒数兜底——单集条目记录缺失时用剧级映射里的秒数，不再回退从头播。
             if let resume = seriesResume {
                 let pool = episodes + episodesBySeason.values.flatMap { $0 }
                 let ep = pool.first { $0.Id == resume.episodeItemID }
                     ?? pool.first { $0.IndexNumber == resume.episodeNumber }
                 if let ep {
-                    playEpisode(ep, startFraction: resumeFraction(seconds: FNOSProgressStore.load(itemID: ep.Id), for: ep))
+                    let seconds = FNOSProgressStore.load(itemID: ep.Id) ?? resume.seconds
+                    let fraction = resumeFraction(seconds: seconds, for: ep)
+                    FNOSDiag.shared.add("剧集续播: 第\(resume.episodeNumber)集 起始\(seconds.map { Int($0) }.map(String.init) ?? "0")s → \(fraction != nil ? "带进度" : "从头（无记录/过短）")")
+                    playEpisode(ep, startFraction: fraction)
                     return
                 }
+                FNOSDiag.shared.add("剧集续播: 记录的第\(resume.episodeNumber)集不在列表 → 回退第1集", dedupeKey: "series.ep.\(item.Id)")
             }
             if let first = episodes.first {
                 playEpisode(first)

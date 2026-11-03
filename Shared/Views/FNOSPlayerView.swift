@@ -436,8 +436,16 @@ struct FNOSPlayerContainerView: View {
                 onProgress: { position in
                     lastMPVPosition = position
                     throttledProgressReport(position)
-                    // v87：本地进度（mpv 侧；剧集位置记录暂只覆盖 KS 路径）
+                    // v90：本地进度 + 剧集观看位置（mpv 侧补齐，含秒数）
                     FNOSProgressStore.save(itemID: item.Id, seconds: position)
+                    if item.type == "Episode", let sid = seriesID {
+                        FNOSProgressStore.saveSeriesProgress(
+                            seriesID: sid,
+                            episodeItemID: item.Id,
+                            episodeNumber: item.IndexNumber ?? 0,
+                            seconds: position
+                        )
+                    }
                 }
             ) {
                 Task {
@@ -473,6 +481,12 @@ struct FNOSPlayerContainerView: View {
     /// 解析原生直链：剧名 + 集数 → 季 → 集 → play/info → media/range
     @MainActor
     private func prepareMPV() async {
+        // v90：mpv 路径的续播诊断（此前只有 KS prepare 有，剧集走 mpv 时无痕）
+        if let resume = resumeStartSeconds, resume > 5 {
+            FNOSDiag.shared.add("续播(mpv): 记录 \(Int(resume))s → initialSeek")
+        } else {
+            FNOSDiag.shared.add("续播(mpv): 无起始进度（从头播放）", dedupeKey: "resume.mpv.none.\(item.Id)")
+        }
         guard let credentials = FNOSAuthStore.shared.credentials else {
             mpvNotice = "未登录"
             mpvFailed = true
@@ -599,7 +613,7 @@ struct FNOSPlayerContainerView: View {
                     coordinator.seek(time: target)
                     print("FNOSℹ️继续播放: seek → \(Int(target))s")
                 }
-                // v87 本地进度（续播主链路）+ 剧集观看位置（5s 节流落盘）
+                // v87 本地进度（续播主链路）+ 剧集观看位置（5s 节流落盘；v90 位置秒数入剧级映射）
                 if Date().timeIntervalSince(lastLocalSaveAt) > 5 {
                     lastLocalSaveAt = Date()
                     FNOSProgressStore.save(itemID: item.Id, seconds: currentTime)
@@ -607,7 +621,8 @@ struct FNOSPlayerContainerView: View {
                         FNOSProgressStore.saveSeriesProgress(
                             seriesID: sid,
                             episodeItemID: item.Id,
-                            episodeNumber: item.IndexNumber ?? 0
+                            episodeNumber: item.IndexNumber ?? 0,
+                            seconds: currentTime
                         )
                     }
                 }

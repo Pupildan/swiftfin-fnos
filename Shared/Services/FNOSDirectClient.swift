@@ -217,17 +217,20 @@ enum FNOSProgressStore {
         UserDefaults.standard.removeObject(forKey: prefix + itemID)
     }
 
-    /// 剧集观看位置：剧 Id → 最近看的集（详情页「继续播放 第N集」用）
-    static func saveSeriesProgress(seriesID: String, episodeItemID: String, episodeNumber: Int) {
-        UserDefaults.standard.set([episodeItemID, episodeNumber], forKey: seriesPrefix + seriesID)
+    /// 剧集观看位置：剧 Id → 最近看的集（详情页「继续播放 第N集」用）。
+    /// v90：位置秒数随映射一起存（[epItemID, epNumber, seconds]）——单集条目记录
+    /// 若缺失（如换引擎/清缓存），剧级秒数仍能续播，不再回退到第 1 集从头播。
+    static func saveSeriesProgress(seriesID: String, episodeItemID: String, episodeNumber: Int, seconds: Double) {
+        UserDefaults.standard.set([episodeItemID, episodeNumber, seconds], forKey: seriesPrefix + seriesID)
     }
 
-    static func loadSeriesProgress(seriesID: String) -> (episodeItemID: String, episodeNumber: Int)? {
+    static func loadSeriesProgress(seriesID: String) -> (episodeItemID: String, episodeNumber: Int, seconds: Double?)? {
         guard let arr = UserDefaults.standard.array(forKey: seriesPrefix + seriesID),
-              arr.count == 2,
+              arr.count >= 2,
               let epID = arr[0] as? String,
               let num = arr[1] as? Int else { return nil }
-        return (epID, num)
+        let seconds = arr.count >= 3 ? (arr[2] as? Double) : nil
+        return (epID, num, seconds)
     }
 }
 

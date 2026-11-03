@@ -59,8 +59,10 @@ struct FNOSMainView: View {
     // 本实现：直接用 tvOS 18+ 系统原生 zoom 过渡（.navigationTransition(.zoom) + matchedTransitionSource）。
     // 苹果已调好"卡片自身放大、背景自然压暗、连续缓动、反向归位"，不再手搓分段动画。
     @Namespace private var detailNamespace
-    /// 当前详情页条目（由 NavigationLink 的 navigationDestination 呈现）
+    /// 当前详情页条目（由 navigationDestination 呈现）
     @State private var detailItem: FNOSItem?
+    /// 详情页是否处于导航呈现中（navigationDestination(isPresented:) 用）
+    @State private var detailPresented = false
 
     // 首页设置面板（刷新/退出集成在内）
     @State private var showSettings = false
@@ -174,18 +176,24 @@ struct FNOSMainView: View {
                 .disabled(detailItem != nil)
             }
         }
-        .navigationDestination(item: $detailItem) { item in
-            FNOSItemDetailView(
-                item: item,
-                client: client,
-                userID: userID,
-                onEpisodes: { _ in
-                    // 剧集现在直接在详情页内选集，不再回调
-                }
-            )
-            // 系统原生 zoom 过渡：从卡片位置放大到详情页，反向自动缩回。
-            // 苹果已调好"卡片自身放大 + 背景压暗 + 连续缓动 + 反向归位"。
-            .navigationTransition(.zoom(sourceID: item.Id, in: detailNamespace))
+        .navigationDestination(isPresented: $detailPresented) {
+            if let item = detailItem {
+                FNOSItemDetailView(
+                    item: item,
+                    client: client,
+                    userID: userID,
+                    onEpisodes: { _ in
+                        // 剧集现在直接在详情页内选集，不再回调
+                    }
+                )
+                // 系统原生 zoom 过渡：从卡片位置放大到详情页，反向自动缩回。
+                // 苹果已调好"卡片自身放大 + 背景压暗 + 连续缓动 + 反向归位"。
+                .navigationTransition(.zoom(sourceID: item.Id, in: detailNamespace))
+            }
+        }
+        // 导航关闭后清空条目，解除主页 disabled 态
+        .onChange(of: detailPresented) { _, presented in
+            if !presented { detailItem = nil }
         }
         .task {
             await bootstrapIfNeeded()
@@ -353,15 +361,15 @@ struct FNOSMainView: View {
 
     // MARK: - 导航
 
-    /// 详情页入口：只负责设置 detailItem，由 navigationDestination + 系统 zoom 过渡负责呈现。
-    /// 不再手搓飞行层 / 分段动画 —— 之前"又卡顿又割裂"的根因就是手搓分段动画 + 独立贴图层。
+    /// 详情页入口：设置条目并触发导航，由 navigationDestination + 系统 zoom 过渡负责呈现。
     private func open(item: FNOSItem) {
         detailItem = item
+        detailPresented = true
     }
 
-    /// 返回：系统 zoom 反向过渡自动处理；这里只需清空当前条目，让导航栈回退。
+    /// 返回：系统 zoom 反向过渡自动处理；这里只需关闭导航呈现。
     private func closeDetail() {
-        detailItem = nil
+        detailPresented = false
     }
 
     /// Hero 播放入口：直接开始播放，不经过详情页

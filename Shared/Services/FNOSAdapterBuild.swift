@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v96"
+    static let version = "v97"
 
     /// 本版主要变更摘要
-    static let changes = "v96：①修复 v95 引入的媒体库海报丢失——瓦片请求头跟 URL 走（compat 条目误用原生 Authx 头导致整面 401）；②直播频道播放实装——原生 play/info(频道guid) → media_guid → media/range 直链走 mpv（协议实测），点击频道直接看；③继续播放时长基准修正——本机记录以播放器实测时长优先（兼容层时长 ticks 证实为垃圾值），服务端记录以原生 /play/list duration（秒）按标题匹配优先；④MV 目录层级播放待下版（库→目录→文件多级结构需递归解析）；⑤直播频道不写续播记录。"
+    static let changes = "v97：①TV直播 0 条修复——诊断证实 App 原生请求缺 X-Trim-Client 头（飞牛服务端按此识别调用方，缺失时直播库返回 Permission Error），原生 client 全量补上 web/631 头；②MV 播放实装——目录树递归下钻（play/info 探测可播 + parent_guid 逐层深入，深度 5），找到可播文件后走原生直链 mpv；③直播频道播放保持（v96 协议）。此前已实装：电影/剧集续播、自动连播、多端同步（原生 play/record）、评分/色彩徽章、继续播放合并（本机优先）。"
 }

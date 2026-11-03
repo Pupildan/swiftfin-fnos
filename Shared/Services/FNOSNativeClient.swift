@@ -178,6 +178,43 @@ final class FNOSNativeClient {
     /// 古风MV 为 Directory 文件条目；兼容层 /Items 对这两类库返回空，必须走原生。
     func listByAncestor(ancestorGUID: String, pageSize: Int = 60) async -> [FNOSNativeListItem] {
         let body = "{\"ancestor_guid\":\"\(Self.escape(ancestorGUID))\",\"page\":1,\"page_size\":\(pageSize)}"
+        return await listItemList(body: body, dedupeKey: "anc.\(ancestorGUID)")
+    }
+
+    /// 列目录的子条目（MV 目录树下钻用；v96 探测证实 parent_guid 过滤有效）
+    func listItemChildren(parentGUID: String, pageSize: Int = 10) async -> [FNOSNativeListItem] {
+        let body = "{\"parent_guid\":\"\(Self.escape(parentGUID))\",\"page\":1,\"page_size\":\(pageSize)}"
+        return await listItemList(body: body, dedupeKey: "children.\(parentGUID)")
+    }
+
+    /// 探测 guid 是否可直接播放（play/info 返回 media_guid = 可播；目录返回 -6）
+    func probePlayable(itemGUID: String) async -> Bool {
+        let body = "{\"item_guid\":\"\(Self.escape(itemGUID))\"}"
+        do {
+            let json = try await post(path: "api/v1/play/info", body: body)
+            return (json["code"] as? NSNumber)?.intValue == 0
+        } catch {
+            return false
+        }
+    }
+
+    /// v97：递归下钻目录树找可播放文件（MV 库是「库→目录→子目录→文件」多级结构）。
+    /// 每层：play/info 探测（可播即返回）→ parent_guid 下钻；深度上限 5。
+    func resolvePlayableGUID(startGUID: String) async -> String? {
+        var current = startGUID
+        for _ in 0..<5 {
+            if await probePlayable(itemGUID: current) {
+                return current
+            }
+            let children = await listItemChildren(parentGUID: current, pageSize: 10)
+            guard let next = children.first?.guid else { return nil }
+            current = next
+        }
+        FNOSDiag.shared.add("MV 下钻超过 5 层未找到可播文件", dedupeKey: "mv.deep.\(startGUID)")
+        return nil
+    }
+
+    private func listItemList(body: String, dedupeKey: String) async -> [FNOSNativeListItem] {
         do {
             let json = try await post(path: "api/v1/item/list", body: body)
             let list = (json["data"] as? [String: Any])?["list"] as? [[String: Any]] ?? []
@@ -192,7 +229,7 @@ final class FNOSNativeClient {
                 )
             }
         } catch {
-            FNOSDiag.shared.add("原生 listByAncestor 失败: \(error.localizedDescription)", dedupeKey: "anc.\(ancestorGUID)")
+            FNOSDiag.shared.add("原生 item/list 失败: \(error.localizedDescription)", dedupeKey: dedupeKey)
             return []
         }
     }
@@ -380,6 +417,10 @@ final class FNOSNativeClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("mode=relay", forHTTPHeaderField: "Cookie")
         request.setValue(token, forHTTPHeaderField: "Authorization")
+        // v97：客户端标识头——飞牛服务端按此识别调用方（Web JS 每请求必带），
+        // 缺失时部分路由（如 item/list 的直播库）返回 code=-5 Permission Error
+        request.setValue("web", forHTTPHeaderField: "X-Trim-Client")
+        request.setValue("631", forHTTPHeaderField: "X-Trim-Client-Version")
         // 签名的 path 必须与请求路径完全一致（含 /v 前缀）
         request.setValue(Self.authx(path: "/v/\(path)", body: bodyString), forHTTPHeaderField: "Authx")
         if let bodyString {

@@ -678,7 +678,8 @@ struct FNOSMainView: View {
             seriesName: item.SeriesName,
             seriesID: item.SeriesId,
             startFraction: entry.startSeconds == nil ? entry.fraction : nil,
-            startSeconds: entry.startSeconds
+            startSeconds: entry.startSeconds,
+            nativeItemGUID: item.nativePosterURL != nil ? item.Id : nil
         )
     }
 
@@ -746,29 +747,40 @@ struct FNOSMainView: View {
         }
     }
 
-    /// v96：原生条目直接播放（直播频道：play/info → media_guid → mpv media/range 直链）
-    private func playNativeDirect(item: FNOSItem) {
+    /// v96/v97：原生条目直接播放（直播频道 / MV 文件：play/info → media_guid → mpv media/range 直链）
+    private func playNativeDirect(item: FNOSItem, guid: String) {
         guard let client else { return }
         lastOpenedCardID = nil
         lastFlightCtx = nil
-        FNOSDiag.shared.add("直播播放: \(item.Name ?? "?")（原生直链）")
+        FNOSDiag.shared.add("原生播放: \(item.Name ?? "?") guid=\(guid.prefix(12))…")
         playbackTarget = FNOSPlaybackTarget(
             item: item,
             client: client,
             userID: userID,
-            nativeItemGUID: item.Id
+            nativeItemGUID: guid
         )
     }
 
     /// 海报墙卡片点击：起飞行层（方案 B+ v78）。
     /// 单次 withAnimation(.spring) 是底线 —— v62~v67 用 Task.sleep 分段动画导致卡顿割裂。
     private func openCard(item: FNOSItem) {
-        // v96：原生直通行——直播频道走原生直链播放（协议实测）；MV 目录层级未解暂提示
+        // v97：原生直通行——直播频道直接播；MV 目录树递归下钻找可播文件后播
         if item.nativePosterURL != nil {
             if item.type == "LiveChannel" {
-                playNativeDirect(item: item)
+                playNativeDirect(item: item, guid: item.Id)
             } else {
-                showDiag("MV 播放接入中（目录层级解析）")
+                showDiag("MV 解析中…")
+                guard let nativeClient else { showDiag("原生客户端未就绪"); return }
+                Task {
+                    if let guid = await nativeClient.resolvePlayableGUID(startGUID: item.Id) {
+                        await MainActor.run {
+                            showDiag("MV 就绪：\(item.Name ?? "?")")
+                            playNativeDirect(item: item, guid: guid)
+                        }
+                    } else {
+                        await MainActor.run { showDiag("MV 未找到可播放文件") }
+                    }
+                }
             }
             return
         }
@@ -1045,8 +1057,15 @@ struct FNOSMainView: View {
             ("MV", "古风热歌MV"),
         ]
         for target in targets {
-            guard let lib = libraries.first(where: { ($0.Name ?? "").contains(target.keyword) }),
-                  loaded.first(where: { $0.id == lib.Id })?.items.isEmpty == true else { continue }
+            guard let lib = libraries.first(where: {
+                ($0.Name ?? "").contains(target.keyword) ||
+                ($0.Name ?? "").lowercased().contains(target.keyword.lowercased())
+            }) else {
+                FNOSDiag.shared.add("原生库「\(target.label)」未在 /Views 找到", dedupeKey: "nlib.\(target.label)")
+                continue
+            }
+            // compat 行有数据就不需要原生（正常不该发生：兼容层对这两类库返回空）
+            if let existing = loaded.first(where: { $0.id == lib.Id }), !existing.items.isEmpty { continue }
             let natives = await native.listByAncestor(ancestorGUID: lib.Id, pageSize: 60)
             let items: [FNOSItem] = natives.compactMap { li -> FNOSItem? in
                 let cleanTitle = li.title
@@ -1057,7 +1076,7 @@ struct FNOSMainView: View {
                 return FNOSItem(
                     Id: li.guid,
                     Name: cleanTitle,
-                    ItemType: "Video",
+                    ItemType: li.type,
                     ProductionYear: nil,
                     Overview: nil,
                     ImageTags: nil,

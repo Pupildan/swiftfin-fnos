@@ -51,9 +51,9 @@ struct FNOSItemDetailView: View {
     @State private var doubanRating: Double?
     @State private var tomatoRating: Double?
 
-    // v87 本地续播：电影=条目进度秒；剧集=剧→最近看的集
+    // v87 本地续播：电影=条目进度秒；剧集=剧→最近看的集（v90 含秒数兑底）
     @State private var localResumeSeconds: Double?
-    @State private var seriesResume: (episodeItemID: String, episodeNumber: Int)?
+    @State private var seriesResume: (episodeItemID: String, episodeNumber: Int, seconds: Double?)?
 
     // 剧集选集状态（季优先，无季数据时按 10 集分段）
     @State private var episodes: [FNOSItem] = []

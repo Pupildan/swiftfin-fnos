@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v66"
+    static let version = "v67"
 
     /// 本版主要变更摘要
-    static let changes = "详情页过渡衔接优化：详情页图片在海报放大的过程中同步淡入（0.12s 起叠入，与放大重叠，消除铺满后闪切）；降低纯图静置时长（1.2s→0.55s），文字信息更快出现"
+    static let changes = "详情页过渡改两段式：海报放大过程中逐渐模糊变暗（消散感），放大到 60% 时详情页清晰图整屏淡入并与模糊海报重叠，随后海报消散、清晰图静置 0.45s 后信息层淡入；全程 0.4s 无停顿，消除卡顿与闪切"
 }

@@ -58,18 +58,21 @@ struct FNOSMainView: View {
     //   拿它当飞行层必然又糊又割裂 —— v63 的教训。
     // - 参考实现里焦点卡以外的同行卡片也一起放大、被推出画面（整页一个变换），不是静止压暗。
     //
-    // 本实现四段：
-    // ① 卡片位置先把内容由海报换成横图（0.12s，紧接着就开始运动，人眼跟着运动走） 0.06~0.18s
-    // ② 横图窗口从卡片真实 frame 长到全屏，同时整页放大 1.12 倍并压暗        0.34s
-    // ③ 详情页用同一张图淡入接管（同 URL 同缓存，接缝为零，只交接交互）       0.14s
-    // ④ 静置 1.1s 无 UI → 信息层淡入 + 上移 16pt                            0.45s
+    // 本实现（对齐参考的"两段式"）：
+    // ① 海报窗口放大，**同时越放大越模糊、越暗**（消散感，不是放大到清晰）    0.22s
+    // ② 放大到 60% 处，详情页清晰图整屏淡入，与还在消散的模糊海报重叠         0.16s
+    // ③ 模糊海报彻底消散（0.02s 内撤掉）→ 纯清晰图静置 0.45s → 信息层淡入 0.40s
     @State private var detailPhase: FNOSDetailPhase = .preview
-    /// 过渡中的飞行窗口（内容 = 该条目主图的高清版，与卡片同构图）
+    /// 过渡中的飞行窗口（内容 = 该条目主图，与卡片同构图）
     @State private var flightItem: FNOSItem?
     /// 窗口矩形：起点 = 卡片真实 frame，终点 = 全屏
     @State private var flightFrame: CGRect = .zero
     @State private var flightRadius: CGFloat = 14
-    /// 飞行层用图：Primary 的 1920 宽版本（卡片上显示的是 400，这里单独要高清扫图，放大才不糊）
+    /// 放大过程中逐渐加强的模糊（0 → 24）：海报"消散"而非"放大到清晰"
+    @State private var flightBlur: Double = 0
+    /// 放大过程中逐渐压暗（0 → 0.5）：让模糊海报淡成暗影，避免与详情图抢
+    @State private var flightDim: Double = 0
+    /// 飞行层用图：Primary 的 1920 宽版本（卡片上显示的是 400）
     @State private var flightPoster: URL?
     @State private var detailOpacity: Double = 0
     /// 只有「被点的那一行」跟着放大 —— 参考里上下两行纹丝不动
@@ -466,6 +469,8 @@ struct FNOSMainView: View {
         detailOpacity = 0
         flightFrame = card
         flightRadius = 14
+        flightBlur = 0
+        flightDim = 0
         flightPoster = highResPosterURL(for: item)
         flightItem = item
         // 提前挂载详情页：keyart 在放大的 0.3s 里加载完，溶解时不用等
@@ -482,26 +487,32 @@ struct FNOSMainView: View {
 
         transitionTask?.cancel()
         transitionTask = Task { @MainActor in
-            // 关键：详情页不是"等海报铺满后再闪进来"，而是**在放大的过程中就同步淡入**，
-            // 叠在海报之上一起走到全屏 —— 参考里"海报放大 + 详情页衔接出现"是一件事，不是两段。
-            // 时序：0.12s 起详情页就开始淡入，到 0.30s 海报到全屏时详情页已完全盖住它。
-            withAnimation(.easeOut(duration: 0.30)) {
+            // ① 按下即起跳：海报放大，**同时越放大越模糊、越暗**（消散感），当前行推近淡出。
+            //    全程 0.22s，比参考的 0.4s 略快，减少拖沓。
+            withAnimation(.easeOut(duration: 0.22)) {
                 flightFrame = CGRect(origin: .zero, size: size)
                 flightRadius = 0
+                flightBlur = 24
+                flightDim = 0.5
             }
-            withAnimation(.easeOut(duration: 0.28)) {
-                rowScale = 1.55
+            withAnimation(.easeOut(duration: 0.20)) {
+                rowScale = 1.5
                 rowDim = 1
             }
 
-            // 详情页从放大进行到 40% 时开始淡入，和海报的放大重叠 —— 消除"闪一下"的割裂
-            try? await Task.sleep(for: .milliseconds(120))
-            withAnimation(.easeInOut(duration: 0.22)) { detailOpacity = 1 }
-            try? await Task.sleep(for: .milliseconds(200))
+            // ② 放大进行到约 60%（0.13s）时，详情页清晰图整屏淡入，
+            //    与还在消散的模糊海报重叠 —— 复刻参考的"模糊消散 + 清晰浮现"并存
+            try? await Task.sleep(for: .milliseconds(130))
+            withAnimation(.easeInOut(duration: 0.16)) { detailOpacity = 1 }
+
+            // ③ 详情页接管完成后立即撤掉飞行层（模糊海报已淡成暗影，撤掉无痕）
+            try? await Task.sleep(for: .milliseconds(170))
             flightItem = nil
 
-            // 降低纯图静置时间：文字信息更快出现（原 1.2s → 0.55s）
-            try? await Task.sleep(for: .milliseconds(550))
+            // ④ 纯清晰图静置 0.45s（比 v66 的 0.55s 再快一点）
+            try? await Task.sleep(for: .milliseconds(450))
+
+            // ⑤ 信息层淡入上移
             withAnimation(.easeOut(duration: 0.40)) { detailPhase = .info }
             shieldFocused = false
         }
@@ -531,25 +542,27 @@ struct FNOSMainView: View {
             try? await Task.sleep(for: .milliseconds(150))
 
             let size = screenSize == .zero ? CGSize(width: 1920, height: 1080) : screenSize
-            // 飞行层接成全屏主图（与卡片同图，只是更大），keyart 淡出时不会闪
+            // 飞行层接成全屏主图（与卡片同图，只是更大），keyart 淡出时不会闪；返回不消散，保持清晰缩回
             flightPoster = highResPosterURL(for: item)
             flightFrame = CGRect(origin: .zero, size: size)
             flightRadius = 0
+            flightBlur = 0
+            flightDim = 0
             flightItem = item
             try? await Task.sleep(for: .milliseconds(30))
 
             // keyart 与主图交叉：详情页淡出的同时飞行层已在下面，不会闪
-            withAnimation(.easeInOut(duration: 0.18)) { detailOpacity = 0 }
-            try? await Task.sleep(for: .milliseconds(130))
+            withAnimation(.easeInOut(duration: 0.16)) { detailOpacity = 0 }
+            try? await Task.sleep(for: .milliseconds(120))
 
             // ② 窗口缩回来源卡片，同时整行从放大态缩回原位（同行其他卡一起归位）
-            withAnimation(.easeInOut(duration: 0.34)) {
+            withAnimation(.easeInOut(duration: 0.30)) {
                 flightFrame = sourceCardFrame
                 flightRadius = 14
                 rowScale = 1
                 rowDim = 0
             }
-            try? await Task.sleep(for: .milliseconds(360))
+            try? await Task.sleep(for: .milliseconds(320))
 
             flightItem = nil
             detailItem = nil
@@ -623,7 +636,12 @@ struct FNOSMainView: View {
                 contentMode: .fill,
                 placeholder: false
             )
+            // 消散暗化层：放大时压暗，让模糊海报淡成"暗影"，不与详情图抢
+            Color.black
+                .opacity(flightDim)
         }
+        // 越放大越模糊（0→24）：复刻参考的"海报消散"而非"放大到清晰"
+        .blur(radius: flightBlur)
         .frame(width: max(flightFrame.width, 1), height: max(flightFrame.height, 1))
         .clipShape(RoundedRectangle(cornerRadius: flightRadius, style: .continuous))
         .position(x: flightFrame.midX, y: flightFrame.midY)

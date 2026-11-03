@@ -386,7 +386,11 @@ struct FNOSMainView: View {
                         let rowIndex = section.items.firstIndex(where: { $0.Id == item.Id })
                         // 详情打开期间（飞行中+落地后）该卡都保持隐藏 & 去 matched，
                         // 避免落地时 flight=nil 导致 matched 几何反向触发（A 端突然回归）。
-                        let isFlightCard = detailItem?.Id == item.Id
+                        // 关键（v79）：必须同时看 flight 与 detailItem —— v78 用 cover-at-land，
+                        // detailItem 延迟到 0.46s 才设置，若只看 detailItem，则 0~0.46s 飞行期间
+                        // 起跳卡保留 matched，与飞行层 B 端横图形成同一 id 双 source（v77 已验证
+                        // 的配置是 A 端去掉 matched，B 端从最后 frame 起跳，故需在 flight 起就隐藏）。
+                        let isFlightCard = flight?.item.Id == item.Id || detailItem?.Id == item.Id
                         // 飞行行窗口内的卡也隐藏（交给行副本渲染），避免与副本「重影」。
                         let isInFlightWindow: Bool = {
                             guard let f = flight, f.rowSectionID == section.id, let rowIndex else { return false }

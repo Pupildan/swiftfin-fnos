@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v78"
+    static let version = "v79"
 
     /// 本版主要变更摘要
-    static let changes = "v78 修复：①详情页改回 fullScreenCover（cover-at-land：飞行层落地才 present 详情，系统原生处理 Menu），修复 v77 详情页按返回高概率退出到系统桌面；②实装同行推出（行副本 ±3 张 scale 3.0 锚定焦点卡，行内容 frame 捕获 1:1 对齐）；③飞行层期间按 Menu 可取消过渡。核心缩放与 v77 一致。"
+    static let changes = "v79 修复：起跳卡隐藏/去 matched 的判断由只看 detailItem 改为同时看 flight 与 detailItem。v78 改 cover-at-land 后 detailItem 延迟到 0.46s 才设置，导致 0~0.46s 飞行期间起跳卡保留 matchedGeometryEffect，与飞行层 B 端横图形成同一 id 双 source（未定义行为，起跳可能失败/闪烁）。现飞行起跳瞬间（flight 设置时）起跳卡即隐藏去 matched，恢复 v77 已验证的 B 端从最后 frame 起跳配置。"
 }

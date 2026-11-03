@@ -49,6 +49,17 @@ struct FNOSMainView: View {
     // 影视详情页（1:1 复刻 ATV+）
     @State private var detailItem: FNOSItem?
 
+    // ---- 详情过渡动画（方案 B+：混合飞行层，v75/v76 实装失败根因全在此解决）----
+    // matchedGeometryEffect 命名空间：卡片(A端) ↔ 飞行层起跳横图(B端) 必须同树共享。
+    // 用 @Namespace 而非全局，保证 A/B 端在同一坐标系里插值（这是 Demo 跑通 70 分的根基）。
+    @Namespace private var transitionNS
+    /// 飞行层上下文；非 nil = 过渡进行中。落地后置 nil（真实详情页已全屏接管）。
+    @State private var flight: FNOSDetailFlightContext?
+    /// 真实详情页是否已落地显示（飞行动画完成→置 true 交叉淡入；保持 false 直到落地）
+    @State private var detailRevealed = false
+    /// 最近打开的卡片 Id：关闭过渡后把焦点显式还给它（否则焦点悬空，Menu 失灵）
+    @State private var lastOpenedCardID: String?
+
     // 首页设置面板（刷新/退出集成在内）
     @State private var showSettings = false
     // 设置按钮焦点（与 Hero 按钮同一套视觉）
@@ -98,7 +109,8 @@ struct FNOSMainView: View {
                                             playDirectly(item: item)
                                         },
                                         onDetail: { item in
-                                            open(item: item)
+                                            // Hero 无卡片可起跳：直接出详情页
+                                            openDetailDirect(item: item)
                                         },
                                         onDownToShelf: {
                                             // 下键从 Hero 跳入海报墙：先滚动让媒体库行出现，再把焦点落到第一张卡
@@ -131,6 +143,10 @@ struct FNOSMainView: View {
                         }
                         .ignoresSafeArea()
                     }
+                    // 过渡期间禁用整个主页（含 Hero 按钮 / 海报行 / 设置按钮），
+                    // 否则焦点会漏到被飞行层盖住的可聚焦元素上 → Menu 失灵（v76 根因）。
+                    // 注意：主页保持可见（不 opacity 0），由飞行层半透明压暗盖住。
+                    .disabled(flight != nil || detailItem != nil)
 
                     // 左上角设置按钮（刷新/退出集成在设置面板里）
                     VStack {
@@ -154,6 +170,29 @@ struct FNOSMainView: View {
                         .padding(.top, 20)
                         Spacer()
                     }
+                    .disabled(flight != nil || detailItem != nil)
+                }
+
+                // ---- 详情过渡动画（方案 B+）----
+                // 真实详情页：落地后交叉淡入（opacity 0→1）。飞行层(zIndex 30)在其下，
+                // 故落地时详情页的「全屏横图 Hero」正好接住飞行层的起跳横图终点，无缝。
+                if let item = detailItem {
+                    FNOSItemDetailView(
+                        item: item,
+                        client: client,
+                        userID: userID,
+                        onEpisodes: { _ in }
+                    )
+                    .opacity(detailRevealed ? 1 : 0)
+                    .zIndex(40)
+                    .onExitCommand { closeDetail() }
+                }
+
+                // 飞行层：压暗背景 + 起跳横图(matched) + 信息层。
+                // 放在 ScrollView 外（顶层 ZStack），不受垂直裁剪 / LazyHStack 懒加载 / 焦点泄漏影响。
+                if let flight {
+                    FNOSDetailFlightOverlay(ctx: flight, ns: transitionNS)
+                        .zIndex(30)
                 }
             }
         }
@@ -168,16 +207,8 @@ struct FNOSMainView: View {
                 seriesName: target.seriesName
             )
         }
-        .fullScreenCover(item: $detailItem) { item in
-            FNOSItemDetailView(
-                item: item,
-                client: client,
-                userID: userID,
-                onEpisodes: { _ in
-                    // 剧集现在直接在详情页内选集，不再回调
-                }
-            )
-        }
+        // 详情页已改为原地嵌入（见 body 内 detailItem 覆盖层），不再走 fullScreenCover，
+        // 以便 matchedGeometryEffect 的 A/B 端共享同一命名空间（跨 cover 无法做 matched 插值）。
         .sheet(isPresented: $showSettings) {
             FNOSHomeSettingsView(
                 onRefresh: {
@@ -213,7 +244,55 @@ struct FNOSMainView: View {
                 }
             )
         }
+        // 焦点落到卡片即预取 1920 横图进内存缓存：点按起跳必高清（不预取=起跳灰底转圈）
+        .onChange(of: shelfCardFocused) { _, focused in
+            guard let focused, let client else { return }
+            prefetchDetailBackdrop(itemID: focused, client: client)
+        }
         .ignoresSafeArea()
+    }
+
+    /// 预取详情 1920 横图进共享内存缓存（FNOSAsyncImage 命中缓存即秒显）。
+    /// key = URL.absoluteString，与 FNOSAsyncImage 读缓存的口径一致。
+    private func prefetchDetailBackdrop(itemID: String, client: FNOSDirectClient) {
+        guard let item = allItems.first(where: { $0.Id == itemID }) else { return }
+        guard let url = detailBackdropURL(for: item, client: client) else { return }
+        let key = url.absoluteString as NSString
+        guard FNOSImageCache.shared.memory.object(forKey: key) == nil else { return }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10
+        for (field, value) in client.mediaHeaders {
+            request.setValue(value, forHTTPHeaderField: field)
+        }
+        URLSession.shared.dataTask(with: request) { data, _, _ in
+            guard let data, let image = UIImage(data: data) else { return }
+            FNOSImageCache.shared.memory.setObject(image, forKey: key)
+        }.resume()
+    }
+
+    /// 详情横图 URL：1920 Backdrop 优先，退 1280 Primary（与 Demo backdropURL 一致）
+    private func detailBackdropURL(for item: FNOSItem, client: FNOSDirectClient) -> URL? {
+        if let tag = item.BackdropImageTags?.first, !tag.isEmpty,
+           let url = try? client.url(
+               path: "Items/\(item.Id)/Images/Backdrop",
+               query: ["maxWidth": "1920", "quality": "90", "tag": tag]
+           ) {
+            return url
+        }
+        if let tag = item.ImageTags?["Primary"], !tag.isEmpty,
+           let url = try? client.url(
+               path: "Items/\(item.Id)/Images/Primary",
+               query: ["maxWidth": "1280", "quality": "90", "tag": tag]
+           ) {
+            return url
+        }
+        return nil
+    }
+
+    /// 全部条目（去重，供预取查 Id→Item）
+    private var allItems: [FNOSItem] {
+        var seen = Set<String>()
+        return sections.flatMap(\.items).filter { seen.insert($0.Id).inserted }
     }
 
     // MARK: - Hero Banner 数据：只抓电影（排除剧集），快照只在加载/刷新时生成一次
@@ -302,15 +381,37 @@ struct FNOSMainView: View {
                 LazyHStack(spacing: spacing) {
                     ForEach(section.items) { item in
                         let isFocused = shelfCardFocused == item.Id
+                        // 详情打开期间（飞行中+落地后）该卡都保持隐藏 & 去 matched，
+                        // 避免落地时 flight=nil 导致 matched 几何反向触发（A 端突然回归）。
+                        let isFlightCard = detailItem?.Id == item.Id
                         Button {
-                            open(item: item)
+                            openCard(item: item)
                         } label: {
-                            FNOSPosterTile(
-                                item: item,
-                                client: client,
-                                width: tileWidth,
-                                isFocused: isFocused
-                            )
+                            Group {
+                                if isFlightCard {
+                                    // 起跳卡：海报隐藏（opacity 0）让位给飞行层横图 matched 视图。
+                                    // 关键：此卡必须【去掉】matchedGeometryEffect ——
+                                    // 同一 id 全树只能有一个 source，保留会让 A/B 双 source 冲突。
+                                    // 去掉后，飞行层 B 端会从这张卡的最后 frame 起跳（Demo 已验证）。
+                                    FNOSPosterTile(
+                                        item: item,
+                                        client: client,
+                                        width: tileWidth,
+                                        isFocused: isFocused
+                                    )
+                                    .opacity(0)
+                                } else {
+                                    // A 端：卡片海报（matched 起点）。Demo 结论：起跳内容不是海报，
+                                    // 而是预取横图，所以这里只提供【几何起点】，内容由 B 端覆盖。
+                                    FNOSPosterTile(
+                                        item: item,
+                                        client: client,
+                                        width: tileWidth,
+                                        isFocused: isFocused
+                                    )
+                                    .matchedGeometryEffect(id: item.Id, in: transitionNS)
+                                }
+                            }
                         }
                         // 自定义 ButtonStyle：彻底去掉系统焦点板（ScrollView 内的 Button
                         // 对 focusEffectDisabled 不生效，这是 tvOS 已知行为）
@@ -330,11 +431,55 @@ struct FNOSMainView: View {
         .focusEffectDisabled()
     }
 
-    // MARK: - 导航
+    // MARK: - 导航（详情过渡）
 
-    /// 详情页入口（海报墙点击）
-    private func open(item: FNOSItem) {
+    /// 海报墙卡片点击：起飞行层（方案 B+）。
+    /// 单次 withAnimation(.spring) 是底线 —— v62~v67 用 Task.sleep 分段动画导致卡顿割裂。
+    private func openCard(item: FNOSItem) {
+        guard let client else {
+            print("FNOS❗️客户端未初始化，无法打开详情")
+            return
+        }
+        lastOpenedCardID = item.Id
+        detailRevealed = false
+        let ctx = FNOSDetailFlightContext(item: item, client: client, userID: userID)
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+            flight = ctx
+            detailItem = item
+        }
+        // 落地时序（与弹簧 0.45s 对齐）：
+        // 0.46s → 真实详情交叉淡入（其全屏横图 Hero 正好接住飞行层终点，无缝）
+        // 0.74s → 移除飞行层（详情已完全不透明接管）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.46) {
+            guard flight?.item.Id == item.Id else { return }
+            withAnimation(.easeOut(duration: 0.25)) { detailRevealed = true }
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.74) {
+            guard flight?.item.Id == item.Id else { return }
+            flight = nil
+        }
+        print("FNOSℹ️详情过渡起跳: \(item.Name ?? "?")")
+    }
+
+    /// Hero 详情入口（无卡片可起跳，直接出详情页，不走飞行动画）
+    private func openDetailDirect(item: FNOSItem) {
+        detailRevealed = true
         detailItem = item
+        lastOpenedCardID = nil
+    }
+
+    /// 关闭详情：交叉淡出 + 显式把焦点还给来源卡片（否则焦点悬空 → Menu 失灵，v2 教训）。
+    private func closeDetail() {
+        withAnimation(.easeOut(duration: 0.22)) {
+            detailRevealed = false
+            flight = nil
+            detailItem = nil
+        }
+        if let returning = lastOpenedCardID {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                shelfCardFocused = returning
+            }
+        }
     }
 
     /// 过渡动画 Demo 的真实电影池：全部媒体库条目去重，取前 6 部（有海报图）
@@ -1282,6 +1427,122 @@ struct FNOSHeroTransitionDemo: View {
         // 关键修复：焦点显式还给来源卡片（等海报行恢复 enabled 后再设）
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
             if let returning { cardFocused = returning }
+        }
+    }
+}
+
+// MARK: - 详情过渡飞行层（方案 B+，v77 核心缩放）
+//
+// v75/v76 实装失败的三座大山（垂直 ScrollView 裁剪 / LazyHStack 懒加载空洞 / 焦点泄漏）
+// 全是因为动画放在主页容器【内部】。本飞行层放在 FNOSMainView 顶层 ZStack（ScrollView 之外），
+// 所以：
+//   - 起跳横图（matched B 端）从卡片位置插值到全屏，不受任何 ScrollView 裁剪；
+//   - 不做行缩放（v77 无行副本），不触发 LazyHStack 懒加载空洞；
+//   - 主页在该层下方整体 .disabled(true)，焦点不可能漏进被盖住的元素。
+//
+// 为什么不用截图（方案 B 原案）：
+//   截图里卡片位置是【竖版海报】，放大 4.8 倍会糊、且违背「起跳即横图」铁律；
+//   全屏不透明截图会遮死「同行推出」。故改用【压暗背景 + live 飞行层】——
+//   既遮住裁剪/空洞/焦点，又让起跳内容是真正的 1920 横图。
+//
+// 终点（方案甲）：飞行层横图终点 = 全屏 = 真实详情页 Hero 的同位同尺寸（见 FNOSItemDetailView
+//   heroSection: frame(width: size.width, height: size.height)），落地交叉淡入零跳位。
+//
+// 注意：同行推出（行副本 scale 3.0）留待 v78。它需要逐卡/逐行 frame 捕获 + 水平滚动偏移换算，
+// 是唯一无法本地验证、最易算错的部分；先交付最稳的核心缩放，跑通后再叠加。
+
+struct FNOSDetailFlightContext {
+    let item: FNOSItem
+    let client: FNOSDirectClient?
+    let userID: String
+}
+
+struct FNOSDetailFlightOverlay: View {
+
+    let ctx: FNOSDetailFlightContext
+    let ns: Namespace.ID
+
+    @State private var infoVisible = false
+
+    /// 起跳横图：1920 Backdrop 优先，无横图退 1280 Primary（与 Demo backdropURL 一致）
+    private var backdropURL: URL? {
+        guard let client = ctx.client else { return nil }
+        if let tag = ctx.item.BackdropImageTags?.first, !tag.isEmpty,
+           let url = try? client.url(
+               path: "Items/\(ctx.item.Id)/Images/Backdrop",
+               query: ["maxWidth": "1920", "quality": "90", "tag": tag]
+           ) {
+            return url
+        }
+        if let tag = ctx.item.ImageTags?["Primary"], !tag.isEmpty,
+           let url = try? client.url(
+               path: "Items/\(ctx.item.Id)/Images/Primary",
+               query: ["maxWidth": "1280", "quality": "90", "tag": tag]
+           ) {
+            return url
+        }
+        return nil
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .topLeading) {
+                // 压暗背景：整页 0.35（ATV 式）。主页在其下方保持可见、只被压暗不隐藏，
+                // 从而落地时「主页仍在、只是暗」而非闪黑。
+                Color.black.opacity(0.35).ignoresSafeArea()
+
+                // 起跳横图（B 端）：matched 从卡片(A 端)位置单次弹簧插值到全屏。
+                // 单段连续动画是底线（v62~v67 分段 Task.sleep = 卡顿割裂，禁用）。
+                FNOSAsyncImage(
+                    url: backdropURL,
+                    headers: ctx.client?.mediaHeaders ?? [:],
+                    contentMode: .fill
+                )
+                .matchedGeometryEffect(id: ctx.item.Id, in: ns)
+                .frame(width: geo.size.width, height: geo.size.height)
+                .clipped()
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .ignoresSafeArea(edges: .top)
+
+                // 底部渐变 + 信息层（延迟 0.3s 独立淡入，不参与几何插值）
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.4),
+                        .init(color: .black.opacity(0.9), location: 1),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .opacity(infoVisible ? 1 : 0)
+                .allowsHitTesting(false)
+
+                VStack(alignment: .leading, spacing: 20) {
+                    Text(ctx.item.Name ?? "未命名")
+                        .font(.system(size: 62, weight: .bold))
+                        .foregroundColor(.white)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+
+                    HStack(spacing: 14) {
+                        if let year = ctx.item.ProductionYear { Text(String(year)) }
+                        if let genres = ctx.item.Genres, !genres.isEmpty {
+                            Text(genres.prefix(2).joined(separator: " · "))
+                        }
+                    }
+                    .font(.system(size: 20))
+                    .foregroundColor(.white.opacity(0.85))
+                }
+                .padding(90)
+                .opacity(infoVisible ? 1 : 0)
+                .offset(y: infoVisible ? 0 : 16)
+            }
+        }
+        .ignoresSafeArea()
+        .onAppear {
+            // 信息层延迟淡入：单段连续动画
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) {
+                withAnimation(.easeOut(duration: 0.35)) { infoVisible = true }
+            }
         }
     }
 }

@@ -34,10 +34,12 @@ struct FNOSLibrarySection: Identifiable {
 
 /// 继续播放条目（v91）：服务端记录（多端）+ 本地记录兜底合并后的展示单元。
 /// startSeconds 非空 = 本机记录（直接按秒续播）；否则按 fraction（服务端 UserData 比例）。
+/// runtimeSeconds = v93 归一化后的最优时长（秒），进度条与剩余时间的统一基准。
 struct FNOSResumeEntry: Identifiable {
     let item: FNOSItem
     let fraction: Double
     let startSeconds: Double?
+    let runtimeSeconds: Double?
     var id: String { item.Id }
 }
 
@@ -577,7 +579,8 @@ struct FNOSMainView: View {
             if item.type == "Episode", let ep = item.IndexNumber {
                 parts.append("第\(ep)集")
             }
-            if let runtime = FNOSItem.plausibleSeconds(ticks: item.RunTimeTicks, isEpisode: item.type == "Episode") {
+            // v93：剩余时间统一用归一化后的最优时长（条目 ticks 归一化 → 播放器实测兜底）
+            if let runtime = entry.runtimeSeconds {
                 let remain = max(0, runtime * (1 - fraction))
                 parts.append("剩 " + Self.durationCN(remain))
             }
@@ -670,29 +673,31 @@ struct FNOSMainView: View {
             var entries: [FNOSResumeEntry] = []
             var seen = Set<String>()
             // 1) 本机记录（>30s 才上榜）：直接解码完整条目（单集自带海报/集号）——
-            //    不从海报墙反查：单集不在条目池里，反查会漏掉所有剧集记录
+            //    不从海报墙反查：单集不在条目池里，反查会漏掉所有剧集记录。
+            //    v93：时长基准 = 条目 ticks 归一化优先，播放器实测时长兜底（早期 totalTime 可能为 0）
             for p in FNOSProgressStore.localList() {
                 guard seen.insert(p.item.Id).inserted, p.seconds > 30 else { continue }
-                var fraction = 0.0
-                if let runtime = p.runtimeSeconds, runtime > 0 {
-                    fraction = min(0.98, p.seconds / runtime)
-                } else if let runtime = FNOSItem.plausibleSeconds(ticks: p.item.RunTimeTicks, isEpisode: p.item.type == "Episode") {
-                    fraction = min(0.98, p.seconds / runtime)
-                }
-                entries.append(FNOSResumeEntry(item: p.item, fraction: fraction, startSeconds: p.seconds))
+                let runtime = FNOSItem.plausibleSeconds(ticks: p.item.RunTimeTicks, isEpisode: p.item.type == "Episode")
+                    ?? FNOSItem.secondsFromTicks(p.item.RunTimeTicks)
+                    ?? (p.runtimeSeconds.flatMap { $0 > 60 ? $0 : nil })
+                let fraction = (runtime ?? 0) > 0 ? min(0.98, max(0.01, p.seconds / runtime!)) : 0
+                entries.append(FNOSResumeEntry(item: p.item, fraction: fraction, startSeconds: p.seconds, runtimeSeconds: runtime))
             }
             let localCount = entries.count
-            // 2) 服务端多端记录补位（其他设备的进度；UserData 位置/时长同响应，比值与飞牛 tick 单位无关）
+            // 2) 服务端多端记录补位（其他设备的进度）。
+            //    v93：位置/时长各自按宽边界归一化成秒再取比值——两个字段单位可能不一致
             for item in await client.fetchResumeItems(userID: userID, limit: 6) {
                 guard seen.insert(item.Id).inserted else { continue }
+                let posSec = FNOSItem.secondsFromTicks(item.UserData?.PlaybackPositionTicks, lower: 5)
+                let runtimeSec = FNOSItem.plausibleSeconds(ticks: item.RunTimeTicks, isEpisode: item.type == "Episode")
+                    ?? FNOSItem.secondsFromTicks(item.RunTimeTicks)
                 var fraction = 0.0
-                if let pos = item.UserData?.PlaybackPositionTicks, pos > 0,
-                   let runtime = item.RunTimeTicks, runtime > 0 {
-                    fraction = min(0.98, max(0.01, Double(pos) / Double(runtime)))
+                if let posSec, let runtimeSec, runtimeSec > 0 {
+                    fraction = min(0.98, max(0.01, posSec / runtimeSec))
                 } else if let pct = item.UserData?.PlayedPercentage {
                     fraction = min(0.98, max(0.01, pct / 100))
                 }
-                entries.append(FNOSResumeEntry(item: item, fraction: fraction, startSeconds: nil))
+                entries.append(FNOSResumeEntry(item: item, fraction: fraction, startSeconds: nil, runtimeSeconds: runtimeSec))
             }
             let serverCount = entries.count - localCount
             FNOSDiag.shared.add("继续播放合并: 本机\(localCount) + 服务端\(serverCount) → \(min(entries.count, 6)) 条")

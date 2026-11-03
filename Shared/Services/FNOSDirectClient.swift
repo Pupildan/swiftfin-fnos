@@ -410,6 +410,18 @@ extension FNOSItem {
         return nil
     }
 
+    /// v93 泛用 tick→秒（宽边界）：继续播放的位置/时长两个字段可能各自带不同单位
+    ///（实测位置像 100ns、时长像微秒）——各自独立换算成秒再取比值，
+    /// 不再出现「字段间单位不一致导致进度条/剩余时间全错」。
+    static func secondsFromTicks(_ ticks: Int64?, lower: Double = 30, upper: Double = 12 * 3600) -> Double? {
+        guard let ticks, ticks > 0 else { return nil }
+        for factor in [10_000_000.0, 1_000_000.0, 1_000.0, 1.0] {
+            let seconds = Double(ticks) / factor
+            if seconds >= lower, seconds <= upper { return seconds }
+        }
+        return nil
+    }
+
     static func durationText(ticks: Int64?, isEpisode: Bool) -> String? {
         guard let secondsDouble = plausibleSeconds(ticks: ticks, isEpisode: isEpisode) else { return nil }
         return format(seconds: secondsDouble)

@@ -49,6 +49,29 @@ struct FNOSMainView: View {
     // 影视详情页（1:1 复刻 ATV+）
     @State private var detailItem: FNOSItem?
 
+    // MARK: 海报 → 详情页 自定义过渡
+    //
+    // 分四段，全部由状态驱动、无硬切：
+    // ① 卡片（聚焦态 1.06 倍 + 阴影）从原位放大铺满全屏  0.34s ease-out
+    // ② 与详情页全屏画面交叉溶解                        0.30s
+    // ③ 无任何 UI 的沉浸预览                            1.00s
+    // ④ 信息层淡入 + 上移 16pt，焦点落到播放按钮        0.45s
+    @State private var detailPhase: FNOSDetailPhase = .preview
+    /// 过渡中的"飞行海报"（放大/缩回那段）
+    @State private var flightItem: FNOSItem?
+    @State private var flightFrame: CGRect = .zero
+    @State private var flightOpacity: Double = 1
+    @State private var detailOpacity: Double = 0
+    /// 来源卡片位置（返回时缩回这里）
+    @State private var sourceCardFrame: CGRect = .zero
+    /// 每张卡片在根坐标系里的位置（点按时取用）
+    @State private var cardFrames: [String: CGRect] = [:]
+    @State private var screenSize: CGSize = .zero
+    /// 过渡期焦点盾：吸收方向键/Menu，避免焦点钻到被遮住的主页
+    @FocusState private var shieldFocused: Bool
+    /// 开场过渡的分段任务（中途按 Menu 要能立刻接管）
+    @State private var transitionTask: Task<Void, Never>?
+
     // 首页设置面板（刷新/退出集成在内）
     @State private var showSettings = false
     // 设置按钮焦点（与 Hero 按钮同一套视觉）
@@ -69,6 +92,7 @@ struct FNOSMainView: View {
             ZStack {
                 Color.black.ignoresSafeArea()
 
+                Group {
                 if isLoading {
                     VStack {
                         Spacer()
@@ -155,7 +179,50 @@ struct FNOSMainView: View {
                         Spacer()
                     }
                 }
+                }
+                .disabled(detailItem != nil)
+
+                // 过渡期焦点盾（详情页信息层出现前，方向键/Menu 都由它接住）
+                if detailItem != nil {
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .focusable(detailPhase != .info)
+                        .focusEffectDisabled()
+                        .focused($shieldFocused)
+                        .onExitCommand { closeDetail() }
+                        .zIndex(15)
+                }
+
+                // 详情页（预览阶段只有画面，信息层由 phase 控制）
+                if let current = detailItem {
+                    FNOSItemDetailView(
+                        item: current,
+                        client: client,
+                        userID: userID,
+                        phase: detailPhase,
+                        onClose: { closeDetail() },
+                        onEpisodes: { _ in
+                            // 剧集现在直接在详情页内选集，不再回调
+                        }
+                    )
+                    .id(current.Id)
+                    .opacity(detailOpacity)
+                    .allowsHitTesting(detailPhase == .info && detailOpacity > 0.6)
+                    .zIndex(20)
+                }
+
+                // 飞行海报（放大 / 缩回）
+                if let flying = flightItem, let imageClient = client {
+                    flightLayer(item: flying, client: imageClient)
+                        .zIndex(30)
+                }
             }
+            .coordinateSpace(name: "fnosRootSpace")
+            .onPreferenceChange(FNOSCardFramePreference.self) { frames in
+                cardFrames = frames
+            }
+            .onAppear { screenSize = geo.size }
+            .onChange(of: geo.size) { _, newSize in screenSize = newSize }
         }
         .task {
             await bootstrapIfNeeded()
@@ -166,16 +233,6 @@ struct FNOSMainView: View {
                 client: target.client,
                 userID: target.userID,
                 seriesName: target.seriesName
-            )
-        }
-        .fullScreenCover(item: $detailItem) { item in
-            FNOSItemDetailView(
-                item: item,
-                client: client,
-                userID: userID,
-                onEpisodes: { _ in
-                    // 剧集现在直接在详情页内选集，不再回调
-                }
             )
         }
         .sheet(isPresented: $showSettings) {
@@ -309,6 +366,15 @@ struct FNOSMainView: View {
                                 width: tileWidth,
                                 isFocused: isFocused
                             )
+                            // 记录卡片在根坐标系中的位置，供"海报 → 详情"过渡起止使用
+                            .background(
+                                GeometryReader { proxy in
+                                    Color.clear.preference(
+                                        key: FNOSCardFramePreference.self,
+                                        value: [item.Id: proxy.frame(in: .named("fnosRootSpace"))]
+                                    )
+                                }
+                            )
                         }
                         // 自定义 ButtonStyle：彻底去掉系统焦点板（ScrollView 内的 Button
                         // 对 focusEffectDisabled 不生效，这是 tvOS 已知行为）
@@ -330,9 +396,144 @@ struct FNOSMainView: View {
 
     // MARK: - 导航
 
-    /// 详情页入口（海报墙点击）
+    /// 详情页入口：聚焦卡片 → 放大铺满 → 交叉溶解 → 1s 预览 → 信息层淡入
     private func open(item: FNOSItem) {
+        guard detailItem == nil, flightItem == nil else { return }
+
+        let size = screenSize == .zero ? CGSize(width: 1920, height: 1080) : screenSize
+        let card = cardFrames[item.Id] ?? CGRect(
+            x: size.width / 2 - 130,
+            y: size.height / 2 - 195,
+            width: 260,
+            height: 390
+        )
+        sourceCardFrame = card
+
+        detailPhase = .preview          // 先只有画面
+        detailOpacity = 0
+        flightOpacity = 1
+        flightFrame = card
+        flightItem = item
+        // 立刻挂载详情页：让背景图/详情数据在放大动画这段时间里就开始加载，避免溶解时白屏
         detailItem = item
+        // 焦点盾要等这一帧布局完成才能接住焦点
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(80))
+            shieldFocused = true
+        }
+
+        // ① 卡片从原位放大铺满全屏
+        withAnimation(.easeOut(duration: 0.34)) {
+            flightFrame = CGRect(origin: .zero, size: size)
+        }
+
+        // 预热详情页那张全屏横图：铺满的这段时间里后台拉完，溶解时才不会露出灰底 + 转圈
+        let backdropURL = prefetchBackdropURL(for: item)
+        let prefetch = Task {
+            await FNOSImagePrefetcher.prefetch(backdropURL, headers: client?.mediaHeaders ?? [:])
+        }
+
+        transitionTask?.cancel()
+        transitionTask = Task { @MainActor in
+            // ② 与详情页全屏画面交叉溶解
+            try? await Task.sleep(for: .milliseconds(340))
+            // 图没就绪就让海报继续占着全屏（最多等 0.9s），绝不硬切到占位图
+            await waitForReady(prefetch, timeoutMilliseconds: 900)
+            withAnimation(.easeInOut(duration: 0.30)) {
+                detailOpacity = 1
+                flightOpacity = 0
+            }
+
+            // 溶解完成后撤掉飞行层，画面完全由详情页背景图接管
+            try? await Task.sleep(for: .milliseconds(320))
+            flightItem = nil
+
+            // ③ 无 UI 沉浸预览 1 秒（期间没有任何文字/按钮）
+            try? await Task.sleep(for: .seconds(1.0))
+
+            // ④ 信息层淡入 + 上移 16pt；详情页内部会把焦点落到播放按钮
+            withAnimation(.easeOut(duration: 0.45)) { detailPhase = .info }
+            shieldFocused = false
+        }
+    }
+
+    /// 返回：信息层先淡出 → 画面溶解回飞行海报 → 缩回来源卡片 → 焦点回到来源卡
+    private func closeDetail() {
+        guard let item = detailItem else { return }
+        // 开场动画还没走完就按了 Menu：取消分段任务，直接接手做反向过渡
+        transitionTask?.cancel()
+        transitionTask = nil
+        shieldFocused = true
+        withAnimation(.easeOut(duration: 0.20)) { detailPhase = .closing }   // 信息层先淡出
+
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(180))
+
+            let size = screenSize == .zero ? CGSize(width: 1920, height: 1080) : screenSize
+            flightOpacity = 0
+            flightFrame = CGRect(origin: .zero, size: size)
+            flightItem = item
+
+            // 详情页画面 → 飞行海报：交叉溶解
+            withAnimation(.easeInOut(duration: 0.26)) {
+                detailOpacity = 0
+                flightOpacity = 1
+            }
+
+            try? await Task.sleep(for: .milliseconds(280))
+
+            // 缩回来源卡片位置
+            withAnimation(.easeInOut(duration: 0.34)) {
+                flightFrame = sourceCardFrame
+            }
+
+            try? await Task.sleep(for: .milliseconds(360))
+
+            flightItem = nil
+            detailItem = nil
+            detailPhase = .preview
+            detailOpacity = 0
+            shieldFocused = false
+
+            // 焦点/滚动回到来源卡（主页一直在下面没被销毁，滚动位置天然保留）
+            try? await Task.sleep(for: .milliseconds(40))
+            shelfCardFocused = item.Id
+        }
+    }
+
+    /// 详情页首帧那张横图的 URL（与详情页内部构造方式一致：不带 index 的 Backdrop 接口）
+    private func prefetchBackdropURL(for item: FNOSItem) -> URL? {
+        guard let client, let tag = item.BackdropImageTags?.first, !tag.isEmpty else { return nil }
+        return try? client.url(
+            path: "Items/\(item.Id)/Images/Backdrop",
+            query: ["maxWidth": "1920", "quality": "90", "tag": tag]
+        )
+    }
+
+    /// 等预取完成，但不超过超时时间（用它来决定什么时候开始交叉溶解）
+    private func waitForReady(_ task: Task<Void, Never>, timeoutMilliseconds: Int) async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { await task.value }
+            group.addTask { try? await Task.sleep(for: .milliseconds(timeoutMilliseconds)) }
+            await group.next()
+            group.cancelAll()
+        }
+    }
+
+    /// 飞行海报：用卡片同一张竖版海报放大到全屏，保证"从卡片长出来"的连续感
+    @ViewBuilder
+    private func flightLayer(item: FNOSItem, client: FNOSDirectClient) -> some View {
+        FNOSAsyncImage(
+            url: client.posterURL(itemID: item.Id, tag: item.ImageTags?["Primary"]),
+            headers: client.mediaHeaders,
+            contentMode: .fill
+        )
+        .frame(width: max(flightFrame.width, 1), height: max(flightFrame.height, 1))
+        .clipped()
+        .position(x: flightFrame.midX, y: flightFrame.midY)
+        .opacity(flightOpacity)
+        .allowsHitTesting(false)
+        .ignoresSafeArea()
     }
 
     /// Hero 播放入口：直接开始播放，不经过详情页
@@ -436,6 +637,16 @@ struct FNOSMainView: View {
             print("FNOS❗️解析 /Items 失败: \(error) 原文: \(raw)")
             throw FNOSDirectError("解析 /Items 失败: \(error.localizedDescription)")
         }
+    }
+}
+
+// MARK: - 卡片位置收集（详情页过渡用）
+
+private struct FNOSCardFramePreference: PreferenceKey {
+    static let defaultValue: [String: CGRect] = [:]
+
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
     }
 }
 

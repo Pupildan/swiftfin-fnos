@@ -96,6 +96,30 @@ final class FNOSImageCache {
     }
 }
 
+// MARK: - 预取（详情页过渡用：先把全屏横图拉进内存，避免交叉溶解时露出"灰底+转圈"）
+
+enum FNOSImagePrefetcher {
+
+    /// 预热一张图到共享内存缓存；已缓存则立即返回
+    static func prefetch(_ url: URL?, headers: [String: String]) async {
+        guard let url else { return }
+        let key = url.absoluteString as NSString
+        if FNOSImageCache.shared.memory.object(forKey: key) != nil { return }
+
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10
+        for (field, value) in headers {
+            request.setValue(value, forHTTPHeaderField: field)
+        }
+
+        guard let (data, _) = try? await URLSession.shared.data(for: request),
+              let image = UIImage(data: data)
+        else { return }
+
+        FNOSImageCache.shared.memory.setObject(image, forKey: key)
+    }
+}
+
 // MARK: - 带鉴权的异步图片（替代会 401 的原生 AsyncImage）
 
 struct FNOSAsyncImage: View {

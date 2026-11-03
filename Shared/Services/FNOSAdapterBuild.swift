@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v61"
+    static let version = "v62"
 
     /// 本版主要变更摘要
-    static let changes = "引擎分流改为按真实杜比视界档位判定（起播时后台查 /stream）：P5/P7 自动用 mpv，P8（带 HDR10 基线层）继续留在 KS；切换带进度续播；控制条显示片源格式与当前引擎"
+    static let changes = "海报→详情页自定义过渡：聚焦卡片放大铺满 → 与全屏横图交叉溶解 → 1 秒无 UI 沉浸预览 → 信息层淡入上移 16pt 并落到播放键；返回反向缩回来源海报并恢复焦点/滚动；横图预取避免溶解露灰底"
 }

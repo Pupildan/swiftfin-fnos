@@ -29,10 +29,11 @@ struct FNOSItemDetailView: View {
     let userID: String
     /// 呈现阶段（默认直接显示信息层，兼容单独使用）
     var phase: FNOSDetailPhase = .info
-    /// 返回（Menu）回调：由外层做反向过渡，不用 dismiss
-    var onClose: () -> Void = {}
     /// 剧集：交给外层弹选集面板
     let onEpisodes: (FNOSItem) -> Void
+
+    /// 系统导航 dismiss：NavigationStack 里按 Menu 自动 pop（配合 zoom 反向过渡）
+    @Environment(\.dismiss) private var dismiss
 
     /// 播放器在本页内打开（不先关详情页），避免 fullScreenCover 竞态导致请求被取消
     @State private var playbackTarget: FNOSPlaybackTarget?
@@ -229,7 +230,8 @@ struct FNOSItemDetailView: View {
             }
         }
         .onExitCommand {
-            onClose()
+            // NavigationStack 场景：直接 dismiss，系统 zoom 会自动做反向缩回过渡
+            dismiss()
         }
         .task(id: item.Id) {
             await rotateBackdrops()

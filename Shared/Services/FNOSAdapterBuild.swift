@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v67"
+    static let version = "v68"
 
     /// 本版主要变更摘要
-    static let changes = "详情页过渡改两段式：海报放大过程中逐渐模糊变暗（消散感），放大到 60% 时详情页清晰图整屏淡入并与模糊海报重叠，随后海报消散、清晰图静置 0.45s 后信息层淡入；全程 0.4s 无停顿，消除卡顿与闪切"
+    static let changes = "详情页过渡改用系统原生 zoom（navigationTransition(.zoom)+matchedTransitionSource）：删掉全部手搓飞行层/分段动画，由 tvOS 18+ 系统处理卡片放大、背景压暗、连续缓动与反向缩回，彻底消除卡顿与割裂"
 }

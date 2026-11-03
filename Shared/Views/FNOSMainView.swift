@@ -46,8 +46,6 @@ struct FNOSMainView: View {
 
     @State private var playbackTarget: FNOSPlaybackTarget?
     @State private var seriesItem: FNOSItem?
-    // 影视详情页（1:1 复刻 ATV+）
-    @State private var detailItem: FNOSItem?
 
     // MARK: 海报 → 详情页 自定义过渡（对齐 Apple TV 的"镜头推进"）
     //
@@ -58,39 +56,11 @@ struct FNOSMainView: View {
     //   拿它当飞行层必然又糊又割裂 —— v63 的教训。
     // - 参考实现里焦点卡以外的同行卡片也一起放大、被推出画面（整页一个变换），不是静止压暗。
     //
-    // 本实现（对齐参考的"两段式"）：
-    // ① 海报窗口放大，**同时越放大越模糊、越暗**（消散感，不是放大到清晰）    0.22s
-    // ② 放大到 60% 处，详情页清晰图整屏淡入，与还在消散的模糊海报重叠         0.16s
-    // ③ 模糊海报彻底消散（0.02s 内撤掉）→ 纯清晰图静置 0.45s → 信息层淡入 0.40s
-    @State private var detailPhase: FNOSDetailPhase = .preview
-    /// 过渡中的飞行窗口（内容 = 该条目主图，与卡片同构图）
-    @State private var flightItem: FNOSItem?
-    /// 窗口矩形：起点 = 卡片真实 frame，终点 = 全屏
-    @State private var flightFrame: CGRect = .zero
-    @State private var flightRadius: CGFloat = 14
-    /// 放大过程中逐渐加强的模糊（0 → 24）：海报"消散"而非"放大到清晰"
-    @State private var flightBlur: Double = 0
-    /// 放大过程中逐渐压暗（0 → 0.5）：让模糊海报淡成暗影，避免与详情图抢
-    @State private var flightDim: Double = 0
-    /// 飞行层用图：Primary 的 1920 宽版本（卡片上显示的是 400）
-    @State private var flightPoster: URL?
-    @State private var detailOpacity: Double = 0
-    /// 只有「被点的那一行」跟着放大 —— 参考里上下两行纹丝不动
-    @State private var transitionSectionID: String?
-    @State private var rowScale: CGFloat = 1
-    @State private var rowAnchor: UnitPoint = .center
-    @State private var rowDim: Double = 0
-    /// 来源卡片位置（返回时缩回这里）
-    @State private var sourceCardFrame: CGRect = .zero
-    /// 每张卡片在根坐标系里的位置（点按时取用）
-    @State private var cardFrames: [String: CGRect] = [:]
-    @State private var screenSize: CGSize = .zero
-    /// 过渡期焦点盾：吸收方向键/Menu，避免焦点钻到被遮住的主页
-    @FocusState private var shieldFocused: Bool
-    /// 开场过渡的分段任务（中途按 Menu 要能立刻接管）
-    @State private var transitionTask: Task<Void, Never>?
-    /// 电影感过渡开关（出问题可一键回到"直接切"）
-    @AppStorage("fnos.ui.heroTransition") private var heroTransition = true
+    // 本实现：直接用 tvOS 18+ 系统原生 zoom 过渡（.navigationTransition(.zoom) + matchedTransitionSource）。
+    // 苹果已调好"卡片自身放大、背景自然压暗、连续缓动、反向归位"，不再手搓分段动画。
+    @Namespace private var detailNamespace
+    /// 当前详情页条目（由 NavigationLink 的 navigationDestination 呈现）
+    @State private var detailItem: FNOSItem?
 
     // 首页设置面板（刷新/退出集成在内）
     @State private var showSettings = false
@@ -108,11 +78,12 @@ struct FNOSMainView: View {
     // MARK: - Body
 
     var body: some View {
-        GeometryReader { geo in
-            ZStack {
-                Color.black.ignoresSafeArea()
+        NavigationStack {
+            GeometryReader { geo in
+                ZStack {
+                    Color.black.ignoresSafeArea()
 
-                Group {
+                    Group {
                 if isLoading {
                     VStack {
                         Spacer()
@@ -201,58 +172,20 @@ struct FNOSMainView: View {
                 }
                 }
                 .disabled(detailItem != nil)
-
-                // 过渡期焦点盾（详情页信息层出现前，方向键/Menu 都由它接住）
-                if detailItem != nil {
-                    Color.clear
-                        .contentShape(Rectangle())
-                        .focusable(detailPhase != .info)
-                        .focusEffectDisabled()
-                        .focused($shieldFocused)
-                        .onExitCommand { closeDetail() }
-                        .zIndex(15)
-                }
-
-                // 详情页（预览阶段只有画面，信息层由 phase 控制）
-                if let current = detailItem {
-                    FNOSItemDetailView(
-                        item: current,
-                        client: client,
-                        userID: userID,
-                        phase: detailPhase,
-                        onClose: { closeDetail() },
-                        onEpisodes: { _ in
-                            // 剧集现在直接在详情页内选集，不再回调
-                        }
-                    )
-                    .id(current.Id)
-                    .opacity(detailOpacity)
-                    .allowsHitTesting(detailPhase == .info && detailOpacity > 0.6)
-                    .zIndex(20)
-                }
-
-                // 飞行海报（放大 / 缩回）
-                if let flying = flightItem, let imageClient = client {
-                    flightLayer(item: flying, client: imageClient)
-                        .zIndex(30)
-                }
             }
-            .coordinateSpace(name: "fnosRootSpace")
-            .onPreferenceChange(FNOSCardFramePreference.self) { frames in
-                cardFrames = frames
-            }
-            .onAppear { screenSize = geo.size }
-            .onChange(of: geo.size) { _, newSize in screenSize = newSize }
-            // 卡片一聚焦就预取该条目的高清主图（1280）→ 点按瞬间起跳就是清晰画面
-            .onChange(of: shelfCardFocused) { _, focusedID in
-                guard let focusedID else { return }
-                let allItems = sections.flatMap { $0.items }
-                guard let item = allItems.first(where: { $0.Id == focusedID }),
-                      let url = highResPosterURL(for: item)
-                else { return }
-                let headers = client?.mediaHeaders ?? [:]
-                Task { await FNOSImagePrefetcher.prefetch(url, headers: headers) }
-            }
+        }
+        .navigationDestination(item: $detailItem) { item in
+            FNOSItemDetailView(
+                item: item,
+                client: client,
+                userID: userID,
+                onEpisodes: { _ in
+                    // 剧集现在直接在详情页内选集，不再回调
+                }
+            )
+            // 系统原生 zoom 过渡：从卡片位置放大到详情页，反向自动缩回。
+            // 苹果已调好"卡片自身放大 + 背景压暗 + 连续缓动 + 反向归位"。
+            .navigationTransition(.zoom(sourceID: item.Id, in: detailNamespace))
         }
         .task {
             await bootstrapIfNeeded()
@@ -299,6 +232,7 @@ struct FNOSMainView: View {
             )
         }
         .ignoresSafeArea()
+        }
     }
 
     // MARK: - Hero Banner 数据：只抓电影（排除剧集），快照只在加载/刷新时生成一次
@@ -368,8 +302,6 @@ struct FNOSMainView: View {
     // MARK: - 海报墙（每行一个媒体库，横向滚动）
 
     private func shelf(_ section: FNOSLibrarySection, screenWidth: CGFloat) -> some View {
-        // 过渡时只有「被点的那一行」参与缩放，其余行完全不动（参考实现就是这样）
-        let isTransitionRow = transitionSectionID != nil && transitionSectionID == section.id
         // ATV+ 版式：左右 72 边距，一屏正好 6 张，间距与上下留白接近（28）
         let hPadding: CGFloat = 72
         let spacing: CGFloat = 28
@@ -398,15 +330,8 @@ struct FNOSMainView: View {
                                 width: tileWidth,
                                 isFocused: isFocused
                             )
-                            // 记录卡片在根坐标系中的位置，供"海报 → 详情"过渡起止使用
-                            .background(
-                                GeometryReader { proxy in
-                                    Color.clear.preference(
-                                        key: FNOSCardFramePreference.self,
-                                        value: [item.Id: proxy.frame(in: .named("fnosRootSpace"))]
-                                    )
-                                }
-                            )
+                            // 系统 zoom 的源视图：放大从这里开始，返回缩回这里
+                            .matchedTransitionSource(id: item.Id, in: detailNamespace)
                         }
                         // 自定义 ButtonStyle：彻底去掉系统焦点板（ScrollView 内的 Button
                         // 对 focusEffectDisabled 不生效，这是 tvOS 已知行为）
@@ -421,11 +346,6 @@ struct FNOSMainView: View {
                 // 双保险：把焦点特效关闭挂到内容容器上
                 .focusEffectDisabled()
             }
-            // 放大时要允许卡片溢出到行外（参考里焦点卡会盖住上下的行标题与相邻行）
-            .scrollClipDisabled()
-            // 只缩放这一行；锚点 = 被点的卡在屏幕上的归一化位置（行宽 = 屏宽，锚点换算精确）
-            .scaleEffect(isTransitionRow ? rowScale : 1, anchor: rowAnchor)
-            .opacity(isTransitionRow ? 1 - rowDim : 1)
             .focusEffectDisabled()
         }
         .focusEffectDisabled()
@@ -433,220 +353,15 @@ struct FNOSMainView: View {
 
     // MARK: - 导航
 
-    /// 详情页入口（对齐参考录屏 60fps 实测）：
-    /// ① 按下即起跳，飞行窗口 = 卡片主图高清版，从卡片矩形长到全屏 0.30s
-    /// ② 同时「只有被点的这一行」被推近（1 → 1.55）并淡出，同行其他卡被挤出屏幕；上下行不动
-    /// ③ 到全屏后与详情页 keyart 交叉溶解 0.16s（此刻 keyart 已预加载好）
-    /// ④ 静置 1.2s 无 UI → 信息层上移淡入 0.45s
+    /// 详情页入口：只负责设置 detailItem，由 navigationDestination + 系统 zoom 过渡负责呈现。
+    /// 不再手搓飞行层 / 分段动画 —— 之前"又卡顿又割裂"的根因就是手搓分段动画 + 独立贴图层。
     private func open(item: FNOSItem) {
-        guard detailItem == nil, flightItem == nil else { return }
-
-        let size = screenSize == .zero ? CGSize(width: 1920, height: 1080) : screenSize
-        let card = cardFrames[item.Id] ?? defaultCardFrame(in: size)
-        sourceCardFrame = card
-
-        guard heroTransition else {
-            // 关闭电影感过渡：直接呈现
-            rowScale = 1
-            rowDim = 0
-            transitionSectionID = nil
-            detailPhase = .info
-            detailOpacity = 1
-            detailItem = item
-            return
-        }
-
-        // 只放大这一行；锚点 = 这张卡在屏幕上的归一化位置（行是满屏宽，换算精确）
-        transitionSectionID = sectionID(containingItem: item.Id)
-        rowAnchor = UnitPoint(
-            x: min(max(card.midX / max(size.width, 1), 0.02), 0.98),
-            y: 0.5
-        )
-        rowScale = 1
-        rowDim = 0
-
-        detailPhase = .preview
-        detailOpacity = 0
-        flightFrame = card
-        flightRadius = 14
-        flightBlur = 0
-        flightDim = 0
-        flightPoster = highResPosterURL(for: item)
-        flightItem = item
-        // 提前挂载详情页：keyart 在放大的 0.3s 里加载完，溶解时不用等
         detailItem = item
-
-        let poster = flightPoster
-        let headers = client?.mediaHeaders ?? [:]
-        Task { await FNOSImagePrefetcher.prefetch(poster, headers: headers) }
-
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(80))
-            shieldFocused = true
-        }
-
-        transitionTask?.cancel()
-        transitionTask = Task { @MainActor in
-            // ① 按下即起跳：海报放大，**同时越放大越模糊、越暗**（消散感），当前行推近淡出。
-            //    全程 0.22s，比参考的 0.4s 略快，减少拖沓。
-            withAnimation(.easeOut(duration: 0.22)) {
-                flightFrame = CGRect(origin: .zero, size: size)
-                flightRadius = 0
-                flightBlur = 24
-                flightDim = 0.5
-            }
-            withAnimation(.easeOut(duration: 0.20)) {
-                rowScale = 1.5
-                rowDim = 1
-            }
-
-            // ② 放大进行到约 60%（0.13s）时，详情页清晰图整屏淡入，
-            //    与还在消散的模糊海报重叠 —— 复刻参考的"模糊消散 + 清晰浮现"并存
-            try? await Task.sleep(for: .milliseconds(130))
-            withAnimation(.easeInOut(duration: 0.16)) { detailOpacity = 1 }
-
-            // ③ 详情页接管完成后立即撤掉飞行层（模糊海报已淡成暗影，撤掉无痕）
-            try? await Task.sleep(for: .milliseconds(170))
-            flightItem = nil
-
-            // ④ 纯清晰图静置 0.45s（比 v66 的 0.55s 再快一点）
-            try? await Task.sleep(for: .milliseconds(450))
-
-            // ⑤ 信息层淡入上移
-            withAnimation(.easeOut(duration: 0.40)) { detailPhase = .info }
-            shieldFocused = false
-        }
     }
 
-    /// 返回（参考录屏 4.70→5.12s 实测）：
-    /// ① 文字 0.18s 淡出 → keyart 0.14s 淡出，露出「首页放大态」
-    /// ② 飞行窗口缩回来源卡片，同时整行缩回原位（**同行其他海报也会有缩小归位动画**）0.34s
-    /// ③ 释放详情页 → 焦点回来源卡
+    /// 返回：系统 zoom 反向过渡自动处理；这里只需清空当前条目，让导航栈回退。
     private func closeDetail() {
-        guard let item = detailItem else { return }
-        transitionTask?.cancel()
-        transitionTask = nil
-
-        guard heroTransition else {
-            detailItem = nil
-            detailPhase = .preview
-            detailOpacity = 0
-            shelfCardFocused = item.Id
-            return
-        }
-
-        shieldFocused = true
-        withAnimation(.easeOut(duration: 0.18)) { detailPhase = .closing }
-
-        Task { @MainActor in
-            try? await Task.sleep(for: .milliseconds(150))
-
-            let size = screenSize == .zero ? CGSize(width: 1920, height: 1080) : screenSize
-            // 飞行层接成全屏主图（与卡片同图，只是更大），keyart 淡出时不会闪；返回不消散，保持清晰缩回
-            flightPoster = highResPosterURL(for: item)
-            flightFrame = CGRect(origin: .zero, size: size)
-            flightRadius = 0
-            flightBlur = 0
-            flightDim = 0
-            flightItem = item
-            try? await Task.sleep(for: .milliseconds(30))
-
-            // keyart 与主图交叉：详情页淡出的同时飞行层已在下面，不会闪
-            withAnimation(.easeInOut(duration: 0.16)) { detailOpacity = 0 }
-            try? await Task.sleep(for: .milliseconds(120))
-
-            // ② 窗口缩回来源卡片，同时整行从放大态缩回原位（同行其他卡一起归位）
-            withAnimation(.easeInOut(duration: 0.30)) {
-                flightFrame = sourceCardFrame
-                flightRadius = 14
-                rowScale = 1
-                rowDim = 0
-            }
-            try? await Task.sleep(for: .milliseconds(320))
-
-            flightItem = nil
-            detailItem = nil
-            detailPhase = .preview
-            detailOpacity = 0
-            transitionSectionID = nil
-            shieldFocused = false
-
-            // 焦点回来源卡（主页一直挂在下面，滚动位置天然保留）
-            try? await Task.sleep(for: .milliseconds(40))
-            shelfCardFocused = item.Id
-        }
-    }
-
-    /// 卡片位置没被记录时（例如从 Hero 的「详情」进入）的兜底起点
-    private func defaultCardFrame(in size: CGSize) -> CGRect {
-        let height = size.height * 0.42
-        let width = height * 2 / 3
-        return CGRect(
-            x: size.width * 0.16,
-            y: size.height * 0.30,
-            width: width,
-            height: height
-        )
-    }
-
-    /// 条目所在的那一行（section.id）
-    private func sectionID(containingItem itemID: String) -> String? {
-        sections.first { $0.items.contains { $0.Id == itemID } }?.id
-    }
-
-    /// 飞行层用图：Primary 的 1920 宽版本（卡片上显示的是 400）
-    ///
-    /// 飞牛剧集海报源图实测 2000×3000，取 1920 后 fill 到全屏正好 1:1，不会糊；
-    /// 卡片仍用 400 那张（滚动流畅），只有过渡这一下才用高清版。
-    private func highResPosterURL(for item: FNOSItem) -> URL? {
-        client?.posterURL(itemID: item.Id, tag: item.ImageTags?["Primary"], maxWidth: 1920)
-    }
-
-    /// 图是否已在内存缓存（命中就不用等，点按瞬间直接起跳）
-    private func imageIsCached(_ url: URL?) -> Bool {
-        guard let url else { return false }
-        return FNOSImageCache.shared.memory.object(forKey: url.absoluteString as NSString) != nil
-    }
-
-    /// 等预取完成，但不超过超时时间
-    private func waitForReady(_ task: Task<Void, Never>, timeoutMilliseconds: Int) async {
-        await withTaskGroup(of: Void.self) { group in
-            group.addTask { await task.value }
-            group.addTask { try? await Task.sleep(for: .milliseconds(timeoutMilliseconds)) }
-            await group.next()
-            group.cancelAll()
-        }
-    }
-
-    /// 飞行窗口：内容 = 该条目主图（与卡片同构图，只是分辨率更高）
-    ///
-    /// 两层：
-    /// - 底层用卡片那张 400px 图（几乎必然在缓存里）→ 起跳瞬间绝不空、不灰
-    /// - 上层用 1280 高清版，加载完自动盖上（同构图同裁切，看不出替换），解决"放大后糊"
-    @ViewBuilder
-    private func flightLayer(item: FNOSItem, client: FNOSDirectClient) -> some View {
-        let lowRes = client.posterURL(itemID: item.Id, tag: item.ImageTags?["Primary"])
-        let highRes = flightPoster ?? lowRes
-
-        ZStack {
-            FNOSAsyncImage(url: lowRes, headers: client.mediaHeaders, contentMode: .fill)
-            FNOSAsyncImage(
-                url: highRes,
-                headers: client.mediaHeaders,
-                contentMode: .fill,
-                placeholder: false
-            )
-            // 消散暗化层：放大时压暗，让模糊海报淡成"暗影"，不与详情图抢
-            Color.black
-                .opacity(flightDim)
-        }
-        // 越放大越模糊（0→24）：复刻参考的"海报消散"而非"放大到清晰"
-        .blur(radius: flightBlur)
-        .frame(width: max(flightFrame.width, 1), height: max(flightFrame.height, 1))
-        .clipShape(RoundedRectangle(cornerRadius: flightRadius, style: .continuous))
-        .position(x: flightFrame.midX, y: flightFrame.midY)
-        .allowsHitTesting(false)
-        .ignoresSafeArea()
+        detailItem = nil
     }
 
     /// Hero 播放入口：直接开始播放，不经过详情页
@@ -753,16 +468,6 @@ struct FNOSMainView: View {
     }
 }
 
-// MARK: - 卡片位置收集（详情页过渡用）
-
-private struct FNOSCardFramePreference: PreferenceKey {
-    static let defaultValue: [String: CGRect] = [:]
-
-    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
-        value.merge(nextValue()) { _, new in new }
-    }
-}
-
 // MARK: - 首页设置面板（刷新媒体库 / 退出登录 / 版本信息）
 
 struct FNOSHomeSettingsView: View {
@@ -775,9 +480,6 @@ struct FNOSHomeSettingsView: View {
     // Hero 图源：backdrop（横图，默认）/ primary（海报）
     // 若发现某些电影 Hero 图文对不上，多为飞牛刮削把 Backdrop 挂错条目，切到海报可规避。
     @AppStorage("fnos.hero.imageSource") private var heroImageSource = "backdrop"
-
-    // 详情页电影感过渡（与主视图共用同一个键，改完立刻生效）
-    @AppStorage("fnos.ui.heroTransition") private var heroTransition = true
 
     // 杜比视界按 HDR10 输出（规避紫绿偏色）
     @AppStorage("fnos.play.hdr10Compat") private var hdr10Compat = true
@@ -827,19 +529,6 @@ struct FNOSHomeSettingsView: View {
                             selected: heroImageSource == "primary"
                         ) {
                             heroImageSource = "primary"
-                        }
-                    }
-
-                    section(
-                        "界面",
-                        footer: "开启后：点海报时卡片位置先换成详情页那张横图，再连同整页一起被推近到全屏，随后信息层才淡入。关掉则直接进入详情页（用于排查动画相关的异常）。"
-                    ) {
-                        FNOSSettingRow(
-                            title: "详情页电影感过渡",
-                            systemImage: "sparkles",
-                            isOn: heroTransition
-                        ) {
-                            heroTransition.toggle()
                         }
                     }
 

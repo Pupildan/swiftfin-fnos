@@ -166,6 +166,9 @@ final class FNOSDirectClient {
             if !(200..<300).contains(code) {
                 print("FNOS⚠️POST \(path) → \(code)（进度上报未生效，不影响播放）")
                 FNOSDiag.shared.add("POST \(path) → \(code)（上报未生效）", dedupeKey: "post.\(path).\(code)")
+            } else {
+                // v89：首次成功也留痕（验证上报链路是否真被服务端接受）
+                FNOSDiag.shared.add("POST \(path) → \(code) 上报成功", dedupeKey: "post.ok.\(path)")
             }
         } catch {
             print("FNOS⚠️POST \(path): \(error)（进度上报未生效，不影响播放）")
@@ -173,12 +176,14 @@ final class FNOSDirectClient {
         }
     }
 
-    /// 播放进度上报（v86）：本机记录同步到飞牛服务端 → 各端「继续播放」可见。
-    /// tick 单位：与该服务端 RunTimeTicks 实测一致按微秒（1e6/秒）上报；
-    /// 若服务端按标准 Jellyfin 100ns 解析则进度会偏慢 10 倍——真机核对后如不符改此系数。
+    /// 播放进度上报：本机记录同步到飞牛服务端 → 各端「继续播放」可见。
+    /// v89 单位修正：按标准 Jellyfin 的 100ns（1e7/秒）上报。v86 曾按微秒（1e6）发，
+    /// 服务端接受了请求（无失败日志）但进度被存成 1/10 → 低于续播阈值永不进 Resume
+    ///（用户实测：上报无报错但记录不同步）。条目 RunTimeTicks 的微秒怪癖只影响
+    /// 兼容层条目响应，不代表 Sessions 通道的单位。
     /// 注意：续播主链路是本地记录（FNOSProgressStore），上报失败不影响任何功能。
     func reportPlayback(itemID: String, positionSeconds: Double, stage: String) async {
-        let ticks = Int64(max(0, positionSeconds) * 1_000_000)
+        let ticks = Int64(max(0, positionSeconds) * 10_000_000)
         let path: String
         switch stage {
         case "start": path = "Sessions/Playing"

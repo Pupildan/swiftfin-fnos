@@ -233,7 +233,9 @@ struct FNOSMainView: View {
         .task {
             await bootstrapIfNeeded()
         }
-        .fullScreenCover(item: $playbackTarget) { target in
+        .fullScreenCover(item: $playbackTarget, onDismiss: {
+            refreshResumeItems()
+        }) { target in
             FNOSPlayerContainerView(
                 item: target.item,
                 client: target.client,
@@ -245,8 +247,11 @@ struct FNOSMainView: View {
         }
         // 详情页走 fullScreenCover（系统原生处理 Menu，可靠关闭，v77 嵌入已回滚）。
         // v82：Menu 改由 cover 内容内 onExitCommand 拦截 → closeDetailWithReverse()
-        // （有卡片来源时反向缩回）；onDismiss 兜底系统路径并负责还焦点。
-        .fullScreenCover(item: $detailItem, onDismiss: { closeDetail() }) { item in
+        // （有卡片来源时反向缩回）；onDismiss 兜底系统路径并负责还焦点 + v89 刷新继续播放。
+        .fullScreenCover(item: $detailItem, onDismiss: {
+            closeDetail()
+            refreshResumeItems()
+        }) { item in
             FNOSItemDetailView(
                 item: item,
                 client: client,
@@ -659,6 +664,14 @@ struct FNOSMainView: View {
 
     // MARK: - 导航（详情过渡）
 
+    /// v89：静默刷新「继续播放」（播放器关闭 / 详情关闭后回主页时调用，播过的立刻上榜）
+    private func refreshResumeItems() {
+        guard let client else { return }
+        Task {
+            resumeItems = await client.fetchResumeItems(userID: userID, limit: 6)
+        }
+    }
+
     /// 海报墙卡片点击：起飞行层（方案 B+ v78）。
     /// 单次 withAnimation(.spring) 是底线 —— v62~v67 用 Task.sleep 分段动画导致卡顿割裂。
     private func openCard(item: FNOSItem) {
@@ -898,6 +911,8 @@ struct FNOSMainView: View {
                     print("FNOSℹ️「\(library.Name ?? "?")」\(items.count) 条")
                 } catch {
                     print("FNOS❗️加载「\(library.Name ?? "?")」失败: \(error)")
+                    // v89：HTTP 级失败也进诊断（此前只埋了解析分支，古风mv 这类无痕消失就是漏在这）
+                    FNOSDiag.shared.add("「\(library.Name ?? "?")」加载失败: \(error.localizedDescription)", dedupeKey: "load.\(library.Id)")
                     loaded.append(FNOSLibrarySection(library: library, items: []))
                 }
                 sections = loaded

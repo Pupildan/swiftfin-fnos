@@ -215,7 +215,11 @@ struct FNOSItemDetailView: View {
             loadLocalProgress()
             await loadHeroInfo()
         }
-        .fullScreenCover(item: $playbackTarget, onDismiss: reopenPendingEpisode) { target in
+        .fullScreenCover(item: $playbackTarget, onDismiss: {
+            // v89：播放器关闭后立刻重读本地进度（按钮「继续播放/立即播放」马上刷新）
+            loadLocalProgress()
+            reopenPendingEpisode()
+        }) { target in
             FNOSPlayerContainerView(
                 item: target.item,
                 client: target.client,

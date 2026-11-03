@@ -1253,6 +1253,12 @@ struct FNOSPlayerContainerView: View {
         // ≤30s 的小进度不弹窗，由 onPlay 的静默 seek 直接续
         if let resume = resumeStartSeconds, resume > 30 {
             pendingResumeTarget = resume
+            FNOSDiag.shared.add("续播: 记录 \(Int(resume))s → 弹选择窗")
+        } else if let resume = resumeStartSeconds {
+            FNOSDiag.shared.add("续播: 记录 \(Int(resume))s → 静默续播")
+        } else {
+            // v89：链路诊断——出现这行说明 startFraction 没传到播放器（查调用链）
+            FNOSDiag.shared.add("续播: 无起始进度（从头播放；若刚从记录进入则是 startFraction 断链）", dedupeKey: "resume.none.\(item.Id)")
         }
 
         // 3) 弹幕（真实服务端；剧集按「剧名 + 集数」匹配，电影按标题匹配）

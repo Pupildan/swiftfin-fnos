@@ -96,30 +96,6 @@ final class FNOSImageCache {
     }
 }
 
-// MARK: - 预取（详情页过渡用：先把全屏横图拉进内存，避免交叉溶解时露出"灰底+转圈"）
-
-enum FNOSImagePrefetcher {
-
-    /// 预热一张图到共享内存缓存；已缓存则立即返回
-    static func prefetch(_ url: URL?, headers: [String: String]) async {
-        guard let url else { return }
-        let key = url.absoluteString as NSString
-        if FNOSImageCache.shared.memory.object(forKey: key) != nil { return }
-
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 10
-        for (field, value) in headers {
-            request.setValue(value, forHTTPHeaderField: field)
-        }
-
-        guard let (data, _) = try? await URLSession.shared.data(for: request),
-              let image = UIImage(data: data)
-        else { return }
-
-        FNOSImageCache.shared.memory.setObject(image, forKey: key)
-    }
-}
-
 // MARK: - 带鉴权的异步图片（替代会 401 的原生 AsyncImage）
 
 struct FNOSAsyncImage: View {
@@ -127,10 +103,6 @@ struct FNOSAsyncImage: View {
     let url: URL?
     let headers: [String: String]
     var contentMode: ContentMode = .fill
-    /// 加载中是否显示占位（灰底 + 转圈）。
-    /// 传 false 用于"叠在另一张同构图图片之上"的高清层：加载期间保持透明，
-    /// 让底下那张先显示，绝不会出现灰块。
-    var placeholder: Bool = true
 
     private enum Phase {
         case loading, loaded, failed
@@ -143,19 +115,15 @@ struct FNOSAsyncImage: View {
         ZStack {
             switch phase {
             case .loading:
-                if placeholder {
-                    Rectangle()
-                        .fill(Color.white.opacity(0.06))
-                    ProgressView()
-                }
+                Rectangle()
+                    .fill(Color.white.opacity(0.06))
+                ProgressView()
             case .failed:
-                if placeholder {
-                    Rectangle()
-                        .fill(Color.white.opacity(0.06))
-                    Image(systemName: "film")
-                        .font(.title2)
-                        .foregroundColor(.white.opacity(0.35))
-                }
+                Rectangle()
+                    .fill(Color.white.opacity(0.06))
+                Image(systemName: "film")
+                    .font(.title2)
+                    .foregroundColor(.white.opacity(0.35))
             case .loaded:
                 if let image {
                     Image(uiImage: image)

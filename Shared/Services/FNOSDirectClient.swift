@@ -146,7 +146,7 @@ struct FNOSItemsEnvelope: Decodable {
     let Items: [FNOSItem]
 }
 
-struct FNOSItem: Decodable, Identifiable, Hashable {
+struct FNOSItem: Decodable, Identifiable {
     let Id: String
     let Name: String?
     let ItemType: String?
@@ -170,16 +170,6 @@ struct FNOSItem: Decodable, Identifiable, Hashable {
 
     var id: String { Id }
     var type: String? { ItemType }
-
-    // Hashable/Equatable 只基于 Id：条目的恒等就是 Id，避免 People 数组
-    // （FNOSPeopleEntry 未实现 Hashable）阻断自动合成。
-    static func == (lhs: FNOSItem, rhs: FNOSItem) -> Bool {
-        lhs.Id == rhs.Id
-    }
-
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(Id)
-    }
 
     /// fnOS 的内容类型键叫 "Type"（Swift 属性不能用 Type 命名，故改名映射）
     enum CodingKeys: String, CodingKey {

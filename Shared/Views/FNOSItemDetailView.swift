@@ -8,32 +8,14 @@
 
 import SwiftUI
 
-/// 详情页呈现阶段（由外层 FNOSMainView 的"海报 → 详情"过渡驱动）
-///
-/// - `preview`：只有全屏画面，**不允许出现任何文字/按钮**（1 秒沉浸预览）
-/// - `info`：信息层淡入（+16pt 上移），焦点落到播放按钮
-/// - `closing`：返回中，信息层已淡出，画面正在溶解回来源海报
-enum FNOSDetailPhase: Equatable {
-    case preview
-    case info
-    case closing
-
-    var showsInfo: Bool { self == .info }
-}
-
 /// 影视详情页 —— 1:1 复刻 Apple TV+ 详情页版式。
 struct FNOSItemDetailView: View {
 
     let item: FNOSItem
     let client: FNOSDirectClient?
     let userID: String
-    /// 呈现阶段（默认直接显示信息层，兼容单独使用）
-    var phase: FNOSDetailPhase = .info
     /// 剧集：交给外层弹选集面板
     let onEpisodes: (FNOSItem) -> Void
-
-    /// 系统导航 dismiss：NavigationStack 里按 Menu 自动 pop（配合 zoom 反向过渡）
-    @Environment(\.dismiss) private var dismiss
 
     /// 播放器在本页内打开（不先关详情页），避免 fullScreenCover 竞态导致请求被取消
     @State private var playbackTarget: FNOSPlaybackTarget?
@@ -183,26 +165,20 @@ struct FNOSItemDetailView: View {
                         VStack(spacing: 0) {
                             heroSection(size: geo.size, proxy: proxy)
 
-                            // 信息层以下的区块同样要等信息层阶段才出现（预览期整页无 UI）
-                            if phase.showsInfo {
-                                if item.type == "Series" && !episodeTabs.isEmpty {
-                                    episodeSection
-                                        .padding(.top, 36)
-                                        .padding(.bottom, 12)
-                                        .id("detail-episodes")
-                                        .transition(.opacity)
-                                }
-
-                                infoSection
-                                    .padding(.horizontal, 60)
-                                    .padding(.top, item.type == "Series" ? 24 : 10)
-                                    .padding(.bottom, 40)
-                                    .id("detail-info")
-                                    .transition(.opacity)
-
-                                debugSection
-                                    .transition(.opacity)
+                            if item.type == "Series" && !episodeTabs.isEmpty {
+                                episodeSection
+                                    .padding(.top, 36)
+                                    .padding(.bottom, 12)
+                                    .id("detail-episodes")
                             }
+
+                            infoSection
+                                .padding(.horizontal, 60)
+                                .padding(.top, item.type == "Series" ? 24 : 10)
+                                .padding(.bottom, 40)
+                                .id("detail-info")
+
+                            debugSection
                         }
                     }
                     .ignoresSafeArea()
@@ -215,23 +191,10 @@ struct FNOSItemDetailView: View {
             await loadDetail()
         }
         .onAppear {
-            // 兼容单独使用（phase 直接为 info）：延迟一次把焦点压到播放按钮
-            guard phase.showsInfo else { return }
+            // defaultFocus 会被背景图/滚动容器抢走，延迟再压一次确保落在「播放第 1 集」
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
                 focusedButton = .play
             }
-        }
-        .onChange(of: phase) { _, newPhase in
-            // 信息层淡入后再落焦点，避免焦点落在还没出现的按钮上被丢弃
-            guard newPhase == .info else { return }
-            Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(160))
-                focusedButton = .play
-            }
-        }
-        .onExitCommand {
-            // NavigationStack 场景：直接 dismiss，系统 zoom 会自动做反向缩回过渡
-            dismiss()
         }
         .task(id: item.Id) {
             await rotateBackdrops()
@@ -277,10 +240,6 @@ struct FNOSItemDetailView: View {
                 startPoint: .leading,
                 endPoint: .trailing
             )
-            // 预览阶段不能压暗：那一刻屏幕上是"纯横图"，要和外层飞行窗口完全一致，
-            // 接管时才没有"突然变暗"的跳变；信息层出现时再慢慢压下去。
-            .opacity(phase.showsInfo ? 1 : 0)
-            .animation(.easeInOut(duration: 0.55), value: phase)
 
             LinearGradient(
                 stops: [
@@ -290,8 +249,6 @@ struct FNOSItemDetailView: View {
                 startPoint: .top,
                 endPoint: .bottom
             )
-            .opacity(phase.showsInfo ? 1 : 0)
-            .animation(.easeInOut(duration: 0.55), value: phase)
 
             VStack(alignment: .leading, spacing: 20) {
                 Text("飞牛影视 · 精选")
@@ -402,12 +359,6 @@ struct FNOSItemDetailView: View {
                 .padding(.top, 10)
                 .defaultFocus($focusedButton, .play)
             }
-            // 信息层：预览阶段完全不可见、不可点、不可聚焦；进入 info 阶段淡入 + 上移 16pt
-            .opacity(phase.showsInfo ? 1 : 0)
-            .offset(y: phase.showsInfo ? 0 : 16)
-            .allowsHitTesting(phase.showsInfo)
-            .disabled(!phase.showsInfo)
-            .animation(.easeOut(duration: 0.45), value: phase)
             .padding(.leading, 60)
             .padding(.bottom, 130)
             .padding(.top, size.height * 0.40)

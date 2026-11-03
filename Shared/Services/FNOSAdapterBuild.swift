@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v70"
+    static let version = "v71"
 
     /// 本版主要变更摘要
-    static let changes = "修复详情页过渡动画丢失的真正根因：navigationDestination(for:) 误挂在 NavigationStack 外层（兄弟位置）会被 SwiftUI 静默忽略，导致 zoom 的 matchedTransition 上下文断裂、过渡退化无动画；已将其移入 NavigationStack 内部（根视图上）"
+    static let changes = "回滚详情页过渡动画：恢复为 v61 的 fullScreenCover 直接全屏弹出详情页（无任何过渡动画）。过渡动画（v62~v70）全部废弃，因 tvOS 官方不支持 .navigationTransition(.zoom)（系统回退 automatic），手搓方案又卡顿割裂"
 }

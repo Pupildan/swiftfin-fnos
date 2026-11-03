@@ -46,21 +46,8 @@ struct FNOSMainView: View {
 
     @State private var playbackTarget: FNOSPlaybackTarget?
     @State private var seriesItem: FNOSItem?
-
-    // MARK: 海报 → 详情页 自定义过渡（对齐 Apple TV 的"镜头推进"）
-    //
-    // 关键认知（逐帧比对参考录屏得出）：
-    // - 参考实现放大的**不是海报**，而是详情页那张横图本身：卡片位置的窗口先换成横图，
-    //   再连同整页一起被推近。所以全屏那一刻屏幕上就是详情页内容，根本不存在"溶解两张不同的图"。
-    // - 竖版海报（我们卡片请求 maxWidth=400）放大到 1920 会糊 4.8 倍，且和详情页横图是两张不同素材，
-    //   拿它当飞行层必然又糊又割裂 —— v63 的教训。
-    // - 参考实现里焦点卡以外的同行卡片也一起放大、被推出画面（整页一个变换），不是静止压暗。
-    //
-    // 本实现：直接用 tvOS 18+ 系统原生 zoom 过渡（.navigationTransition(.zoom) + matchedTransitionSource）。
-    // 苹果已调好"卡片自身放大、背景自然压暗、连续缓动、反向归位"，不再手搓分段动画。
-    @Namespace private var detailNamespace
-    /// 详情页导航路径（NavigationStack 显式管理，Hero 与卡片统一 push）
-    @State private var navPath: [FNOSItem] = []
+    // 影视详情页（1:1 复刻 ATV+）
+    @State private var detailItem: FNOSItem?
 
     // 首页设置面板（刷新/退出集成在内）
     @State private var showSettings = false
@@ -78,12 +65,10 @@ struct FNOSMainView: View {
     // MARK: - Body
 
     var body: some View {
-        NavigationStack(path: $navPath) {
-            GeometryReader { geo in
-                ZStack {
-                    Color.black.ignoresSafeArea()
+        GeometryReader { geo in
+            ZStack {
+                Color.black.ignoresSafeArea()
 
-                    Group {
                 if isLoading {
                     VStack {
                         Spacer()
@@ -170,21 +155,6 @@ struct FNOSMainView: View {
                         Spacer()
                     }
                 }
-                }
-            }
-            // 关键：navigationDestination 必须挂在 NavigationStack 内部（stack 的根视图上），
-            // 挂在 stack 外层会被忽略，导致 zoom 过渡的 matchedTransition 上下文断裂 → 无动画。
-            .navigationDestination(for: FNOSItem.self) { item in
-                FNOSItemDetailView(
-                    item: item,
-                    client: client,
-                    userID: userID,
-                    onEpisodes: { _ in
-                        // 剧集现在直接在详情页内选集，不再回调
-                    }
-                )
-                // 系统原生 zoom 过渡：从卡片位置放大到详情页，反向自动缩回。
-                .navigationTransition(.zoom(sourceID: item.Id, in: detailNamespace))
             }
         }
         .task {
@@ -196,6 +166,16 @@ struct FNOSMainView: View {
                 client: target.client,
                 userID: target.userID,
                 seriesName: target.seriesName
+            )
+        }
+        .fullScreenCover(item: $detailItem) { item in
+            FNOSItemDetailView(
+                item: item,
+                client: client,
+                userID: userID,
+                onEpisodes: { _ in
+                    // 剧集现在直接在详情页内选集，不再回调
+                }
             )
         }
         .sheet(isPresented: $showSettings) {
@@ -232,7 +212,6 @@ struct FNOSMainView: View {
             )
         }
         .ignoresSafeArea()
-        }
     }
 
     // MARK: - Hero Banner 数据：只抓电影（排除剧集），快照只在加载/刷新时生成一次
@@ -321,16 +300,15 @@ struct FNOSMainView: View {
                 LazyHStack(spacing: spacing) {
                     ForEach(section.items) { item in
                         let isFocused = shelfCardFocused == item.Id
-                        // 标准 NavigationLink push（zoom 过渡依赖 push 语义，不能用 Button + Bool）
-                        NavigationLink(value: item) {
+                        Button {
+                            open(item: item)
+                        } label: {
                             FNOSPosterTile(
                                 item: item,
                                 client: client,
                                 width: tileWidth,
                                 isFocused: isFocused
                             )
-                            // 系统 zoom 的源视图：放大从这里开始，返回缩回这里
-                            .matchedTransitionSource(id: item.Id, in: detailNamespace)
                         }
                         // 自定义 ButtonStyle：彻底去掉系统焦点板（ScrollView 内的 Button
                         // 对 focusEffectDisabled 不生效，这是 tvOS 已知行为）
@@ -352,10 +330,9 @@ struct FNOSMainView: View {
 
     // MARK: - 导航
 
-    /// 详情页入口（Hero「详情」按钮用）：显式 push 到导航路径。
-    /// 海报墙卡片走 NavigationLink(value:)，会自动 append 到 navPath，无需手动处理。
+    /// 详情页入口（海报墙点击）
     private func open(item: FNOSItem) {
-        navPath.append(item)
+        detailItem = item
     }
 
     /// Hero 播放入口：直接开始播放，不经过详情页

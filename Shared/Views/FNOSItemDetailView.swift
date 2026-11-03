@@ -51,6 +51,10 @@ struct FNOSItemDetailView: View {
     @State private var doubanRating: Double?
     @State private var tomatoRating: Double?
 
+    // v87 本地续播：电影=条目进度秒；剧集=剧→最近看的集
+    @State private var localResumeSeconds: Double?
+    @State private var seriesResume: (episodeItemID: String, episodeNumber: Int)?
+
     // 剧集选集状态（季优先，无季数据时按 10 集分段）
     @State private var episodes: [FNOSItem] = []
     @State private var seasons: [FNOSItem] = []
@@ -208,6 +212,7 @@ struct FNOSItemDetailView: View {
             await rotateBackdrops()
         }
         .task(id: item.Id) {
+            loadLocalProgress()
             await loadHeroInfo()
         }
         .fullScreenCover(item: $playbackTarget, onDismiss: reopenPendingEpisode) { target in
@@ -216,6 +221,7 @@ struct FNOSItemDetailView: View {
                 client: target.client,
                 userID: target.userID,
                 seriesName: target.seriesName,
+                seriesID: target.seriesID,
                 episodes: target.item.type == "Episode" ? episodes : [],
                 onSelectEpisode: { ep in
                     // 换集：记下目标后关闭播放器；onDismiss 时再以新条目重新打开。
@@ -230,6 +236,39 @@ struct FNOSItemDetailView: View {
         // v82：拦截 Menu 交给外层——有卡片来源时反向缩回，无来源时普通关闭。
         // 呈现视图内的 onExitCommand 可靠（Demo 同款真机已验证；v77 失败是「嵌入非呈现视图」场景）。
         .onExitCommand { onMenuClose() }
+    }
+
+    // MARK: - 本地续播（v87）
+
+    /// 读取本地播放进度：电影→条目进度；剧集→剧→最近集（跨季池查找在 playNow 里做）
+    @MainActor
+    private func loadLocalProgress() {
+        if item.type == "Series" {
+            seriesResume = FNOSProgressStore.loadSeriesProgress(seriesID: item.Id)
+        } else {
+            localResumeSeconds = FNOSProgressStore.load(itemID: item.Id)
+        }
+    }
+
+    /// 播放按钮文字：有本地记录 → 「继续播放（第N集）」
+    private var playButtonTitle: String {
+        if item.type == "Series" {
+            if let number = seriesResume?.episodeNumber, number > 0 {
+                return "继续播放 第\(number)集"
+            }
+            return "播放第 1 集"
+        }
+        if let seconds = localResumeSeconds, seconds > 30 {
+            return "继续播放"
+        }
+        return "立即播放"
+    }
+
+    /// 本地进度秒 → 0~1 播放比例（与播放器 resumeStartSeconds 同基准：plausibleSeconds 兜底单位换算）
+    private func resumeFraction(seconds: Double?, for target: FNOSItem) -> Double? {
+        guard let seconds, seconds > 30 else { return nil }
+        guard let runtime = FNOSItem.plausibleSeconds(ticks: target.RunTimeTicks, isEpisode: target.type == "Episode") else { return nil }
+        return min(0.98, seconds / runtime)
     }
 
     // MARK: - Hero 信息增强（v85：色彩档位 + 评分）
@@ -410,7 +449,7 @@ struct FNOSItemDetailView: View {
                     detailButton(.play, isPrimary: true) {
                         playNow()
                     } label: {
-                        Text(item.type == "Series" ? "播放第 1 集" : "立即播放")
+                        Text(playButtonTitle)
                             .font(.system(size: 21, weight: .semibold))
                     }
                     .onMoveCommand { direction in
@@ -1028,6 +1067,16 @@ struct FNOSItemDetailView: View {
 
     private func playNow() {
         if item.type == "Series" {
+            // v87 续播：优先本地记录的最近集（当前列表 + 跨季池查找），带进度
+            if let resume = seriesResume {
+                let pool = episodes + episodesBySeason.values.flatMap { $0 }
+                let ep = pool.first { $0.Id == resume.episodeItemID }
+                    ?? pool.first { $0.IndexNumber == resume.episodeNumber }
+                if let ep {
+                    playEpisode(ep, startFraction: resumeFraction(seconds: FNOSProgressStore.load(itemID: ep.Id), for: ep))
+                    return
+                }
+            }
             if let first = episodes.first {
                 playEpisode(first)
             } else {
@@ -1036,21 +1085,29 @@ struct FNOSItemDetailView: View {
             return
         }
         guard let client else {
-            loadError = "客户端未初始化"
+            loadError = "设备客户端未就绪"
             return
         }
         loadError = nil
-        playbackTarget = FNOSPlaybackTarget(item: item, client: client, userID: userID)
+        // v87：有本地记录 → 直接带进度续播
+        playbackTarget = FNOSPlaybackTarget(
+            item: item,
+            client: client,
+            userID: userID,
+            startFraction: resumeFraction(seconds: localResumeSeconds, for: item)
+        )
     }
 
-    private func playEpisode(_ ep: FNOSItem) {
+    private func playEpisode(_ ep: FNOSItem, startFraction: Double? = nil) {
         guard let client else { return }
-        // 剧名随播放目标带进播放器，弹幕按「剧名+集数」匹配
+        // 保持传完整剧集列表给播放器（启用换集面板与集数信息）；seriesID 供剧集续播位置记录
         playbackTarget = FNOSPlaybackTarget(
             item: ep,
             client: client,
             userID: userID,
-            seriesName: item.Name
+            seriesName: item.Name,
+            seriesID: item.Id,
+            startFraction: startFraction
         )
     }
 
@@ -1060,13 +1117,14 @@ struct FNOSItemDetailView: View {
         pendingEpisode = nil
         let name = pendingSeriesName ?? item.Name
         pendingSeriesName = nil
-        print("FNOSℹ️换集 → 第 \(ep.IndexNumber ?? 0) 集《\(ep.Name ?? "?")》")
+        print("FNOSℹ️换集 → 第 \(ep.IndexNumber ?? 0) 集：\(ep.Name ?? "？")")
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
             playbackTarget = FNOSPlaybackTarget(
                 item: ep,
                 client: client,
                 userID: userID,
-                seriesName: name
+                seriesName: name,
+                seriesID: item.Id
             )
         }
     }

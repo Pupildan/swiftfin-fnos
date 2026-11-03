@@ -248,6 +248,8 @@ struct FNOSPlayerContainerView: View {
     var episodes: [FNOSItem] = []
     /// 点击换集回调（由详情页重建播放目标实现切集）
     var onSelectEpisode: ((FNOSItem) -> Void)? = nil
+    /// 所属剧 Id（v87：剧集续播位置记录用）
+    var seriesID: String? = nil
     /// 继续播放起点（0~1 比例，来自服务端多端同步进度；nil = 从头播）
     var startFraction: Double? = nil
 
@@ -291,6 +293,18 @@ struct FNOSPlayerContainerView: View {
     // v86 播放进度上报（本机记录 → 服务端多端同步）：10s 节流；mpv 记最后位置供 stopped 上报
     @State private var lastReportAt: Date = .distantPast
     @State private var lastMPVPosition: Double = 0
+    // v87 续播：本地进度为可靠主链路；记录 > 30s 时弹「从头/继续」选择（3s 自动续播）
+    @State private var pendingResumeTarget: Double?
+    @State private var resumeAutoTask: Task<Void, Never>?
+    @State private var lastLocalSaveAt: Date = .distantPast
+
+    /// 剧集自动连播：当前集在本列表里的下一集
+    private var nextEpisode: FNOSItem? {
+        guard item.type == "Episode",
+              let idx = episodes.firstIndex(where: { $0.Id == item.Id }),
+              idx + 1 < episodes.count else { return nil }
+        return episodes[idx + 1]
+    }
 
     /// 10s 节流的进度上报
     private func throttledProgressReport(_ seconds: Double) {
@@ -326,6 +340,7 @@ struct FNOSPlayerContainerView: View {
 
     private enum Control: Hashable {
         case rewind, playPause, forward, rate, danmu, danmuSettings, audio, scrubber
+        case resumeStartOver, resumeContinue
     }
 
     private let rateOptions: [Float] = [0.5, 1.0, 1.5, 2.0]
@@ -419,6 +434,8 @@ struct FNOSPlayerContainerView: View {
                 onProgress: { position in
                     lastMPVPosition = position
                     throttledProgressReport(position)
+                    // v87：本地进度（mpv 侧；剧集位置记录暂只覆盖 KS 路径）
+                    FNOSProgressStore.save(itemID: item.Id, seconds: position)
                 }
             ) {
                 Task {
@@ -510,6 +527,13 @@ struct FNOSPlayerContainerView: View {
                 controlBar
                     .transition(.opacity)
             }
+
+            // v87 续播选择弹窗：底部悬浮，3s 未确认自动续播
+            if let target = pendingResumeTarget {
+                resumeChoiceOverlay(target: target)
+                    .zIndex(6)
+                    .transition(.opacity)
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color.black.ignoresSafeArea())
@@ -525,6 +549,7 @@ struct FNOSPlayerContainerView: View {
         .onDisappear {
             hideTask?.cancel()
             scrubCommitTask?.cancel()
+            resumeAutoTask?.cancel()
             danmuEngine.setRate(0)
             // v86：KS 侧停止上报（记录同步到服务端）
             if !useMPVEngine, !forceMPV {
@@ -562,12 +587,25 @@ struct FNOSPlayerContainerView: View {
     private func playerView(url: URL) -> some View {
         KSVideoPlayer(coordinator: coordinator, url: url, options: makeOptions())
             .onPlay { currentTime, _ in
-                // 继续播放：首次起播即跳到服务端记录的进度（比例 × 条目时长换算成秒）。
-                // 用首个时间回调触发一次 seek，不猜引擎 ready 状态枚举（两 KS 引擎通用）。
-                if !didResumeSeek, let target = resumeStartSeconds, target > 5 {
+                // 继续播放：无弹窗时首次时间回调静默 seek（两 KS 引擎通用）；
+                // 有弹窗（记录 > 30s）时等用户选择 / 3s 自动续播，不抢跑
+                if !didResumeSeek, pendingResumeTarget == nil,
+                   let target = resumeStartSeconds, target > 5 {
                     didResumeSeek = true
                     coordinator.seek(time: target)
                     print("FNOSℹ️继续播放: seek → \(Int(target))s")
+                }
+                // v87 本地进度（续播主链路）+ 剧集观看位置（5s 节流落盘）
+                if Date().timeIntervalSince(lastLocalSaveAt) > 5 {
+                    lastLocalSaveAt = Date()
+                    FNOSProgressStore.save(itemID: item.Id, seconds: currentTime)
+                    if item.type == "Episode", let sid = seriesID {
+                        FNOSProgressStore.saveSeriesProgress(
+                            seriesID: sid,
+                            episodeItemID: item.Id,
+                            episodeNumber: item.IndexNumber ?? 0
+                        )
+                    }
                 }
                 throttledProgressReport(currentTime)
                 danmuEngine.sync(mediaTime: currentTime)
@@ -578,7 +616,17 @@ struct FNOSPlayerContainerView: View {
                     Task { @MainActor in probeStreamRange() }
                 }
                 switch state {
-                case .paused, .playedToTheEnd, .error:
+                case .playedToTheEnd:
+                    danmuEngine.setRate(0)
+                    // v87：看完清进度；剧集自动连播下一集（经详情页「关播→重开」既有链路）
+                    FNOSProgressStore.clear(itemID: item.Id)
+                    if let next = nextEpisode {
+                        print("FNOSℹ️自动连播 → \(next.Name ?? "?")")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                            onSelectEpisode?(next)
+                        }
+                    }
+                case .paused, .error:
                     danmuEngine.setRate(0)
                 default:
                     danmuEngine.setRate(Double(coordinator.playbackRate))
@@ -1021,6 +1069,84 @@ struct FNOSPlayerContainerView: View {
         print("FNOSℹ️进度提交: \(Int(scrubValue))s")
     }
 
+    // MARK: 续播选择弹窗（v87：记录 > 30s 时底部弹出，3s 未确认自动续播）
+
+    private func resumeChoiceOverlay(target: Double) -> some View {
+        VStack(spacing: 14) {
+            Text("检测到播放记录 · 已看到 \(timeString(target))")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundColor(.white)
+            HStack(spacing: 26) {
+                Button {
+                    cancelResumeChoice(startOver: true)
+                } label: {
+                    Text("从头开始")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 26)
+                        .padding(.vertical, 12)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.16)))
+                }
+                .buttonStyle(FNOSBareButtonStyle())
+                .focused($focus, equals: .resumeStartOver)
+
+                Button {
+                    resumeNow(target)
+                } label: {
+                    Text("继续播放")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 26)
+                        .padding(.vertical, 12)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(Color.white))
+                }
+                .buttonStyle(FNOSBareButtonStyle())
+                .focused($focus, equals: .resumeContinue)
+            }
+            Text("3 秒后自动继续播放")
+                .font(.system(size: 15))
+                .foregroundColor(.white.opacity(0.65))
+        }
+        .padding(28)
+        .background(RoundedRectangle(cornerRadius: 18).fill(Color.black.opacity(0.82)))
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+        .padding(.bottom, 150)
+        .onAppear {
+            // 默认焦点落「继续播放」（未确认即自动续播的语义一致）
+            focus = .resumeContinue
+            revealControls()
+            resumeAutoTask?.cancel()
+            resumeAutoTask = Task {
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                guard !Task.isCancelled else { return }
+                resumeNow(target)
+            }
+        }
+    }
+
+    /// 继续播放：seek 到记录位置，关闭弹窗
+    private func resumeNow(_ target: Double) {
+        resumeAutoTask?.cancel()
+        didResumeSeek = true
+        pendingResumeTarget = nil
+        coordinator.seek(time: target)
+        focus = .playPause
+        revealControls()
+        print("FNOSℹ️续播确认: → \(Int(target))s")
+    }
+
+    /// 从头开始：清本地记录（当前从 0 播着，无需 seek），关闭弹窗
+    private func cancelResumeChoice(startOver: Bool) {
+        resumeAutoTask?.cancel()
+        didResumeSeek = true
+        pendingResumeTarget = nil
+        if startOver {
+            FNOSProgressStore.clear(itemID: item.Id)
+        }
+        focus = .playPause
+        revealControls()
+    }
+
     // MARK: 状态助手
 
     private var isPlaying: Bool {
@@ -1113,6 +1239,12 @@ struct FNOSPlayerContainerView: View {
             positionSeconds: resumeStartSeconds ?? 0,
             stage: "start"
         )
+
+        // v87 续播选择：本地/服务端记录 > 30s → 底部弹「从头开始/继续播放」（3s 未确认自动续播）；
+        // ≤30s 的小进度不弹窗，由 onPlay 的静默 seek 直接续
+        if let resume = resumeStartSeconds, resume > 30 {
+            pendingResumeTarget = resume
+        }
 
         // 3) 弹幕（真实服务端；剧集按「剧名 + 集数」匹配，电影按标题匹配）
         danmuEngine.setRate(1)

@@ -139,9 +139,11 @@ final class FNOSDirectClient {
             let envelope = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data)
             let items = envelope.Items.filter { ($0.UserData?.PlaybackPositionTicks ?? 0) > 0 }
             print("FNOSℹ️继续播放 \(items.count) 条")
+            FNOSDiag.shared.add("继续播放服务端记录 \(items.count) 条")
             return items
         } catch {
             print("FNOS❗️加载继续播放失败（首页将隐藏该行）: \(error)")
+            FNOSDiag.shared.add("继续播放拉取失败: \(error.localizedDescription)", dedupeKey: "resume.err")
             return []
         }
     }
@@ -163,15 +165,18 @@ final class FNOSDirectClient {
             let code = (response as? HTTPURLResponse)?.statusCode ?? -1
             if !(200..<300).contains(code) {
                 print("FNOS⚠️POST \(path) → \(code)（进度上报未生效，不影响播放）")
+                FNOSDiag.shared.add("POST \(path) → \(code)（上报未生效）", dedupeKey: "post.\(path).\(code)")
             }
         } catch {
             print("FNOS⚠️POST \(path): \(error)（进度上报未生效，不影响播放）")
+            FNOSDiag.shared.add("POST \(path) 失败: \(error.localizedDescription)", dedupeKey: "post.\(path).err")
         }
     }
 
     /// 播放进度上报（v86）：本机记录同步到飞牛服务端 → 各端「继续播放」可见。
     /// tick 单位：与该服务端 RunTimeTicks 实测一致按微秒（1e6/秒）上报；
     /// 若服务端按标准 Jellyfin 100ns 解析则进度会偏慢 10 倍——真机核对后如不符改此系数。
+    /// 注意：续播主链路是本地记录（FNOSProgressStore），上报失败不影响任何功能。
     func reportPlayback(itemID: String, positionSeconds: Double, stage: String) async {
         let ticks = Int64(max(0, positionSeconds) * 1_000_000)
         let path: String
@@ -181,6 +186,74 @@ final class FNOSDirectClient {
         default: path = "Sessions/Playing/Progress"
         }
         await post(path: path, body: ["ItemId": itemID, "PositionTicks": ticks])
+    }
+}
+
+// MARK: - 本地播放进度（v87 续播主链路：UserDefaults，无服务端依赖）
+
+/// 本地进度存储。服务端 /Sessions/Playing* 上报的兼容性未验证（真机无日志），
+/// 续播功能以本地记录为可靠主链路；服务端上报继续尽力而为（多端同步）。
+enum FNOSProgressStore {
+    private static let prefix = "fnos.prog."
+    private static let seriesPrefix = "fnos.prog.series."
+
+    /// 条目播放进度（秒）
+    static func save(itemID: String, seconds: Double) {
+        guard seconds > 0 else { return }
+        UserDefaults.standard.set(seconds, forKey: prefix + itemID)
+    }
+
+    static func load(itemID: String) -> Double? {
+        let v = UserDefaults.standard.double(forKey: prefix + itemID)
+        return v > 0 ? v : nil
+    }
+
+    static func clear(itemID: String) {
+        UserDefaults.standard.removeObject(forKey: prefix + itemID)
+    }
+
+    /// 剧集观看位置：剧 Id → 最近看的集（详情页「继续播放 第N集」用）
+    static func saveSeriesProgress(seriesID: String, episodeItemID: String, episodeNumber: Int) {
+        UserDefaults.standard.set([episodeItemID, episodeNumber], forKey: seriesPrefix + seriesID)
+    }
+
+    static func loadSeriesProgress(seriesID: String) -> (episodeItemID: String, episodeNumber: Int)? {
+        guard let arr = UserDefaults.standard.array(forKey: seriesPrefix + seriesID),
+              arr.count == 2,
+              let epID = arr[0] as? String,
+              let num = arr[1] as? Int else { return nil }
+        return (epID, num)
+    }
+}
+
+// MARK: - 应用内诊断（v87：tvOS 真机无控制台，关键链路留痕供设置面板截图回报）
+
+final class FNOSDiag {
+    static let shared = FNOSDiag()
+    private let lock = NSLock()
+    private var lines: [String] = []
+    private var seen: Set<String> = []
+
+    /// dedupeKey 相同的记录只留第一条（周期性失败不刷屏）
+    func add(_ line: String, dedupeKey: String? = nil) {
+        let fmt = DateFormatter()
+        fmt.dateFormat = "HH:mm:ss"
+        let entry = "\(fmt.string(from: Date())) \(line)"
+        lock.lock()
+        if let key = dedupeKey {
+            if seen.contains(key) { lock.unlock(); return }
+            seen.insert(key)
+        }
+        lines.append(entry)
+        if lines.count > 30 { lines.removeFirst(lines.count - 30) }
+        lock.unlock()
+        print("FNOSDiag \(entry)")
+    }
+
+    func snapshot() -> [String] {
+        lock.lock()
+        defer { lock.unlock() }
+        return lines
     }
 }
 
@@ -234,6 +307,8 @@ struct FNOSItem: Decodable, Identifiable {
     let People: [FNOSPeopleEntry]?
     // 播放进度（继续播放 shelf 用；多端同步由飞牛服务端统一维护）
     let UserData: FNOSUserData?
+    // 所属剧 Id（剧集续播：剧→最近集映射用）
+    let SeriesId: String?
 
     var id: String { Id }
     var type: String? { ItemType }
@@ -244,7 +319,7 @@ struct FNOSItem: Decodable, Identifiable {
         case ItemType = "Type"
         case ProductionYear, Overview, ImageTags, BackdropImageTags
         case RunTimeTicks, OfficialRating, Genres
-        case ParentIndexNumber, IndexNumber, PremiereDate, SeriesName
+        case ParentIndexNumber, IndexNumber, PremiereDate, SeriesName, SeriesId
         case People, UserData
     }
 }

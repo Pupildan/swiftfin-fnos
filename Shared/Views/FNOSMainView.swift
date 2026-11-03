@@ -16,7 +16,9 @@ struct FNOSPlaybackTarget: Identifiable {
     let userID: String
     /// 单集所属剧名（弹幕「剧名+集数」匹配用）
     var seriesName: String? = nil
-    /// 继续播放起点（0~1 比例；由服务端进度换算，与飞牛 tick 单位无关）
+    /// 所属剧 Id（v87：剧集续播位置记录用）
+    var seriesID: String? = nil
+    /// 继续播放起点（0~1 比例；由服务端/本地进度换算，与飞牛 tick 单位无关）
     var startFraction: Double? = nil
 }
 
@@ -237,6 +239,7 @@ struct FNOSMainView: View {
                 client: target.client,
                 userID: target.userID,
                 seriesName: target.seriesName,
+                seriesID: target.seriesID,
                 startFraction: target.startFraction
             )
         }
@@ -644,7 +647,14 @@ struct FNOSMainView: View {
         lastOpenedCardID = nil
         lastFlightCtx = nil
         print("FNOSℹ️继续播放: \(item.Name ?? "?") @\(String(format: "%.0f", (fraction ?? 0) * 100))%")
-        playbackTarget = FNOSPlaybackTarget(item: item, client: client, userID: userID, startFraction: fraction)
+        playbackTarget = FNOSPlaybackTarget(
+            item: item,
+            client: client,
+            userID: userID,
+            seriesName: item.SeriesName,
+            seriesID: item.SeriesId,
+            startFraction: fraction
+        )
     }
 
     // MARK: - 导航（详情过渡）
@@ -921,14 +931,17 @@ struct FNOSMainView: View {
         do {
             let envelope = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data)
             if envelope.Items.isEmpty {
-                // v86 诊断：LiveTV（电视直播）/特殊库类型在 /Items?ParentId 下常为空，
-                // 需要专用端点。打印提示供用户抓日志回报。
+                // v87：LiveTV（电视直播）/特殊库类型在 /Items?ParentId 下常为空。
+                // 服务端原始返回进诊断面板（设置里可见），据此决定接哪个专用端点。
+                let raw = String(data: data.prefix(300), encoding: .utf8) ?? "(非文本)"
                 print("FNOS⚠️「\(library.Name ?? "?")」返回 0 条（可能为 LiveTV/特殊库类型，需专用端点支持）")
+                FNOSDiag.shared.add("「\(library.Name ?? "?")」0条 raw=\(raw)", dedupeKey: "empty.\(library.Id)")
             }
             return envelope.Items
         } catch {
             let raw = String(data: data.prefix(400), encoding: .utf8) ?? "(非文本)"
             print("FNOS❗️解析 /Items 失败: \(error) 原文: \(raw)")
+            FNOSDiag.shared.add("「\(library.Name ?? "?")」解析失败 raw=\(raw)", dedupeKey: "decode.\(library.Id)")
             throw FNOSDirectError("解析 /Items 失败: \(error.localizedDescription)")
         }
     }
@@ -952,6 +965,9 @@ struct FNOSHomeSettingsView: View {
 
     // 杜比视界按 HDR10 输出（规避紫绿偏色）
     @AppStorage("fnos.play.hdr10Compat") private var hdr10Compat = true
+
+    // v87 应用内诊断（真机无控制台，设置面板截图回报用）
+    @State private var diagLines: [String] = []
 
     // 播放器引擎：默认 KSPlayer；开启后走 mpv（MPVUI），用于杜比视界 P5 的色彩转换
     @AppStorage("fnos.play.engineMPV") private var engineMPV = false
@@ -990,6 +1006,26 @@ struct FNOSHomeSettingsView: View {
                         ) {
                             showTransitionDemo = true
                         }
+                    }
+
+                    section(
+                        "诊断信息（真机无控制台）",
+                        footer: "最近的关键链路留痕。遇到「继续播放没记录 / 某媒体库没数据」时，把本区块截图发给开发者。"
+                    ) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(diagLines, id: \.self) { line in
+                                Text(line)
+                                    .font(.system(size: 14, design: .monospaced))
+                                    .foregroundColor(.secondary)
+                                    .lineLimit(2)
+                            }
+                            if diagLines.isEmpty {
+                                Text("暂无诊断记录")
+                                    .font(.system(size: 14))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .onAppear { diagLines = FNOSDiag.shared.snapshot() }
                     }
 
                     section(

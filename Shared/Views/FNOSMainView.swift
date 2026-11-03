@@ -567,7 +567,7 @@ struct FNOSMainView: View {
         }()
 
         return Button {
-            openResume(item)
+            openResume(item: item)
         } label: {
             VStack(alignment: .leading, spacing: 10) {
                 FNOSAsyncImage(

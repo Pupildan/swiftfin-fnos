@@ -127,6 +127,10 @@ struct FNOSAsyncImage: View {
     let url: URL?
     let headers: [String: String]
     var contentMode: ContentMode = .fill
+    /// 加载中是否显示占位（灰底 + 转圈）。
+    /// 传 false 用于"叠在另一张同构图图片之上"的高清层：加载期间保持透明，
+    /// 让底下那张先显示，绝不会出现灰块。
+    var placeholder: Bool = true
 
     private enum Phase {
         case loading, loaded, failed
@@ -139,15 +143,19 @@ struct FNOSAsyncImage: View {
         ZStack {
             switch phase {
             case .loading:
-                Rectangle()
-                    .fill(Color.white.opacity(0.06))
-                ProgressView()
+                if placeholder {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.06))
+                    ProgressView()
+                }
             case .failed:
-                Rectangle()
-                    .fill(Color.white.opacity(0.06))
-                Image(systemName: "film")
-                    .font(.title2)
-                    .foregroundColor(.white.opacity(0.35))
+                if placeholder {
+                    Rectangle()
+                        .fill(Color.white.opacity(0.06))
+                    Image(systemName: "film")
+                        .font(.title2)
+                        .foregroundColor(.white.opacity(0.35))
+                }
             case .loaded:
                 if let image {
                     Image(uiImage: image)

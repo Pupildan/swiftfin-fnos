@@ -64,20 +64,19 @@ struct FNOSMainView: View {
     // ③ 详情页用同一张图淡入接管（同 URL 同缓存，接缝为零，只交接交互）       0.14s
     // ④ 静置 1.1s 无 UI → 信息层淡入 + 上移 16pt                            0.45s
     @State private var detailPhase: FNOSDetailPhase = .preview
-    /// 过渡中的飞行窗口（内容 = 详情页那张横图）
+    /// 过渡中的飞行窗口（内容 = 该条目主图的高清版，与卡片同构图）
     @State private var flightItem: FNOSItem?
     /// 窗口矩形：起点 = 卡片真实 frame，终点 = 全屏
     @State private var flightFrame: CGRect = .zero
     @State private var flightRadius: CGFloat = 14
-    /// true = 还在显示卡片原来的竖版海报；false = 已换成横图
-    @State private var flightShowsPoster = true
-    /// 飞行层用的横图（与详情页首帧完全同一个 URL）
-    @State private var flightBackdrop: URL?
+    /// 飞行层用图：Primary 的 1920 宽版本（卡片上显示的是 400，这里单独要高清扫图，放大才不糊）
+    @State private var flightPoster: URL?
     @State private var detailOpacity: Double = 0
-    /// 整页跟随缩放（背景卡片一起被推近，制造纵深，而不是钉在原地被压暗）
-    @State private var pageScale: CGFloat = 1
-    @State private var pageAnchor: UnitPoint = .center
-    @State private var pageDim: Double = 0
+    /// 只有「被点的那一行」跟着放大 —— 参考里上下两行纹丝不动
+    @State private var transitionSectionID: String?
+    @State private var rowScale: CGFloat = 1
+    @State private var rowAnchor: UnitPoint = .center
+    @State private var rowDim: Double = 0
     /// 来源卡片位置（返回时缩回这里）
     @State private var sourceCardFrame: CGRect = .zero
     /// 每张卡片在根坐标系里的位置（点按时取用）
@@ -199,15 +198,6 @@ struct FNOSMainView: View {
                 }
                 }
                 .disabled(detailItem != nil)
-                // 整页跟随推近：锚点 = 被点的那张卡，背景卡片随之被"推"出画面（参考实现同款纵深）
-                .scaleEffect(pageScale, anchor: pageAnchor)
-
-                // 过渡期压暗（在页面上再叠一层，避免整页放大后背景太抢）
-                Color.black
-                    .opacity(pageDim * 0.45)
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
-                    .zIndex(5)
 
                 // 过渡期焦点盾（详情页信息层出现前，方向键/Menu 都由它接住）
                 if detailItem != nil {
@@ -250,12 +240,12 @@ struct FNOSMainView: View {
             }
             .onAppear { screenSize = geo.size }
             .onChange(of: geo.size) { _, newSize in screenSize = newSize }
-            // 卡片一聚焦就预取该条目的全屏横图 → 点按瞬间命中缓存，可以直接换图起跳
+            // 卡片一聚焦就预取该条目的高清主图（1280）→ 点按瞬间起跳就是清晰画面
             .onChange(of: shelfCardFocused) { _, focusedID in
                 guard let focusedID else { return }
                 let allItems = sections.flatMap { $0.items }
                 guard let item = allItems.first(where: { $0.Id == focusedID }),
-                      let url = prefetchBackdropURL(for: item)
+                      let url = highResPosterURL(for: item)
                 else { return }
                 let headers = client?.mediaHeaders ?? [:]
                 Task { await FNOSImagePrefetcher.prefetch(url, headers: headers) }
@@ -375,6 +365,8 @@ struct FNOSMainView: View {
     // MARK: - 海报墙（每行一个媒体库，横向滚动）
 
     private func shelf(_ section: FNOSLibrarySection, screenWidth: CGFloat) -> some View {
+        // 过渡时只有「被点的那一行」参与缩放，其余行完全不动（参考实现就是这样）
+        let isTransitionRow = transitionSectionID != nil && transitionSectionID == section.id
         // ATV+ 版式：左右 72 边距，一屏正好 6 张，间距与上下留白接近（28）
         let hPadding: CGFloat = 72
         let spacing: CGFloat = 28
@@ -426,6 +418,11 @@ struct FNOSMainView: View {
                 // 双保险：把焦点特效关闭挂到内容容器上
                 .focusEffectDisabled()
             }
+            // 放大时要允许卡片溢出到行外（参考里焦点卡会盖住上下的行标题与相邻行）
+            .scrollClipDisabled()
+            // 只缩放这一行；锚点 = 被点的卡在屏幕上的归一化位置（行宽 = 屏宽，锚点换算精确）
+            .scaleEffect(isTransitionRow ? rowScale : 1, anchor: rowAnchor)
+            .opacity(isTransitionRow ? 1 - rowDim : 1)
             .focusEffectDisabled()
         }
         .focusEffectDisabled()
@@ -433,7 +430,11 @@ struct FNOSMainView: View {
 
     // MARK: - 导航
 
-    /// 详情页入口：卡片位置换横图 → 窗口长到全屏（整页同时推近）→ 详情页接管 → 静置 → 信息层淡入
+    /// 详情页入口（对齐参考录屏 60fps 实测）：
+    /// ① 按下即起跳，飞行窗口 = 卡片主图高清版，从卡片矩形长到全屏 0.30s
+    /// ② 同时「只有被点的这一行」被推近（1 → 1.55）并淡出，同行其他卡被挤出屏幕；上下行不动
+    /// ③ 到全屏后与详情页 keyart 交叉溶解 0.16s（此刻 keyart 已预加载好）
+    /// ④ 静置 1.2s 无 UI → 信息层上移淡入 0.45s
     private func open(item: FNOSItem) {
         guard detailItem == nil, flightItem == nil else { return }
 
@@ -442,39 +443,38 @@ struct FNOSMainView: View {
         sourceCardFrame = card
 
         guard heroTransition else {
-            // 关闭电影感过渡：直接呈现（无飞行层）
-            pageScale = 1
-            pageDim = 0
+            // 关闭电影感过渡：直接呈现
+            rowScale = 1
+            rowDim = 0
+            transitionSectionID = nil
             detailPhase = .info
             detailOpacity = 1
             detailItem = item
             return
         }
 
-        // 整页推近的锚点 = 被点这卡的中心（归一化）
-        pageAnchor = UnitPoint(
+        // 只放大这一行；锚点 = 这张卡在屏幕上的归一化位置（行是满屏宽，换算精确）
+        transitionSectionID = sectionID(containingItem: item.Id)
+        rowAnchor = UnitPoint(
             x: min(max(card.midX / max(size.width, 1), 0.02), 0.98),
-            y: min(max(card.midY / max(size.height, 1), 0.02), 0.98)
+            y: 0.5
         )
+        rowScale = 1
+        rowDim = 0
 
         detailPhase = .preview
         detailOpacity = 0
-        pageScale = 1
-        pageDim = 0
         flightFrame = card
         flightRadius = 14
-        flightShowsPoster = true
-        flightBackdrop = prefetchBackdropURL(for: item)
+        flightPoster = highResPosterURL(for: item)
         flightItem = item
-        // 提前挂载详情页：横图与详情数据在放大这段时间里就绪
+        // 提前挂载详情页：keyart 在放大的 0.3s 里加载完，溶解时不用等
         detailItem = item
 
-        let backdropURL = flightBackdrop
-        let prefetch = Task {
-            await FNOSImagePrefetcher.prefetch(backdropURL, headers: client?.mediaHeaders ?? [:])
-        }
+        let poster = flightPoster
+        let headers = client?.mediaHeaders ?? [:]
+        Task { await FNOSImagePrefetcher.prefetch(poster, headers: headers) }
 
-        // 焦点盾要等这一帧布局完成才能接住焦点
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(80))
             shieldFocused = true
@@ -482,38 +482,35 @@ struct FNOSMainView: View {
 
         transitionTask?.cancel()
         transitionTask = Task { @MainActor in
-            // 先让「海报还在卡片里」这一帧真正上屏，否则看不到起点，等于凭空冒出来
-            try? await Task.sleep(for: .milliseconds(60))
-            if !imageIsCached(backdropURL) {
-                await waitForReady(prefetch, timeoutMilliseconds: 220)
-            }
-
-            // ① 内容换图：竖版海报 → 详情页横图（短淡化，与紧接着开始的运动重叠）
-            withAnimation(.easeInOut(duration: 0.12)) { flightShowsPoster = false }
-            try? await Task.sleep(for: .milliseconds(40))
-
-            // ② 窗口长到全屏 + 整页一起被推近（背景卡片跟着出画，制造纵深）
-            withAnimation(.easeOut(duration: 0.34)) {
+            // ① 按下即起跳（零等待）：窗口长到全屏 + 圆角收平
+            withAnimation(.easeOut(duration: 0.30)) {
                 flightFrame = CGRect(origin: .zero, size: size)
                 flightRadius = 0
-                pageScale = 1.12
-                pageDim = 1
             }
-            try? await Task.sleep(for: .milliseconds(350))
+            // ② 只有这一行被推近（参考里上下两行纹丝不动）
+            withAnimation(.easeOut(duration: 0.28)) {
+                rowScale = 1.55
+                rowDim = 1
+            }
 
-            // ③ 详情页用同一张图淡入接管（同 URL、同尺寸 → 视觉无变化，只是把交互交出去）
-            withAnimation(.linear(duration: 0.14)) { detailOpacity = 1 }
-            try? await Task.sleep(for: .milliseconds(150))
+            try? await Task.sleep(for: .milliseconds(300))
+
+            // ③ 与详情页 keyart 交叉溶解
+            withAnimation(.linear(duration: 0.16)) { detailOpacity = 1 }
+            try? await Task.sleep(for: .milliseconds(170))
             flightItem = nil
 
-            // ④ 静置约 1.1s（无任何 UI），再让信息层上移淡入
-            try? await Task.sleep(for: .milliseconds(1100))
+            // ④ 静置 1.2s（无任何 UI），再让信息层上移淡入
+            try? await Task.sleep(for: .milliseconds(1200))
             withAnimation(.easeOut(duration: 0.45)) { detailPhase = .info }
             shieldFocused = false
         }
     }
 
-    /// 返回：文字淡出 → 飞行窗口就位成全屏横图 → 摘掉详情页 → 窗口缩回来源卡片（整页同步复原）→ 焦点回卡
+    /// 返回（参考录屏 4.70→5.12s 实测）：
+    /// ① 文字 0.18s 淡出 → keyart 0.14s 淡出，露出「首页放大态」
+    /// ② 飞行窗口缩回来源卡片，同时整行缩回原位（**同行其他海报也会有缩小归位动画**）0.34s
+    /// ③ 释放详情页 → 焦点回来源卡
     private func closeDetail() {
         guard let item = detailItem else { return }
         transitionTask?.cancel()
@@ -534,32 +531,30 @@ struct FNOSMainView: View {
             try? await Task.sleep(for: .milliseconds(150))
 
             let size = screenSize == .zero ? CGSize(width: 1920, height: 1080) : screenSize
-            // 飞行层先跳到「全屏横图」（与详情页当前画面同图同尺寸），随后摘掉详情页不会闪
-            flightBackdrop = prefetchBackdropURL(for: item)
-            flightShowsPoster = false
+            // 飞行层接成全屏主图（与卡片同图，只是更大），keyart 淡出时不会闪
+            flightPoster = highResPosterURL(for: item)
             flightFrame = CGRect(origin: .zero, size: size)
             flightRadius = 0
             flightItem = item
             try? await Task.sleep(for: .milliseconds(30))
-            detailOpacity = 0
-            try? await Task.sleep(for: .milliseconds(50))
 
-            // 缩回来源卡片，同时整页恢复原比例
-            withAnimation(.easeInOut(duration: 0.32)) {
+            withAnimation(.linear(duration: 0.14)) { detailOpacity = 0 }
+            try? await Task.sleep(for: .milliseconds(150))
+
+            // ② 窗口缩回来源卡片，同时整行从放大态缩回原位（同行其他卡一起归位）
+            withAnimation(.easeInOut(duration: 0.34)) {
                 flightFrame = sourceCardFrame
                 flightRadius = 14
-                pageScale = 1
-                pageDim = 0
+                rowScale = 1
+                rowDim = 0
             }
-            // 缩到中途把内容换回竖版海报，落位时正好是卡片原本的样子
-            try? await Task.sleep(for: .milliseconds(200))
-            withAnimation(.linear(duration: 0.12)) { flightShowsPoster = true }
-            try? await Task.sleep(for: .milliseconds(150))
+            try? await Task.sleep(for: .milliseconds(360))
 
             flightItem = nil
             detailItem = nil
             detailPhase = .preview
             detailOpacity = 0
+            transitionSectionID = nil
             shieldFocused = false
 
             // 焦点回来源卡（主页一直挂在下面，滚动位置天然保留）
@@ -580,16 +575,20 @@ struct FNOSMainView: View {
         )
     }
 
-    /// 详情页首帧那张横图的 URL（与详情页内部构造方式完全一致：不带 index 的 Backdrop 接口）
-    private func prefetchBackdropURL(for item: FNOSItem) -> URL? {
-        guard let client, let tag = item.BackdropImageTags?.first, !tag.isEmpty else { return nil }
-        return try? client.url(
-            path: "Items/\(item.Id)/Images/Backdrop",
-            query: ["maxWidth": "1920", "quality": "90", "tag": tag]
-        )
+    /// 条目所在的那一行（section.id）
+    private func sectionID(containingItem itemID: String) -> String? {
+        sections.first { $0.items.contains { $0.Id == itemID } }?.id
     }
 
-    /// 图是否已在内存缓存（命中就不用等，点按瞬间直接换图）
+    /// 飞行层用图：Primary 的 1920 宽版本（卡片上显示的是 400）
+    ///
+    /// 飞牛剧集海报源图实测 2000×3000，取 1920 后 fill 到全屏正好 1:1，不会糊；
+    /// 卡片仍用 400 那张（滚动流畅），只有过渡这一下才用高清版。
+    private func highResPosterURL(for item: FNOSItem) -> URL? {
+        client?.posterURL(itemID: item.Id, tag: item.ImageTags?["Primary"], maxWidth: 1920)
+    }
+
+    /// 图是否已在内存缓存（命中就不用等，点按瞬间直接起跳）
     private func imageIsCached(_ url: URL?) -> Bool {
         guard let url else { return false }
         return FNOSImageCache.shared.memory.object(forKey: url.absoluteString as NSString) != nil
@@ -605,19 +604,24 @@ struct FNOSMainView: View {
         }
     }
 
-    /// 飞行窗口：内容 = 详情页那张横图（4K 源、1920 请求 → 放大到全屏依旧清晰）
+    /// 飞行窗口：内容 = 该条目主图（与卡片同构图，只是分辨率更高）
+    ///
+    /// 两层：
+    /// - 底层用卡片那张 400px 图（几乎必然在缓存里）→ 起跳瞬间绝不空、不灰
+    /// - 上层用 1280 高清版，加载完自动盖上（同构图同裁切，看不出替换），解决"放大后糊"
     @ViewBuilder
     private func flightLayer(item: FNOSItem, client: FNOSDirectClient) -> some View {
-        let posterURL = client.posterURL(itemID: item.Id, tag: item.ImageTags?["Primary"])
+        let lowRes = client.posterURL(itemID: item.Id, tag: item.ImageTags?["Primary"])
+        let highRes = flightPoster ?? lowRes
 
         ZStack {
-            if let backdrop = flightBackdrop {
-                FNOSAsyncImage(url: backdrop, headers: client.mediaHeaders, contentMode: .fill)
-                    .opacity(flightShowsPoster ? 0 : 1)
-            }
-            // 起点那一瞬间仍在卡片里显示原来那张竖版海报，保证「从这张卡长出来」的因果不断
-            FNOSAsyncImage(url: posterURL, headers: client.mediaHeaders, contentMode: .fill)
-                .opacity(flightShowsPoster ? 1 : 0)
+            FNOSAsyncImage(url: lowRes, headers: client.mediaHeaders, contentMode: .fill)
+            FNOSAsyncImage(
+                url: highRes,
+                headers: client.mediaHeaders,
+                contentMode: .fill,
+                placeholder: false
+            )
         }
         .frame(width: max(flightFrame.width, 1), height: max(flightFrame.height, 1))
         .clipShape(RoundedRectangle(cornerRadius: flightRadius, style: .continuous))

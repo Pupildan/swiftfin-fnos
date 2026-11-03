@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v69"
+    static let version = "v70"
 
     /// 本版主要变更摘要
-    static let changes = "修复详情页过渡动画丢失：改用 NavigationStack(path:)+NavigationLink(value:)+navigationDestination(for:) 标准 push 语义触发系统 zoom（此前 Button+isPresented 布尔翻转导致 zoom 源无法被捕获，过渡退化成无动画），并移除 push 瞬间禁用主页的 .disabled 修饰符"
+    static let changes = "修复详情页过渡动画丢失的真正根因：navigationDestination(for:) 误挂在 NavigationStack 外层（兄弟位置）会被 SwiftUI 静默忽略，导致 zoom 的 matchedTransition 上下文断裂、过渡退化无动画；已将其移入 NavigationStack 内部（根视图上）"
 }

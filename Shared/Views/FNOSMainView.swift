@@ -172,18 +172,20 @@ struct FNOSMainView: View {
                 }
                 }
             }
-        }
-        .navigationDestination(for: FNOSItem.self) { item in
-            FNOSItemDetailView(
-                item: item,
-                client: client,
-                userID: userID,
-                onEpisodes: { _ in
-                    // 剧集现在直接在详情页内选集，不再回调
-                }
-            )
-            // 系统原生 zoom 过渡：从卡片位置放大到详情页，反向自动缩回。
-            .navigationTransition(.zoom(sourceID: item.Id, in: detailNamespace))
+            // 关键：navigationDestination 必须挂在 NavigationStack 内部（stack 的根视图上），
+            // 挂在 stack 外层会被忽略，导致 zoom 过渡的 matchedTransition 上下文断裂 → 无动画。
+            .navigationDestination(for: FNOSItem.self) { item in
+                FNOSItemDetailView(
+                    item: item,
+                    client: client,
+                    userID: userID,
+                    onEpisodes: { _ in
+                        // 剧集现在直接在详情页内选集，不再回调
+                    }
+                )
+                // 系统原生 zoom 过渡：从卡片位置放大到详情页，反向自动缩回。
+                .navigationTransition(.zoom(sourceID: item.Id, in: detailNamespace))
+            }
         }
         .task {
             await bootstrapIfNeeded()

@@ -275,6 +275,10 @@ struct FNOSItemDetailView: View {
                 startPoint: .leading,
                 endPoint: .trailing
             )
+            // 预览阶段不能压暗：那一刻屏幕上是"纯横图"，要和外层飞行窗口完全一致，
+            // 接管时才没有"突然变暗"的跳变；信息层出现时再慢慢压下去。
+            .opacity(phase.showsInfo ? 1 : 0)
+            .animation(.easeInOut(duration: 0.55), value: phase)
 
             LinearGradient(
                 stops: [
@@ -284,6 +288,8 @@ struct FNOSItemDetailView: View {
                 startPoint: .top,
                 endPoint: .bottom
             )
+            .opacity(phase.showsInfo ? 1 : 0)
+            .animation(.easeInOut(duration: 0.55), value: phase)
 
             VStack(alignment: .leading, spacing: 20) {
                 Text("飞牛影视 · 精选")

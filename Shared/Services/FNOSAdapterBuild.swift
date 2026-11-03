@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v62"
+    static let version = "v64"
 
     /// 本版主要变更摘要
-    static let changes = "海报→详情页自定义过渡：聚焦卡片放大铺满 → 与全屏横图交叉溶解 → 1 秒无 UI 沉浸预览 → 信息层淡入上移 16pt 并落到播放键；返回反向缩回来源海报并恢复焦点/滚动；横图预取避免溶解露灰底"
+    static let changes = "详情页过渡重做：卡片位置先把内容换成详情页那张横图（1920/4K 源，放大不糊），再连同整页一起被推近到全屏（背景卡片跟着出画），全屏后详情页无接缝接管，静置 1.1 秒才淡入信息层；返回反向缩回原卡。设置里可关闭"
 }

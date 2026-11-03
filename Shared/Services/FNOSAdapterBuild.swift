@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v73"
+    static let version = "v74"
 
     /// 本版主要变更摘要
-    static let changes = "过渡动画 Demo v2：修卡片挤压（固定 300x450 尺寸）与进入/返回失效（根因是被隐藏的卡片仍占据 tvOS 焦点，现详情打开时禁用海报行强制焦点转移，焦点样式改系统 .card 全自动处理）"
+    static let changes = "过渡动画 Demo v3：改用真实电影数据（真海报卡片 + 焦点预取 1920 横图，起跳即横图对齐参考）；同行海报参与进出场（当前行以焦点卡为锚点整体放大，其他卡推出屏幕外，返回反向缩回）；修返回失效（关闭后焦点显式还给来源卡片 + 详情层焦点多次兜底）"
 }

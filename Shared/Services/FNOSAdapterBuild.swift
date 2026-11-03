@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v79"
+    static let version = "v80"
 
     /// 本版主要变更摘要
-    static let changes = "v79 修复：起跳卡隐藏/去 matched 的判断由只看 detailItem 改为同时看 flight 与 detailItem。v78 改 cover-at-land 后 detailItem 延迟到 0.46s 才设置，导致 0~0.46s 飞行期间起跳卡保留 matchedGeometryEffect，与飞行层 B 端横图形成同一 id 双 source（未定义行为，起跳可能失败/闪烁）。现飞行起跳瞬间（flight 设置时）起跳卡即隐藏去 matched，恢复 v77 已验证的 B 端从最后 frame 起跳配置。"
+    static let changes = "v80 修复：①详情页返回高概率丢焦点——cover 展示期间不再 disabled 主页（仅飞行期禁用），保住焦点引擎的归还锚点；closeDetail 焦点恢复由单发 0.18s 改为 0.1/0.3/0.6/1.0s 多次幂等兜底。②同行海报不参与动画——行副本 scaleEffect 锚点坐标系错误（.position 包装视图占满全屏，anchor 须按全屏比例而非副本内部占比），改为焦点卡真实屏幕中心占比；行副本 1→3 缩放由 onAppear 同步设置（会被插入事务合并→首帧即 3.0，邻居凭空消失）改为隔帧起弹簧；窗口 ±3 放宽到 ±6 并抽成共享常量 windowHalf，主页隐藏窗口与飞行层副本保证同宽。"
 }

@@ -144,10 +144,13 @@ struct FNOSMainView: View {
                         }
                         .ignoresSafeArea()
                     }
-                    // 过渡期间禁用整个主页（含 Hero 按钮 / 海报行 / 设置按钮），
-                    // 否则焦点会漏到被飞行层盖住的可聚焦元素上 → Menu 失灵（v76 根因）。
+                    // 仅飞行期（cover 呈现前 0~0.74s）禁用主页：此时飞行层盖住底层，
+                    // 焦点会漏到被盖住的可聚焦元素上 → Menu 失灵（v76 根因）。
                     // 注意：主页保持可见（不 opacity 0），由飞行层半透明压暗盖住。
-                    .disabled(flight != nil || detailItem != nil)
+                    // v80 关键修复：cover presented 之后底层被系统拦截、根本不可达，
+                    // 禁用纯属多余且【摧毁焦点归还锚点】——详情期间保持来源卡可聚焦，
+                    // dismiss 时焦点引擎才有合法落点（返回高概率丢焦点的根因）。
+                    .disabled(flight != nil)
 
                     // 左上角设置按钮（刷新/退出集成在设置面板里）
                     VStack {
@@ -171,7 +174,7 @@ struct FNOSMainView: View {
                         .padding(.top, 20)
                         Spacer()
                     }
-                    .disabled(flight != nil || detailItem != nil)
+                    .disabled(flight != nil)
                 }
 
                 // ---- 详情过渡（方案 B+ v78：cover-at-land）----
@@ -391,11 +394,12 @@ struct FNOSMainView: View {
                         // 起跳卡保留 matched，与飞行层 B 端横图形成同一 id 双 source（v77 已验证
                         // 的配置是 A 端去掉 matched，B 端从最后 frame 起跳，故需在 flight 起就隐藏）。
                         let isFlightCard = flight?.item.Id == item.Id || detailItem?.Id == item.Id
-                        // 飞行行窗口内的卡也隐藏（交给行副本渲染），避免与副本「重影」。
-                        let isInFlightWindow: Bool = {
-                            guard let f = flight, f.rowSectionID == section.id, let rowIndex else { return false }
-                            return rowIndex >= f.focusIndex - 3 && rowIndex <= f.focusIndex + 3
-                        }()
+                            // 飞行行窗口内的卡也隐藏（交给行副本渲染），避免与副本「重影」。
+                            // 窗口宽度与飞行层 window 共用 FNOSDetailFlightContext.windowHalf。
+                            let isInFlightWindow: Bool = {
+                                guard let f = flight, f.rowSectionID == section.id, let rowIndex else { return false }
+                                return abs(rowIndex - f.focusIndex) <= FNOSDetailFlightContext.windowHalf
+                            }()
                         Button {
                             openCard(item: item)
                         } label: {
@@ -533,11 +537,17 @@ struct FNOSMainView: View {
     }
 
     /// 详情 cover 关闭（系统 Menu 已把 detailItem 置 nil）：只负责清飞行层 + 还焦点。
+    /// v80 关键修复：cover dismiss 动画（约 0.4s）进行中焦点引擎会重建焦点，
+    /// 单发 asyncAfter(0.18)（Demo 校准值，Demo 无 present 生命周期）落在动画中
+    /// 会被吞掉 → 高概率返回后无焦点环 / 首次按遥控乱跳。改为多次兜底：
+    /// 已落位则跳过（幂等）；用户已开新过渡或新导航则停止，不与用户抢焦点。
     private func closeDetail() {
         flight = nil
-        if let returning = lastOpenedCardID {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-                shelfCardFocused = returning
+        guard let returning = lastOpenedCardID else { return }
+        for delay in [0.1, 0.3, 0.6, 1.0] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                guard flight == nil, detailItem == nil, lastOpenedCardID == returning else { return }
+                if shelfCardFocused != returning { shelfCardFocused = returning }
             }
         }
     }
@@ -1524,6 +1534,12 @@ struct FNOSHeroTransitionDemo: View {
 //   行副本位置用「行内容 frame + 焦点下标」算出（FNOSRowFrameStore，含水平滚动偏移）。
 
 struct FNOSDetailFlightContext {
+    /// 行副本窗口半径（焦点卡 ±N 张）。飞行层 window 与主页 isInFlightWindow
+    /// 必须同宽（重影/空洞都从两处硬编码不同步来），故收敛为单一常量。
+    /// v80 由 ±3 放宽到 ±6：1920 宽下一张卡占 ~300pt，焦点两侧可见 ≤3.2 张，
+    /// ±6 留足余量；窗口外的静止原卡在 scale 1.0 时已全部出屏，观感接近 Demo 整行推出。
+    static let windowHalf = 6
+
     let item: FNOSItem
     let client: FNOSDirectClient?
     let userID: String
@@ -1581,18 +1597,18 @@ struct FNOSDetailFlightOverlay: View {
         return nil
     }
 
-    /// 行副本窗口：焦点卡 ±3 张（至少含焦点卡本身）
+    /// 行副本窗口：焦点卡 ±windowHalf 张（至少含焦点卡本身），与主页隐藏窗口同宽
     private var window: [FNOSItem] {
         let items = ctx.rowItems
         guard !items.isEmpty else { return [] }
-        let lo = max(0, ctx.focusIndex - 3)
-        let hi = min(items.count - 1, ctx.focusIndex + 3)
+        let lo = max(0, ctx.focusIndex - FNOSDetailFlightContext.windowHalf)
+        let hi = min(items.count - 1, ctx.focusIndex + FNOSDetailFlightContext.windowHalf)
         return Array(items[lo...hi])
     }
 
     /// 焦点卡在窗口内的列下标
     private var focusColInWindow: Int {
-        let lo = max(0, ctx.focusIndex - 3)
+        let lo = max(0, ctx.focusIndex - FNOSDetailFlightContext.windowHalf)
         return ctx.focusIndex - lo
     }
 
@@ -1603,7 +1619,7 @@ struct FNOSDetailFlightOverlay: View {
                 Color.black.opacity(0.35).ignoresSafeArea()
 
                 // 同行推出副本：scale 1→3 锚定焦点卡中心（焦点卡中心屏幕坐标不变）
-                rowReplica
+                rowReplica(in: geo)
 
                 // 起跳横图（B 端）：matched 从卡片(A 端)位置单次弹簧插值到全屏。
                 // 单段连续动画是底线（v62~v67 分段 Task.sleep = 卡顿割裂，禁用）。
@@ -1653,9 +1669,16 @@ struct FNOSDetailFlightOverlay: View {
         }
         .ignoresSafeArea()
         .onAppear {
-            // 行副本 1→3（与 matched 同一弹簧，视觉同步）
-            withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
-                rowScale = 3.0
+            // v80 关键修复：行副本 1→3 必须隔一帧再起弹簧。
+            // 本视图是在 openCard 的 withAnimation 内插入的；onAppear 里同步改
+            // 状态会被合并进同一插入事务 → 首帧直接渲染成 3.0（窗口邻居已推出
+            // 屏外），而窗口内原卡又是 opacity(0) → 邻居「凭空消失」而非被推出。
+            // 隔一个 runloop 起弹簧，保证 1→3 真实插值（Demo 缩放的是已在树中的
+            // 真实行，不存在此合并问题）。
+            DispatchQueue.main.async {
+                withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+                    rowScale = 3.0
+                }
             }
             // 信息层延迟淡入：单段连续动画
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) {
@@ -1666,7 +1689,7 @@ struct FNOSDetailFlightOverlay: View {
 
     // MARK: 同行推出副本
 
-    private var rowReplica: some View {
+    private func rowReplica(in geo: GeometryProxy) -> some View {
         let win = window
         let n = CGFloat(win.count)
         let tileW = ctx.tileWidth
@@ -1676,10 +1699,19 @@ struct FNOSDetailFlightOverlay: View {
         let hW = n * tileW + (n - 1) * spacing
         // 焦点卡中心在副本内的 x（从副本左边缘起）
         let focusCX = CGFloat(focusColInWindow) * (tileW + spacing) + tileW / 2
-        // 锚点：把焦点卡中心放在其真实屏幕位置（focusCardFrame 中心）
-        let anchor = UnitPoint(x: focusCX / hW, y: 0.5)
         let posX = ctx.focusCardFrame.midX - focusCX + hW / 2
         let posY = ctx.focusCardFrame.midY
+
+        // v80 关键修复：.position 的包装视图会填满父级（全屏），其后挂的
+        // .scaleEffect 的 anchor 按【全屏 bounds】解析，不是副本自身 hW×tileH
+        // 的 bounds。旧代码用 focusCX/hW（副本内部占比）+ y:0.5（屏幕中心）作锚，
+        // 参照系整体错误 → 缩放时焦点卡中心漂移、邻居推出方向/幅度全错，
+        // 表现为「同行其他海报不像 Demo 一样参与动画」。正确锚点 =
+        // 焦点卡真实屏幕中心（focusCardFrame 中心）占全屏的比例。
+        let anchor = UnitPoint(
+            x: ctx.focusCardFrame.midX / geo.size.width,
+            y: ctx.focusCardFrame.midY / geo.size.height
+        )
 
         return HStack(spacing: spacing) {
             ForEach(win) { w in
@@ -1692,7 +1724,6 @@ struct FNOSDetailFlightOverlay: View {
             }
         }
         .frame(width: hW, height: tileH)
-        // .position 后 .scaleEffect：焦点卡中心在 .position 处，缩放绕该点（中心不漂移）
         .position(x: posX, y: posY)
         .scaleEffect(rowScale, anchor: anchor)
     }

@@ -230,7 +230,8 @@ struct FNOSItemDetailView: View {
                     pendingSeriesName = target.seriesName ?? item.Name
                     playbackTarget = nil
                 },
-                seriesID: target.seriesID
+                seriesID: target.seriesID,
+                startFraction: target.startFraction
             )
         }
         // v82：拦截 Menu 交给外层——有卡片来源时反向缩回，无来源时普通关闭。

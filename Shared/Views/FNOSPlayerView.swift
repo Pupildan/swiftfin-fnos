@@ -297,6 +297,8 @@ struct FNOSPlayerContainerView: View {
     @State private var pendingResumeTarget: Double?
     @State private var resumeAutoTask: Task<Void, Never>?
     @State private var lastLocalSaveAt: Date = .distantPast
+    /// v88：转盘手势本会话已挂载标记（防同会话重复挂；跨会话由 onPan 清空重挂解决）
+    @State private var panAttached = false
 
     /// 剧集自动连播：当前集在本列表里的下一集
     private var nextEpisode: FNOSItem? {
@@ -551,6 +553,8 @@ struct FNOSPlayerContainerView: View {
             scrubCommitTask?.cancel()
             resumeAutoTask?.cancel()
             danmuEngine.setRate(0)
+            // v88：清全局转盘桥，下一会话重挂新闭包（否则写进已销毁会话的状态）
+            FNOSPanBridge.shared.onPan = nil
             // v86：KS 侧停止上报（记录同步到服务端）
             if !useMPVEngine, !forceMPV {
                 Task {
@@ -701,7 +705,12 @@ struct FNOSPlayerContainerView: View {
 
     /// 在 KSPlayer 的 UIView 上挂 UIPanGestureRecognizer：遥控器转盘/触摸滑动 → 连续拖动进度
     private func attachPanRecognizer() {
-        guard FNOSPanBridge.shared.onPan == nil else { return }
+        // v88 修复：桥是全局单例、闭包捕获【本会话】的 State 存储——旧会话遗留的
+        // onPan 会让第二次播放的转盘/滑动写进已销毁的状态（表现为拖动进度条失效）。
+        // 每次进入播放器都重挂：清旧闭包 → 新 videoView 上挂新手势；panAttached 防同会话重复挂。
+        guard !panAttached else { return }
+        panAttached = true
+        FNOSPanBridge.shared.onPan = nil
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
             guard let videoView = coordinator.playerLayer?.player.view else {
                 print("FNOS❗️挂滑动手势失败: 找不到播放器视图")

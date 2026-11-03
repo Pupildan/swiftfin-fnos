@@ -59,10 +59,8 @@ struct FNOSMainView: View {
     // 本实现：直接用 tvOS 18+ 系统原生 zoom 过渡（.navigationTransition(.zoom) + matchedTransitionSource）。
     // 苹果已调好"卡片自身放大、背景自然压暗、连续缓动、反向归位"，不再手搓分段动画。
     @Namespace private var detailNamespace
-    /// 当前详情页条目（由 navigationDestination 呈现）
-    @State private var detailItem: FNOSItem?
-    /// 详情页是否处于导航呈现中（navigationDestination(isPresented:) 用）
-    @State private var detailPresented = false
+    /// 详情页导航路径（NavigationStack 显式管理，Hero 与卡片统一 push）
+    @State private var navPath: [FNOSItem] = []
 
     // 首页设置面板（刷新/退出集成在内）
     @State private var showSettings = false
@@ -80,7 +78,7 @@ struct FNOSMainView: View {
     // MARK: - Body
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $navPath) {
             GeometryReader { geo in
                 ZStack {
                     Color.black.ignoresSafeArea()
@@ -173,27 +171,19 @@ struct FNOSMainView: View {
                     }
                 }
                 }
-                .disabled(detailItem != nil)
             }
         }
-        .navigationDestination(isPresented: $detailPresented) {
-            if let item = detailItem {
-                FNOSItemDetailView(
-                    item: item,
-                    client: client,
-                    userID: userID,
-                    onEpisodes: { _ in
-                        // 剧集现在直接在详情页内选集，不再回调
-                    }
-                )
-                // 系统原生 zoom 过渡：从卡片位置放大到详情页，反向自动缩回。
-                // 苹果已调好"卡片自身放大 + 背景压暗 + 连续缓动 + 反向归位"。
-                .navigationTransition(.zoom(sourceID: item.Id, in: detailNamespace))
-            }
-        }
-        // 导航关闭后清空条目，解除主页 disabled 态
-        .onChange(of: detailPresented) { _, presented in
-            if !presented { detailItem = nil }
+        .navigationDestination(for: FNOSItem.self) { item in
+            FNOSItemDetailView(
+                item: item,
+                client: client,
+                userID: userID,
+                onEpisodes: { _ in
+                    // 剧集现在直接在详情页内选集，不再回调
+                }
+            )
+            // 系统原生 zoom 过渡：从卡片位置放大到详情页，反向自动缩回。
+            .navigationTransition(.zoom(sourceID: item.Id, in: detailNamespace))
         }
         .task {
             await bootstrapIfNeeded()
@@ -329,9 +319,8 @@ struct FNOSMainView: View {
                 LazyHStack(spacing: spacing) {
                     ForEach(section.items) { item in
                         let isFocused = shelfCardFocused == item.Id
-                        Button {
-                            open(item: item)
-                        } label: {
+                        // 标准 NavigationLink push（zoom 过渡依赖 push 语义，不能用 Button + Bool）
+                        NavigationLink(value: item) {
                             FNOSPosterTile(
                                 item: item,
                                 client: client,
@@ -361,15 +350,10 @@ struct FNOSMainView: View {
 
     // MARK: - 导航
 
-    /// 详情页入口：设置条目并触发导航，由 navigationDestination + 系统 zoom 过渡负责呈现。
+    /// 详情页入口（Hero「详情」按钮用）：显式 push 到导航路径。
+    /// 海报墙卡片走 NavigationLink(value:)，会自动 append 到 navPath，无需手动处理。
     private func open(item: FNOSItem) {
-        detailItem = item
-        detailPresented = true
-    }
-
-    /// 返回：系统 zoom 反向过渡自动处理；这里只需关闭导航呈现。
-    private func closeDetail() {
-        detailPresented = false
+        navPath.append(item)
     }
 
     /// Hero 播放入口：直接开始播放，不经过详情页

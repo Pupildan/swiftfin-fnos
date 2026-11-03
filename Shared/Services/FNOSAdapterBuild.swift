@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v68"
+    static let version = "v69"
 
     /// 本版主要变更摘要
-    static let changes = "详情页过渡改用系统原生 zoom（navigationTransition(.zoom)+matchedTransitionSource）：删掉全部手搓飞行层/分段动画，由 tvOS 18+ 系统处理卡片放大、背景压暗、连续缓动与反向缩回，彻底消除卡顿与割裂"
+    static let changes = "修复详情页过渡动画丢失：改用 NavigationStack(path:)+NavigationLink(value:)+navigationDestination(for:) 标准 push 语义触发系统 zoom（此前 Button+isPresented 布尔翻转导致 zoom 源无法被捕获，过渡退化成无动画），并移除 push 瞬间禁用主页的 .disabled 修饰符"
 }

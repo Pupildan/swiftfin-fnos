@@ -146,7 +146,7 @@ struct FNOSItemsEnvelope: Decodable {
     let Items: [FNOSItem]
 }
 
-struct FNOSItem: Decodable, Identifiable {
+struct FNOSItem: Decodable, Identifiable, Hashable {
     let Id: String
     let Name: String?
     let ItemType: String?

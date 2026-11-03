@@ -16,6 +16,8 @@ struct FNOSItemDetailView: View {
     let userID: String
     /// 剧集：交给外层弹选集面板
     let onEpisodes: (FNOSItem) -> Void
+    /// v82：Menu 关闭回调（外层做反向缩回动画）。cover 呈现视图内 onExitCommand 可靠。
+    var onMenuClose: () -> Void = {}
 
     /// 播放器在本页内打开（不先关详情页），避免 fullScreenCover 竞态导致请求被取消
     @State private var playbackTarget: FNOSPlaybackTarget?
@@ -216,6 +218,9 @@ struct FNOSItemDetailView: View {
                 }
             )
         }
+        // v82：拦截 Menu 交给外层——有卡片来源时反向缩回，无来源时普通关闭。
+        // 呈现视图内的 onExitCommand 可靠（Demo 同款真机已验证；v77 失败是「嵌入非呈现视图」场景）。
+        .onExitCommand { onMenuClose() }
     }
 
     // MARK: - 顶部全屏 Hero

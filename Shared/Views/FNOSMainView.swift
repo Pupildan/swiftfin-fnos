@@ -55,6 +55,8 @@ struct FNOSMainView: View {
     @Namespace private var transitionNS
     /// 飞行层上下文；非 nil = 过渡进行中。落地后置 nil（真实详情页已全屏接管）。
     @State private var flight: FNOSDetailFlightContext?
+    /// v82：最近一次正向起跳的上下文——Menu 反向缩回需要同一份几何（行/焦点卡 frame）
+    @State private var lastFlightCtx: FNOSDetailFlightContext?
     /// 最近打开的卡片 Id：关闭过渡后把焦点显式还给它（否则焦点悬空，Menu 失灵）
     @State private var lastOpenedCardID: String?
     /// 每个媒体库行的内容 frame（全局坐标，含水平滚动偏移），供行副本 1:1 对齐。
@@ -221,14 +223,15 @@ struct FNOSMainView: View {
             )
         }
         // 详情页走 fullScreenCover（系统原生处理 Menu，可靠关闭，v77 嵌入已回滚）。
-        // 注意：cover 的「系统 Menu 关闭」由 SwiftUI 自动把 detailItem 置 nil；
-        // 此处 onDismiss 只负责把焦点显式还给来源卡。
+        // v82：Menu 改由 cover 内容内 onExitCommand 拦截 → closeDetailWithReverse()
+        // （有卡片来源时反向缩回）；onDismiss 兜底系统路径并负责还焦点。
         .fullScreenCover(item: $detailItem, onDismiss: { closeDetail() }) { item in
             FNOSItemDetailView(
                 item: item,
                 client: client,
                 userID: userID,
-                onEpisodes: { _ in }
+                onEpisodes: { _ in },
+                onMenuClose: { closeDetailWithReverse() }
             )
         }
         .sheet(isPresented: $showSettings) {
@@ -516,6 +519,7 @@ struct FNOSMainView: View {
         // v81 诊断：确认走飞行分支（若用户看到 ✓起跳 但仍无动画 → 是飞行层渲染问题）
         showDiag("✓起跳(\(flightResult.reason))", duration: 1.2)
         lastOpenedCardID = item.Id
+        lastFlightCtx = ctx   // v82：Menu 反向缩回需要起跳时的同一份几何上下文
         withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
             flight = ctx
         }
@@ -586,6 +590,7 @@ struct FNOSMainView: View {
     private func openDetailDirect(item: FNOSItem) {
         detailItem = item
         lastOpenedCardID = nil
+        lastFlightCtx = nil   // 无卡片几何 → Menu 走系统默认收场，不做反向缩回
     }
 
     /// 详情 cover 关闭（系统 Menu 已把 detailItem 置 nil）：只负责清飞行层 + 还焦点。
@@ -594,13 +599,50 @@ struct FNOSMainView: View {
     /// 会被吞掉 → 高概率返回后无焦点环 / 首次按遥控乱跳。改为多次兜底：
     /// 已落位则跳过（幂等）；用户已开新过渡或新导航则停止，不与用户抢焦点。
     private func closeDetail() {
-        flight = nil
+        // v82：反向飞行进行中时不清 flight（overlay 正在播缩回动画，0.55s 后自撤）
+        if flight?.isReverse != true { flight = nil }
         guard let returning = lastOpenedCardID else { return }
         for delay in [0.1, 0.3, 0.6, 1.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 guard flight == nil, detailItem == nil, lastOpenedCardID == returning else { return }
                 if shelfCardFocused != returning { shelfCardFocused = returning }
             }
+        }
+    }
+
+    /// v82：详情页 Menu 的关闭入口（cover 内容内 onExitCommand，可靠——Demo 同款已真机验证；
+    /// v77 的失败是「嵌入非呈现视图」场景，与此不同）。有卡片来源 → 反向飞行：
+    /// 横图全屏单段弹簧缩回卡片 + 行副本 3→1 + 压暗淡出（对齐 Demo 反向缩回）；
+    /// Hero 来源（无卡片几何可缩）→ 系统默认 dismiss 动画普通收场。
+    private func closeDetailWithReverse() {
+        guard let src = lastFlightCtx, detailItem != nil else {
+            detailItem = nil
+            return
+        }
+        let rev = FNOSDetailFlightContext(
+            item: src.item,
+            client: src.client,
+            userID: src.userID,
+            rowSectionID: src.rowSectionID,
+            rowItems: src.rowItems,
+            focusIndex: src.focusIndex,
+            tileWidth: src.tileWidth,
+            spacing: src.spacing,
+            hPadding: src.hPadding,
+            focusCardFrame: src.focusCardFrame,
+            isReverse: true
+        )
+        // cover 瞬时消失 + 反向飞行层同帧接管（同一事务，无闪白）；
+        // overlay 内部先渲染全屏一帧，50ms 后单段弹簧缩回（与正向同一根弹簧）
+        var tx = Transaction()
+        tx.animation = nil
+        withTransaction(tx) {
+            detailItem = nil
+            flight = rev
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
+            guard flight?.isReverse == true else { return }
+            flight = nil
         }
     }
 
@@ -1617,6 +1659,8 @@ struct FNOSDetailFlightContext {
     let hPadding: CGFloat
     /// 焦点卡全局 frame（行内容 frame + 下标算出，含水平滚动偏移）
     let focusCardFrame: CGRect
+    /// v82：false=正向起跳（matched 卡片→全屏）；true=反向缩回（显式 frame 全屏→卡片）
+    var isReverse: Bool = false
 }
 
 /// 行内容 frame 存储（非响应式：滚动只写不触发重渲染，避免海报墙掉帧）
@@ -1650,7 +1694,21 @@ struct FNOSDetailFlightOverlay: View {
     let ns: Namespace.ID
 
     @State private var infoVisible = false
-    @State private var rowScale: CGFloat = 1.0
+    @State private var rowScale: CGFloat
+    /// v82 反向：false=全屏起始（未缩回），true=已缩回卡片（frame/圆角/压暗随之动画）
+    @State private var reverseDone: Bool
+    @State private var revRadius: CGFloat
+
+    init(ctx: FNOSDetailFlightContext, ns: Namespace.ID) {
+        self.ctx = ctx
+        self.ns = ns
+        // v82：初值由方向决定——正向从 1 起跳、反向从 3 缩回。
+        // 状态初值直接给对，避免「插入事务把首帧合并成终值」这类时序坑
+        // （Demo 缩的是已在树中的真实行，不存在插入时序问题；飞行层是新插入视图）。
+        _rowScale = State(initialValue: ctx.isReverse ? 3.0 : 1.0)
+        _reverseDone = State(initialValue: false)
+        _revRadius = State(initialValue: ctx.isReverse ? 0 : 14)
+    }
 
     /// 起跳横图：1920 Backdrop 优先，无横图退 1280 Primary（与 Demo backdropURL 一致）
     private var backdropURL: URL? {
@@ -1691,23 +1749,44 @@ struct FNOSDetailFlightOverlay: View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
                 // 压暗背景：整页 0.35（ATV 式）。主页在其下方保持可见、只被压暗不隐藏。
-                Color.black.opacity(0.35).ignoresSafeArea()
+                // v82 反向：缩回时压暗同步淡出（同一弹簧事务）
+                Color.black.opacity(ctx.isReverse ? (reverseDone ? 0.0 : 0.35) : 0.35)
+                    .ignoresSafeArea()
 
                 // 同行推出副本：scale 1→3 锚定焦点卡中心（焦点卡中心屏幕坐标不变）
                 rowReplica(in: geo)
 
-                // 起跳横图（B 端）：matched 从卡片(A 端)位置单次弹簧插值到全屏。
+                // 起跳/缩回横图。正向（B 端）：matched 从卡片位置单段弹簧插值到全屏。
+                // v82 反向：cover 的 Hero 与主树不共享命名空间，matched 配不上对，
+                // 改显式 frame/position/圆角插值：全屏 → 焦点卡 frame（同一根弹簧）。
                 // 单段连续动画是底线（v62~v67 分段 Task.sleep = 卡顿割裂，禁用）。
-                FNOSAsyncImage(
-                    url: backdropURL,
-                    headers: ctx.client?.mediaHeaders ?? [:],
-                    contentMode: .fill
-                )
-                .matchedGeometryEffect(id: ctx.item.Id, in: ns)
-                .frame(width: geo.size.width, height: geo.size.height)
-                .clipped()
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .ignoresSafeArea(edges: .top)
+                if ctx.isReverse {
+                    FNOSAsyncImage(
+                        url: backdropURL,
+                        headers: ctx.client?.mediaHeaders ?? [:],
+                        contentMode: .fill
+                    )
+                    .frame(
+                        width: reverseDone ? ctx.focusCardFrame.width : geo.size.width,
+                        height: reverseDone ? ctx.focusCardFrame.height : geo.size.height
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: revRadius, style: .continuous))
+                    .position(
+                        x: reverseDone ? ctx.focusCardFrame.midX : geo.size.width / 2,
+                        y: reverseDone ? ctx.focusCardFrame.midY : geo.size.height / 2
+                    )
+                } else {
+                    FNOSAsyncImage(
+                        url: backdropURL,
+                        headers: ctx.client?.mediaHeaders ?? [:],
+                        contentMode: .fill
+                    )
+                    .matchedGeometryEffect(id: ctx.item.Id, in: ns)
+                    .frame(width: geo.size.width, height: geo.size.height)
+                    .clipped()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                    .ignoresSafeArea(edges: .top)
+                }
 
                 // 底部渐变 + 信息层（延迟 0.3s 独立淡入，不参与几何插值）
                 LinearGradient(
@@ -1744,20 +1823,28 @@ struct FNOSDetailFlightOverlay: View {
         }
         .ignoresSafeArea()
         .onAppear {
-            // v80 关键修复：行副本 1→3 必须隔一帧再起弹簧。
-            // 本视图是在 openCard 的 withAnimation 内插入的；onAppear 里同步改
-            // 状态会被合并进同一插入事务 → 首帧直接渲染成 3.0（窗口邻居已推出
-            // 屏外），而窗口内原卡又是 opacity(0) → 邻居「凭空消失」而非被推出。
-            // 隔一个 runloop 起弹簧，保证 1→3 真实插值（Demo 缩放的是已在树中的
-            // 真实行，不存在此合并问题）。
-            DispatchQueue.main.async {
-                withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
-                    rowScale = 3.0
+            if ctx.isReverse {
+                // v82 反向：先以「全屏横图 + scale3 + 压暗」渲染一帧（cover 消失的同帧
+                // 接管，无闪白），50ms 后单段弹簧缩回——与正向同一根弹簧，视觉语言一致
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+                        reverseDone = true
+                        rowScale = 1.0
+                        revRadius = 14
+                    }
                 }
-            }
-            // 信息层延迟淡入：单段连续动画
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) {
-                withAnimation(.easeOut(duration: 0.35)) { infoVisible = true }
+            } else {
+                // 行副本 1→3：v81 用 async(0)，真机上仍可能与插入事务合并（首帧即 3.0
+                // → 推出效果不可见）。v82 改 asyncAfter(0.05) 稳出插入事务，保证真实插值。
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+                        rowScale = 3.0
+                    }
+                }
+                // 信息层延迟淡入：单段连续动画
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) {
+                    withAnimation(.easeOut(duration: 0.35)) { infoVisible = true }
+                }
             }
         }
     }

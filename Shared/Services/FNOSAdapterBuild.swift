@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v81"
+    static let version = "v82"
 
     /// 本版主要变更摘要
-    static let changes = "v81 修复「详情过渡动画消失」：根因锁定为 v78 起的行级 frame 捕获（LazyHStack background preference）在真机上疑似不触发，飞行上下文恒为空 → 每次点卡片都静默退化直出。现改为双层来源：卡片级 GeometryReader 实时捕获（焦点卡点按瞬间必可见，frame 最新鲜）为主，行级推算为兜底；新增屏显诊断 toast（⚠️退化直出+缺失项 / ✓起跳+frame 来源），确认根因后 v82 移除。v80 的返回焦点与行副本锚点修复保留。"
+    static let changes = "v82 新增返回反向缩回动画 + 修同行推出不可见：①详情页 Menu 改由 cover 内容内 onExitCommand 拦截（可靠，Demo 同款），有卡片来源时走反向飞行——横图全屏单段弹簧缩回卡片 + 行副本 3→1 + 压暗淡出，与 Demo 反向缩回一致；Hero 来源走系统默认收场。②正向行副本 1→3 起跳由 async(0) 改 asyncAfter(0.05)——真机上 async(0) 仍可能与插入事务合并致首帧即 3 倍（推出效果不可见）。③反向不用 matched（cover 与主树不共享命名空间），用显式 frame/position/圆角插值。"
 }

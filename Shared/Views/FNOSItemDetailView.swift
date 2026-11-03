@@ -221,7 +221,6 @@ struct FNOSItemDetailView: View {
                 client: target.client,
                 userID: target.userID,
                 seriesName: target.seriesName,
-                seriesID: target.seriesID,
                 episodes: target.item.type == "Episode" ? episodes : [],
                 onSelectEpisode: { ep in
                     // 换集：记下目标后关闭播放器；onDismiss 时再以新条目重新打开。
@@ -230,7 +229,8 @@ struct FNOSItemDetailView: View {
                     pendingEpisode = ep
                     pendingSeriesName = target.seriesName ?? item.Name
                     playbackTarget = nil
-                }
+                },
+                seriesID: target.seriesID
             )
         }
         // v82：拦截 Menu 交给外层——有卡片来源时反向缩回，无来源时普通关闭。

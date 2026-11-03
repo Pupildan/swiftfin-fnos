@@ -57,19 +57,17 @@ struct FNOSMainView: View {
     // 影视详情页（1:1 复刻 ATV+）
     @State private var detailItem: FNOSItem?
 
-    // MARK: 海报 → 详情 过渡（Demo v3/v4 真机验证机制的实装）
+    // MARK: 海报 → 详情 过渡（Demo v3 真机验证机制的实装，覆盖层架构）
     //
     // 机制（单段连续动画，无 Task.sleep 分段）：
-    // - 进入：起跳层（预取的 1920 详情横图）从卡片位置一次 withAnimation 放大到全屏 16:9，
-    //   到位后 fullScreenCover 直出详情页 —— 起跳层与详情 hero 是同一张图，衔接无缝
-    // - 同行动画：当前行以焦点卡为锚点整体放大 3.0，其他卡被推出屏幕外；返回反向
+    // - 进入：起跳层（预取的 1920 详情横图）从卡片位置一次 withAnimation 放大到全屏，
+    //   行在同一事务内以焦点卡为锚点放大；到位后原地呈现详情覆盖层（同一张图，无二次切换）
+    // - 详情打开时海报行 disabled（Demo v2 教训：焦点必须交给覆盖层，否则 Menu 失灵）
+    // - 返回：详情覆盖层退场，起跳层从全屏缩回卡片位置（同一动画事务），完成后焦点还给来源卡
     // - 焦点预取：焦点落到卡片即预取横图进内存缓存，点按起跳必高清
-    // - 返回：cover 关闭后起跳层从全屏缩回卡片位置，完成后焦点还给来源卡
     @State private var flightItem: FNOSItem?
     @State private var flightFrame: CGRect = .zero
     @State private var activeRowAnchor: UnitPoint = .center
-    /// 从海报墙进入详情的条目（返回时据此做反向缩回 + 还焦点；Hero 入口为 nil）
-    @State private var pendingReturn: FNOSItem?
     /// 卡片屏幕位置（行放大锚点用；scaleEffect 不改布局，此值稳定）
     @State private var cardFrames: [String: CGRect] = [:]
     @State private var screenSize: CGSize = .zero
@@ -149,6 +147,8 @@ struct FNOSMainView: View {
                                 }
                                 .padding(.vertical, 40)
                                 .id("fnos-shelf-top")
+                                // 详情/起跳期间禁用海报墙（焦点必须交给详情覆盖层，Menu 才可达）
+                                .disabled(detailItem != nil || flightItem != nil)
                                 #if os(tvOS)
                                     .focusSection()
                                 #endif
@@ -179,13 +179,31 @@ struct FNOSMainView: View {
                         .padding(.top, 20)
                         Spacer()
                     }
+                    // 详情/起跳期间设置按钮同样禁用（焦点只能落在详情覆盖层）
+                    .disabled(detailItem != nil || flightItem != nil)
 
                     // 起跳层：从卡片位置放大/缩回的详情横图（进入与返回共用）
                     if let flight = flightItem {
                         flightLayer(for: flight)
                             .zIndex(30)
                     }
-                }
+
+                    // 详情覆盖层（与 Demo 一致：放大到位后原地呈现，无二次切换）
+                    if let detail = detailItem {
+                        FNOSItemDetailView(
+                            item: detail,
+                            client: client,
+                            userID: userID,
+                            onEpisodes: { _ in
+                                // 剧集直接在详情页内选集，不再回调
+                            },
+                            onClose: {
+                                closeDetail()
+                            }
+                        )
+                        .zIndex(20)
+                    }
+            }
             }
             .onPreferenceChange(FNOSCardFramePreference.self) { frames in
                 cardFrames = frames
@@ -209,19 +227,6 @@ struct FNOSMainView: View {
                 client: target.client,
                 userID: target.userID,
                 seriesName: target.seriesName
-            )
-        }
-        .fullScreenCover(item: $detailItem, onDismiss: {
-            // 返回：起跳层从全屏缩回卡片位置，完成后焦点还给来源卡
-            closeDetailFlight()
-        }) { item in
-            FNOSItemDetailView(
-                item: item,
-                client: client,
-                userID: userID,
-                onEpisodes: { _ in
-                    // 剧集现在直接在详情页内选集，不再回调
-                }
             )
         }
         .sheet(isPresented: $showSettings) {
@@ -354,11 +359,13 @@ struct FNOSMainView: View {
                         Button {
                             openFromCard(item)
                         } label: {
+                            // 被选中起跳的卡片隐藏（起跳层横图从同一位置接管，参考行为）
                             FNOSPosterTile(
                                 item: item,
                                 client: client,
                                 width: tileWidth
                             )
+                            .opacity((detailItem?.Id == item.Id || flightItem?.Id == item.Id) ? 0 : 1)
                         }
                         // 系统 .card 样式：tvOS 原生焦点玻璃高光 + 自动放大（Demo 真机验证的观感）
                         .buttonStyle(.card)
@@ -384,13 +391,14 @@ struct FNOSMainView: View {
 
     // MARK: - 导航
 
-    /// 详情页入口（Hero「详情」按钮）：无卡片 frame，直接呈现详情页
+    /// 详情页入口（Hero「详情」按钮）：无卡片 frame，直接呈现详情覆盖层
     private func open(item: FNOSItem) {
-        pendingReturn = nil
         detailItem = item
     }
 
-    /// 详情页入口（海报墙点击）：起跳层从卡片位置放大到全屏，到位后无缝切详情页
+    /// 详情页入口（海报墙点击）：与 Demo 一致 ——
+    /// 起跳层（预取横图）从卡片位置单段动画放大到全屏，行同步放大（同一动画事务），
+    /// 到位后原地呈现详情覆盖层（同一张全屏横图，无二次切换）。
     private func openFromCard(_ item: FNOSItem) {
         guard let card = cardFrames[item.Id], screenSize.width > 0 else {
             open(item: item)
@@ -403,38 +411,40 @@ struct FNOSMainView: View {
         )
         // 起跳层起点 = 卡片位置（内容为预取的详情横图，参考行为：起跳瞬间即横图）
         flightFrame = card
-        flightItem = item
-        pendingReturn = item
-        let target = CGRect(x: 0, y: 0, width: screenSize.width, height: screenSize.width * 9 / 16)
+        // 终点 = 全屏（与详情页 heroSection 完全一致，切换零跳变）
+        let target = CGRect(x: 0, y: 0, width: screenSize.width, height: screenSize.height)
         withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+            // 关键：flightItem 必须在同一动画事务内赋值 —— 行 scale 1→3 与起跳放大同帧启动
+            flightItem = item
             flightFrame = target
         }
-        // 到位后呈现详情页（起跳层与详情 hero 同为全屏横图，衔接无缝）
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.50) {
+        // 放大到位后原地呈现详情覆盖层（同一张全屏横图，衔接无缝）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) {
             detailItem = item
             flightItem = nil
         }
     }
 
-    /// 返回：起跳层从全屏缩回卡片位置（单段连续动画），完成后焦点还给来源卡
-    private func closeDetailFlight() {
-        guard let item = pendingReturn else { return }
-        pendingReturn = nil
-        guard screenSize.width > 0 else {
-            shelfCardFocused = item.Id
-            return
-        }
-        flightFrame = CGRect(x: 0, y: 0, width: screenSize.width, height: screenSize.width * 9 / 16)
-        flightItem = item
+    /// 返回（详情页 Menu）：详情覆盖层退场，起跳层从全屏缩回卡片位置（单段连续动画），
+    /// 同一事务内行同步缩小，完成后焦点还给来源卡。
+    private func closeDetail() {
+        guard let item = detailItem else { return }
         let card = cardFrames[item.Id] ?? CGRect(
             x: screenSize.width / 2 - 140, y: screenSize.height / 2 - 210,
             width: 280, height: 420
         )
+        // 起跳层以全屏起点接管画面（与详情 hero 同图同位，覆盖层退场无跳变）
+        flightFrame = CGRect(x: 0, y: 0, width: screenSize.width, height: screenSize.height)
+        flightItem = item
+        detailItem = nil
         withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
             flightFrame = card
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.50) {
-            flightItem = nil
+            // 行 scale 3→1 也要有动画（与进入对称）
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+                flightItem = nil
+            }
             shelfCardFocused = item.Id
         }
     }

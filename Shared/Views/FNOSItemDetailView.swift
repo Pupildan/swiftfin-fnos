@@ -16,6 +16,8 @@ struct FNOSItemDetailView: View {
     let userID: String
     /// 剧集：交给外层弹选集面板
     let onEpisodes: (FNOSItem) -> Void
+    /// Menu 关闭回调：覆盖层架构下由外层做反向缩回过渡（nil 时按 Menu 无操作）
+    var onClose: (() -> Void)? = nil
 
     /// 播放器在本页内打开（不先关详情页），避免 fullScreenCover 竞态导致请求被取消
     @State private var playbackTarget: FNOSPlaybackTarget?
@@ -184,6 +186,8 @@ struct FNOSItemDetailView: View {
             }
         }
         .ignoresSafeArea()
+        // Menu = 关闭详情（覆盖层架构：外层做反向缩回过渡）
+        .onExitCommand { onClose?() }
         .task {
             await loadDetail()
         }

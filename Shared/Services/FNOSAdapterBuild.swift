@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v75"
+    static let version = "v76"
 
     /// 本版主要变更摘要
-    static let changes = "海报 → 详情过渡动画正式实装（Demo v3 真机验证机制）：点卡片后起跳层（焦点预取的 1920 详情横图）从卡片位置单段连续动画放大到全屏，同帧无缝切详情页；当前行以焦点卡为锚点整体放大、其他卡推出屏幕外；返回反向缩回并还焦点。海报卡焦点玻璃效果改用系统 .card 样式；删除设置里的过渡 Demo 入口与代码；删除详情页临时诊断信息"
+    static let changes = "修复实装版与 Demo 效果不一致：①详情改覆盖层架构（与 Demo 一致），放大到位后原地呈现、无 fullScreenCover 硬切闪烁；②放大终点改为全屏（与详情 hero 完全同位，零跳变）；③行放大修复为与起跳同一动画事务（此前瞬间跳变）；④点卡后原卡片隐藏（焦点玻璃不再残留）；⑤详情打开时禁用底层全部焦点（Menu 可靠关闭）；返回反向缩回与 Demo 对称"
 }

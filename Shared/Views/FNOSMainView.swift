@@ -186,12 +186,12 @@ struct FNOSMainView: View {
                             .zIndex(30)
                     }
                 }
-                .onPreferenceChange(FNOSCardFramePreference.self) { frames in
-                    cardFrames = frames
-                }
-                .onAppear { screenSize = geo.size }
-                .onChange(of: geo.size) { _, newSize in screenSize = newSize }
             }
+            .onPreferenceChange(FNOSCardFramePreference.self) { frames in
+                cardFrames = frames
+            }
+            .onAppear { screenSize = geo.size }
+            .onChange(of: geo.size) { _, newSize in screenSize = newSize }
         }
         .task {
             await bootstrapIfNeeded()

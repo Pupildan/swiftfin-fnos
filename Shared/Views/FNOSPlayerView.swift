@@ -248,6 +248,8 @@ struct FNOSPlayerContainerView: View {
     var episodes: [FNOSItem] = []
     /// 点击换集回调（由详情页重建播放目标实现切集）
     var onSelectEpisode: ((FNOSItem) -> Void)? = nil
+    /// 继续播放起点（0~1 比例，来自服务端多端同步进度；nil = 从头播）
+    var startFraction: Double? = nil
 
     @Environment(\.dismiss)
     private var dismiss
@@ -284,6 +286,8 @@ struct FNOSPlayerContainerView: View {
     @State private var didAutoSwitch = false
     /// 引擎切换时把播放进度带过去（无感续播）
     @State private var handoffPosition: Double = 0
+    /// 继续播放 seek 只做一次（首个时间回调触发，不猜引擎状态枚举）
+    @State private var didResumeSeek = false
     /// 探测到的片源摘要（显示在控制条上）
     @State private var sourceSummary: String?
     /// mpv 用的原生直链解析结果（含整季分集，供播放器内换集）
@@ -336,6 +340,17 @@ struct FNOSPlayerContainerView: View {
     /// - `dv_profile = 5`（IPTPQc2，无 HDR10 基线层）→ KS 必偏色 → 切 mpv
     /// - `dv_profile = 8`（如《阿凡达：火与烬》compat_id=1）→ 自带 HDR10 基线层，KS 解出来就是对的 → 留 KS
     @MainActor
+    /// 继续播放起点（秒）：首页按「服务端进度 tick / 条目时长 tick」换算的比例，
+    /// 这里再乘以条目时长秒数（plausibleSeconds 处理飞牛 tick 单位不统一问题）
+    private var resumeStartSeconds: Double? {
+        guard let startFraction else { return nil }
+        guard let seconds = FNOSItem.plausibleSeconds(
+            ticks: item.RunTimeTicks,
+            isEpisode: item.type == "Episode"
+        ) else { return nil }
+        return startFraction * seconds
+    }
+
     private func probeProfile() async {
         guard !probeStarted else { return }
         probeStarted = true
@@ -389,7 +404,7 @@ struct FNOSPlayerContainerView: View {
                 authToken: mpvToken,
                 native: mpvClient,
                 range: mpvRange,
-                initialSeek: handoffPosition > 1 ? handoffPosition : nil,
+                initialSeek: handoffPosition > 1 ? handoffPosition : resumeStartSeconds,
                 autoSelected: !useMPVEngine
             ) {
                 dismiss()
@@ -516,6 +531,13 @@ struct FNOSPlayerContainerView: View {
     private func playerView(url: URL) -> some View {
         KSVideoPlayer(coordinator: coordinator, url: url, options: makeOptions())
             .onPlay { currentTime, _ in
+                // 继续播放：首次起播即跳到服务端记录的进度（比例 × 条目时长换算成秒）。
+                // 用首个时间回调触发一次 seek，不猜引擎 ready 状态枚举（两 KS 引擎通用）。
+                if !didResumeSeek, let target = resumeStartSeconds, target > 5 {
+                    didResumeSeek = true
+                    coordinator.seek(time: target)
+                    print("FNOSℹ️继续播放: seek → \(Int(target))s")
+                }
                 danmuEngine.sync(mediaTime: currentTime)
             }
             .onStateChanged { _, state in

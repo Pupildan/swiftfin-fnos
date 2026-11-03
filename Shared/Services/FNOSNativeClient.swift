@@ -511,8 +511,8 @@ extension FNOSNativeClient {
         return URL(string: "\(base)/v/api/v1/media/range/\(mediaGUID)")!
     }
 
-    /// `POST /v/api/v1/play/info` → media_guid
-    private func playInfo(itemGUID: String, log: DebugLog) async -> (mediaGUID: String, duration: Int?)? {
+    /// `POST /v/api/v1/play/info` → media_guid + 条目字典（评分等元数据）
+    private func playInfo(itemGUID: String, log: DebugLog) async -> (mediaGUID: String, duration: Int?, itemDict: [String: Any]?)? {
         let body = "{\"item_guid\":\"\(Self.escape(itemGUID))\"}"
         guard let json = try? await post(path: "api/v1/play/info", body: body),
               let data = json["data"] as? [String: Any],
@@ -522,8 +522,67 @@ extension FNOSNativeClient {
             log.add("play/info 失败")
             return nil
         }
-        let duration = ((data["item"] as? [String: Any])?["duration"] as? NSNumber)?.intValue
-        return (mediaGUID, duration)
+        let itemDict = data["item"] as? [String: Any]
+        let duration = (itemDict?["duration"] as? NSNumber)?.intValue
+        return (mediaGUID, duration, itemDict)
+    }
+
+    /// 防御性评分解析：飞牛 play/info 的 item 字典按常见键名找评分。
+    /// 字段名未实测（需一份真实返回核对）；找不到就返回空 → 详情页不显示评分行。
+    static func parseRatings(_ itemDict: [String: Any]?) -> [String: Double] {
+        guard let itemDict else { return [:] }
+        var out: [String: Double] = [:]
+        for (key, value) in itemDict {
+            let k = key.lowercased()
+            guard let num = (value as? NSNumber)?.doubleValue, num > 0 else { continue }
+            if k.contains("douban"), out["douban"] == nil, num <= 10 {
+                out["douban"] = num
+            } else if k.contains("imdb"), out["imdb"] == nil, num <= 10 {
+                out["imdb"] = num
+            } else if (k.contains("tomato") || k.contains("rotten")), out["tomato"] == nil, num <= 100 {
+                out["tomato"] = num
+            }
+        }
+        return out
+    }
+
+    /// 详情页信息增强：色彩档位徽章 + 评分。
+    /// - 电影：标题 → 条目 guid → play/info（media_guid + item 字典）→ /stream 探测
+    /// - 剧集：剧名 + 第 1 集（代表整剧档位）
+    /// 一次调用同时拿色彩与评分（共用同一次 search + play/info）。
+    func detailEnrichment(itemTitle: String?, seriesTitle: String?, episodeNumber: Int?) async -> (badge: String?, imdb: Double?, douban: Double?, tomato: Double?)? {
+        let log = DebugLog()
+        var guid: String?
+        if let seriesTitle, !seriesTitle.isEmpty, let episodeNumber, episodeNumber > 0 {
+            if let hit = await searchItem(title: seriesTitle, isSeries: true, log: log) {
+                if let seasonGUID = await firstSeasonGUID(tvGuid: hit.guid, log: log) {
+                    let eps = await episodeRefs(seasonGuid: seasonGUID, log: log)
+                    guid = eps.first { $0.number == episodeNumber }?.guid
+                }
+            }
+        }
+        if guid == nil, let itemTitle, !itemTitle.isEmpty {
+            guid = await searchItem(title: itemTitle, isSeries: false, log: log)?.guid
+        }
+        guard let guid, let info = await playInfo(itemGUID: guid, log: log) else {
+            print("FNOS❗️Hero 增强失败: \(log.lines.joined(separator: " | "))")
+            return nil
+        }
+        let ratings = Self.parseRatings(info.itemDict)
+
+        var badge: String?
+        if let traits = await videoTraits(mediaGUID: info.mediaGUID) {
+            if let p = traits.dvProfile {
+                badge = "杜比视界 P\(p)"
+            } else if let depth = traits.bitDepth, depth >= 10 {
+                // 无 DoVi 报告的 10bit HEVC/AV1 在电影库里基本都是 HDR10/HLG；
+                // 杜比视界只认 dv_profile（compat 层 VideoRangeType 不可信，见 probeProfile 注释）
+                badge = "HDR10"
+            } else {
+                badge = "SDR"
+            }
+        }
+        return (badge, ratings["imdb"], ratings["douban"], ratings["tomato"])
     }
 
     /// 视频轨真实格式（来自 `POST /v/api/v1/stream` 的能力协商响应）

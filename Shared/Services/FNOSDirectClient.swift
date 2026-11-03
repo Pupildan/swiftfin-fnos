@@ -117,6 +117,34 @@ final class FNOSDirectClient {
             throw FNOSDirectError("网络错误 \(path): \(error.localizedDescription)")
         }
     }
+
+    // MARK: - 继续播放（服务端多端同步）
+
+    /// Jellyfin 标准 `/Items/Resume`：飞牛服务端统一维护多端播放进度
+    /// （手机 App / 网页 / 本机播到哪，这里就能续到哪）。
+    /// 兼容层若未实现该路由，走 catch 返回空数组 → 首页隐藏「继续播放」行，不阻塞。
+    func fetchResumeItems(userID: String, limit: Int = 20) async -> [FNOSItem] {
+        do {
+            let data = try await get(
+                path: "Users/\(userID)/Items/Resume",
+                query: [
+                    "Limit": String(limit),
+                    "Recursive": "true",
+                    "MediaTypes": "Video",
+                    "Fields": "Overview,ProductionYear,RunTimeTicks,OfficialRating,Genres,SeriesName,ParentIndexNumber,IndexNumber,BackdropImageTags",
+                    "EnableImageTypes": "Primary,Backdrop,Thumb",
+                    "EnableTotalRecordCount": "false",
+                ]
+            )
+            let envelope = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data)
+            let items = envelope.Items.filter { ($0.UserData?.PlaybackPositionTicks ?? 0) > 0 }
+            print("FNOSℹ️继续播放 \(items.count) 条")
+            return items
+        } catch {
+            print("FNOS❗️加载继续播放失败（首页将隐藏该行）: \(error)")
+            return []
+        }
+    }
 }
 
 /// 带可读信息的错误（界面上能直接看到原因）
@@ -167,6 +195,8 @@ struct FNOSItem: Decodable, Identifiable {
     let SeriesName: String?
     // 演职人员（请求时带 Fields=People 才会返回，Jellyfin 标准结构）
     let People: [FNOSPeopleEntry]?
+    // 播放进度（继续播放 shelf 用；多端同步由飞牛服务端统一维护）
+    let UserData: FNOSUserData?
 
     var id: String { Id }
     var type: String? { ItemType }
@@ -178,8 +208,15 @@ struct FNOSItem: Decodable, Identifiable {
         case ProductionYear, Overview, ImageTags, BackdropImageTags
         case RunTimeTicks, OfficialRating, Genres
         case ParentIndexNumber, IndexNumber, PremiereDate, SeriesName
-        case People
+        case People, UserData
     }
+}
+
+/// 播放进度（Jellyfin UserData 标准结构；/Items/Resume 默认返回）
+struct FNOSUserData: Decodable {
+    let PlaybackPositionTicks: Int64?
+    let PlayedPercentage: Double?
+    let Played: Bool?
 }
 
 /// 条目上的演职人员（Jellyfin BaseItemPerson 结构）

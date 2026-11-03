@@ -16,6 +16,8 @@ struct FNOSPlaybackTarget: Identifiable {
     let userID: String
     /// 单集所属剧名（弹幕「剧名+集数」匹配用）
     var seriesName: String? = nil
+    /// 继续播放起点（0~1 比例；由服务端进度换算，与飞牛 tick 单位无关）
+    var startFraction: Double? = nil
 }
 
 /// 单个媒体库的横向海报墙数据
@@ -41,6 +43,8 @@ struct FNOSMainView: View {
     @State private var userID = ""
 
     @State private var sections: [FNOSLibrarySection] = []
+    /// 继续播放（/Items/Resume，飞牛服务端多端同步记录）；为空 → 行隐藏
+    @State private var resumeItems: [FNOSItem] = []
     @State private var isLoading = false
     @State private var didBootstrap = false
 
@@ -126,7 +130,9 @@ struct FNOSMainView: View {
                                             }
                                             Task { @MainActor in
                                                 try? await Task.sleep(for: .milliseconds(450))
-                                                if let lead = sections.first(where: { !$0.items.isEmpty })?.items.first?.Id {
+                                                // 有继续播放记录时优先落「继续播放」首卡，其次媒体库首卡
+                                                if let lead = resumeItems.first?.Id
+                                                    ?? sections.first(where: { !$0.items.isEmpty })?.items.first?.Id {
                                                     shelfCardFocused = lead
                                                 }
                                             }
@@ -137,6 +143,10 @@ struct FNOSMainView: View {
 
                                 // 媒体库横向海报墙（非懒容器：保证屏外行存在，焦点引擎才有落点）
                                 VStack(alignment: .leading, spacing: 44) {
+                                    // 继续播放（多端同步记录）：有记录才显示
+                                    if !resumeItems.isEmpty {
+                                        resumeShelf(screenWidth: geo.size.width)
+                                    }
                                     ForEach(sections) { section in
                                         shelf(section, screenWidth: geo.size.width)
                                     }
@@ -226,7 +236,8 @@ struct FNOSMainView: View {
                 item: target.item,
                 client: target.client,
                 userID: target.userID,
-                seriesName: target.seriesName
+                seriesName: target.seriesName,
+                startFraction: target.startFraction
             )
         }
         // 详情页走 fullScreenCover（系统原生处理 Menu，可靠关闭，v77 嵌入已回滚）。
@@ -254,6 +265,7 @@ struct FNOSMainView: View {
                     // 索引与页面错位 → 标题与海报不是同一部（图文错位）。
                     sections = []
                     heroSnapshot = []
+                    resumeItems = []
                     // 立即进入加载态：避免清空数据到新数据回来之间闪一下「暂无内容」
                     isLoading = true
                     didBootstrap = false
@@ -460,9 +472,10 @@ struct FNOSMainView: View {
                                 }
                             }
                         }
-                        // 自定义 ButtonStyle：彻底去掉系统焦点板（ScrollView 内的 Button
-                        // 对 focusEffectDisabled 不生效，这是 tvOS 已知行为）
-                        .buttonStyle(FNOSBareButtonStyle())
+                        // v85：系统 .card 液态玻璃（与 Demo 同款，用户点名）。
+                        // 注意：使用 .card 时周围不能再挂 focusEffectDisabled（会吞掉玻璃），
+                        // shelf 内三处已同步拆除（HANDOVER 红线）。
+                        .buttonStyle(.card)
                         // 每张卡注册独立焦点值（条目 Id 唯一，避免 Bool 歧义），供下键直达
                         .focused($shelfCardFocused, equals: item.Id)
                         // v81：卡片级全局 frame 捕获（起跳 frame 的主来源）。焦点卡点按
@@ -488,10 +501,8 @@ struct FNOSMainView: View {
                     }
                 )
                 .padding(.horizontal, hPadding)
-                // 给聚焦放大（1.06）与阴影留出空间，避免被 ScrollView 裁掉
+                // 给聚焦放大与玻璃留出空间，避免被 ScrollView 裁掉
                 .padding(.vertical, 26)
-                // 双保险：把焦点特效关闭挂到内容容器上
-                .focusEffectDisabled()
                 .onPreferenceChange(FNOSRowContentFrameKey.self) { frame in
                     rowFrames.frames[section.id] = frame
                 }
@@ -501,9 +512,105 @@ struct FNOSMainView: View {
                     rowFrames.cardFrames[section.id] = dict
                 }
             }
-            .focusEffectDisabled()
         }
-        .focusEffectDisabled()
+    }
+
+    // MARK: - 继续播放（服务端多端同步）
+
+    /// 继续播放横向列表（ATV 版式：一屏 4 张 16:9 卡，底部进度条）
+    private func resumeShelf(screenWidth: CGFloat) -> some View {
+        let hPadding: CGFloat = 72
+        let spacing: CGFloat = 28
+        let visibleCount: CGFloat = 4
+        let cardWidth = max(
+            200,
+            (screenWidth - hPadding * 2 - spacing * (visibleCount - 1)) / visibleCount
+        )
+
+        return VStack(alignment: .leading, spacing: 14) {
+            Text("继续播放")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundColor(.white.opacity(0.92))
+                .padding(.horizontal, hPadding)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: spacing) {
+                    ForEach(resumeItems) { item in
+                        resumeCard(item, width: cardWidth)
+                    }
+                }
+                .padding(.horizontal, hPadding)
+                .padding(.vertical, 26)
+            }
+        }
+    }
+
+    private func resumeCard(_ item: FNOSItem, width: CGFloat) -> some View {
+        let fraction: Double = {
+            // 位置与时长来自同一响应，tick 单位一致 → 比值与飞牛单位无关
+            if let pos = item.UserData?.PlaybackPositionTicks, pos > 0,
+               let runtime = item.RunTimeTicks, runtime > 0 {
+                return min(0.98, max(0.01, Double(pos) / Double(runtime)))
+            }
+            if let pct = item.UserData?.PlayedPercentage {
+                return min(0.98, max(0.01, pct / 100))
+            }
+            return 0
+        }()
+        let label: String = {
+            if item.type == "Episode" {
+                let series = item.SeriesName ?? "剧集"
+                if let ep = item.IndexNumber { return "\(series) 第\(ep)集" }
+                return series
+            }
+            return item.Name ?? "未命名"
+        }()
+
+        return Button {
+            openResume(item)
+        } label: {
+            VStack(alignment: .leading, spacing: 10) {
+                FNOSAsyncImage(
+                    url: client?.resumeStillURL(item: item),
+                    headers: client?.mediaHeaders ?? [:],
+                    usePosterCache: true
+                )
+                .frame(width: width, height: width * 9 / 16)
+                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                .overlay(alignment: .bottom) {
+                    // 观看进度条（白色，压在图底部）
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.white.opacity(0.28))
+                        Capsule().fill(Color.white).frame(width: max(0, width * fraction))
+                    }
+                    .frame(height: 6)
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 8)
+                }
+                Text(label)
+                    .font(.system(size: 20, weight: .medium))
+                    .foregroundColor(.white.opacity(0.92))
+                    .lineLimit(1)
+            }
+        }
+        .buttonStyle(.card)
+        .focused($shelfCardFocused, equals: item.Id)
+    }
+
+    /// 继续播放卡点击：按服务端记录的进度直接续播（剧集单集直开，不弹选集面板）
+    private func openResume(item: FNOSItem) {
+        guard let client else { return }
+        var fraction: Double?
+        if let pos = item.UserData?.PlaybackPositionTicks, pos > 0,
+           let runtime = item.RunTimeTicks, runtime > 0 {
+            fraction = min(0.98, max(0.01, Double(pos) / Double(runtime)))
+        } else if let pct = item.UserData?.PlayedPercentage {
+            fraction = min(0.98, max(0.01, pct / 100))
+        }
+        lastOpenedCardID = nil
+        lastFlightCtx = nil
+        print("FNOSℹ️继续播放: \(item.Name ?? "?") @\(String(format: "%.0f", (fraction ?? 0) * 100))%")
+        playbackTarget = FNOSPlaybackTarget(item: item, client: client, userID: userID, startFraction: fraction)
     }
 
     // MARK: - 导航（详情过渡）
@@ -691,12 +798,12 @@ struct FNOSMainView: View {
         }
     }
 
-    private func openPlayback(item: FNOSItem) {
+    private func openPlayback(item: FNOSItem, startFraction: Double? = nil) {
         guard let client else {
             print("FNOS❗️客户端未初始化，无法播放")
             return
         }
-        playbackTarget = FNOSPlaybackTarget(item: item, client: client, userID: userID)
+        playbackTarget = FNOSPlaybackTarget(item: item, client: client, userID: userID, startFraction: startFraction)
     }
 
     // MARK: - 数据加载（沿用已跑通的网络层，全 do-catch）
@@ -756,6 +863,8 @@ struct FNOSMainView: View {
             rollHeroIfNeeded()
             // Hero 快照只在此处（bootstrap / 下拉刷新）生成一次
             refreshHeroSnapshot()
+            // 继续播放（服务端多端同步记录）；失败/为空 → 行隐藏
+            resumeItems = await newClient.fetchResumeItems(userID: userID)
         } catch {
             isLoading = false
             print("FNOS❗️加载媒体库失败: \(error)")
@@ -1137,16 +1246,15 @@ struct FNOSBareButtonStyle: ButtonStyle {
 
 // MARK: - 媒体库海报瓦片（ATV+ 风格：无文字、圆角矩形、焦点放大 + 液态玻璃高光）
 
-/// 纯海报瓦片：不显示标题/年份，聚焦时轻微放大 + 自绘玻璃描边。
-///
-/// 注意：这里刻意不用系统 glassEffect / Material ——
-/// tvOS 焦点引擎检测到材质会在聚焦视图上叠系统高亮板（HANDOVER 红线 5）。
-/// 玻璃感全部由「渐变描边 + 顶部高光 + 阴影」自绘实现。
+/// 纯海报瓦片：不显示标题/年份。v85 起焦点视觉（液态玻璃 + 抬升）
+/// 全权交给 Button 的系统 .card 样式（与 Demo 同款，用户点名），
+/// 自绘的描边/阴影/放大在此版拆除——叠在系统玻璃上会双重高亮。
 fileprivate struct FNOSPosterTile: View {
 
     let item: FNOSItem
     let client: FNOSDirectClient?
     let width: CGFloat
+    /// 保留入参以兼容既有调用点；焦点视觉已由 .card 接管（当前未使用）
     let isFocused: Bool
 
     private var height: CGFloat { width * 3 / 2 }
@@ -1163,9 +1271,6 @@ fileprivate struct FNOSPosterTile: View {
         )
         .frame(width: width, height: height)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        .shadow(color: .black.opacity(isFocused ? 0.55 : 0), radius: isFocused ? 22 : 0, y: 10)
-        .scaleEffect(isFocused ? 1.06 : 1.0)
-        .animation(.easeOut(duration: 0.18), value: isFocused)
     }
 }
 
@@ -1843,12 +1948,16 @@ struct FNOSDetailFlightOverlay: View {
                     }
                 }
             } else {
-                // 行副本 1→3：v84 关键修复——弹簧从 0.45 提速到 0.26。
-                // 机理：横图边缘（matched，0.45 弹簧）与邻居（副本）同速后退时，
-                // 相对运动≈0，肉眼看不到「推出」；邻居跑得比图像边缘快一倍，
-                // 差距瞬间拉大，推出动作才可见（这正是 ATV 的行为：行快速让位，
-                // 图像随后铺开）。仍是单段连续弹簧，无分段。反向保持 0.45 不动
-                //（反向横图往里缩、行往回收，相对运动天然巨大，用户已验收）。
+                // ⏸️【搁置标记 · 2026-11-04】进入方向「同行推出」真机仍不可见（用户决定搁置）。
+                // v80~v84 已排除项，恢复时勿重复：
+                //   ①插入默认 .opacity 过渡吞副本 → v83 .transition(.identity) 已修，无效
+                //   ②插入事务合并首帧即 3.0 → v82 asyncAfter(0.05) 已修，无效
+                //   ③副本锚点坐标系错误（.position 占满全屏）→ v80 已修，无效
+                //   ④同速弹簧相对运动≈0 → v84 提速 0.26，真机仍不可见（未验收通过）
+                // 下一步候选方向：
+                //   A. 飞行期间把真实行整体 scale（需解决垂直 ScrollView 裁剪/懒加载/焦点三山）
+                //   B. 详情 cover 内复刻行副本背景（浏览详情时行也在背后，Demo 终形态）
+                // 反向缩回（rowScale 3→1）真机已验收可见，勿动。
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                     withAnimation(.spring(response: 0.26, dampingFraction: 0.86)) {
                         rowScale = 3.0

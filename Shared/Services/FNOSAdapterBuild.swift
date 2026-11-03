@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v84"
+    static let version = "v85"
 
     /// 本版主要变更摘要
-    static let changes = "v84 收官版：①进入同行推出不可见的真机理——副本与横图边缘同用 0.45 弹簧，同速后退相对运动≈0（反向横图内缩、相对运动大故可见）；正向副本弹簧提速到 0.26，邻居跑赢图像边缘一倍，推出动作清晰可见（ATV 同款：行快速让位、图像随后铺开）。②反复进出详情海报黑色转圈——原单一混合缓存（countLimit=400）被详情页 2s 轮播的 ~8MB 横图挤爆：海报改独立缓存（300 张，与大图完全隔离）+ 通用缓存按压缩字节成本驱逐（80MB）+ FNOSAsyncImage 首帧同步查缓存（视图重建不再闪 loading）。"
+    static let changes = "v85 新功能三连：①首页「继续播放」横向列表——读飞牛服务端 /Items/Resume 多端同步记录，16:9 卡+进度条，点卡按服务端进度直接续播（KS 首个时间回调 seek / mpv initialSeek 双引擎支持）；②海报墙与继续播放卡选中改为系统 .card 液态玻璃（与 Demo 同款，自绘焦点视觉拆除，focusEffectDisabled 同步移除）；③详情页信息增强——时长行追加色彩档位徽章（杜比视界 P 档/HDR10/SDR，原生 /stream 实测），题材行追加评分胶囊（IMDb/豆瓣/烂番茄，play/info 防御性解析，无数据不显示）。搁置：进入方向同行推出动画（代码内 ⏸️ 标记 + 已排除项清单）。"
 }

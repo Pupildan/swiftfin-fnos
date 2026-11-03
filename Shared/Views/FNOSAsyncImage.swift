@@ -63,6 +63,21 @@ extension FNOSDirectClient {
         return try? url(path: "Items/\(item.Id)/Images/\(imageType)", query: query)
     }
 
+    /// 继续播放卡横图：剧集优先 Thumb 剧照；电影优先 Backdrop；都没有退 Primary
+    func resumeStillURL(item: FNOSItem, maxWidth: Int = 640) -> URL? {
+        if item.type == "Episode", let still = episodeStillURL(item: item, maxWidth: maxWidth) {
+            return still
+        }
+        if let tag = item.BackdropImageTags?.first, !tag.isEmpty,
+           let url = try? url(
+               path: "Items/\(item.Id)/Images/Backdrop",
+               query: ["maxWidth": String(maxWidth), "quality": "85", "tag": tag]
+           ) {
+            return url
+        }
+        return episodeStillURL(item: item, maxWidth: maxWidth)
+    }
+
     /// 播放直链 —— 实测 static=true 返回原始媒体流
     func streamURL(itemID: String) -> URL? {
         do {

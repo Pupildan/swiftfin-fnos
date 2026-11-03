@@ -45,6 +45,12 @@ struct FNOSItemDetailView: View {
     @State private var themeColor: Color?
     @State private var fetchedBackdropTags: [String]?
 
+    // v85 信息增强：色彩档位徽章（原生 /stream 探测）+ 评分（play/info 防御性解析）
+    @State private var colorBadge: String?
+    @State private var imdbRating: Double?
+    @State private var doubanRating: Double?
+    @State private var tomatoRating: Double?
+
     // 剧集选集状态（季优先，无季数据时按 10 集分段）
     @State private var episodes: [FNOSItem] = []
     @State private var seasons: [FNOSItem] = []
@@ -201,6 +207,9 @@ struct FNOSItemDetailView: View {
         .task(id: item.Id) {
             await rotateBackdrops()
         }
+        .task(id: item.Id) {
+            await loadHeroInfo()
+        }
         .fullScreenCover(item: $playbackTarget, onDismiss: reopenPendingEpisode) { target in
             FNOSPlayerContainerView(
                 item: target.item,
@@ -221,6 +230,64 @@ struct FNOSItemDetailView: View {
         // v82：拦截 Menu 交给外层——有卡片来源时反向缩回，无来源时普通关闭。
         // 呈现视图内的 onExitCommand 可靠（Demo 同款真机已验证；v77 失败是「嵌入非呈现视图」场景）。
         .onExitCommand { onMenuClose() }
+    }
+
+    // MARK: - Hero 信息增强（v85：色彩档位 + 评分）
+
+    /// 原生接口一次拿两样：/stream 探测出色彩档位（杜比视界 P 档 / HDR10 / SDR），
+    /// play/info 的 item 字典防御性解析评分。找不到就不显示对应元素。
+    @MainActor
+    private func loadHeroInfo() async {
+        guard colorBadge == nil, imdbRating == nil, doubanRating == nil else { return }
+        guard let credentials = FNOSAuthStore.shared.credentials,
+              let nativeToken = credentials.nativeToken, !nativeToken.isEmpty
+        else { return }
+        let native = FNOSNativeClient(baseURL: credentials.serverURL, token: nativeToken)
+        let isSeries = item.type == "Series"
+        // 剧集取第 1 集代表整剧档位；电影按标题直查
+        let result = await native.detailEnrichment(
+            itemTitle: isSeries ? nil : item.Name,
+            seriesTitle: isSeries ? item.Name : nil,
+            episodeNumber: isSeries ? 1 : nil
+        )
+        guard let result else { return }
+        colorBadge = result.badge
+        imdbRating = result.imdb
+        doubanRating = result.douban
+        tomatoRating = result.tomato
+        print("FNOSℹ️Hero 增强: \(result.badge ?? "—") IMDb=\(result.imdb.map { String(format: "%.1f", $0) } ?? "—") 豆瓣=\(result.douban.map { String(format: "%.1f", $0) } ?? "—") 烂番茄=\(result.tomato.map { String(format: "%.0f%%", $0) } ?? "—")")
+    }
+
+    /// 评分胶囊（IMDb 黄 / 豆瓣 绿 / 烂番茄 红 —— 各家品牌色近似）
+    private func ratingBadge(label: String, value: String, bg: Color, fg: Color) -> some View {
+        HStack(spacing: 4) {
+            Text(label)
+                .font(.system(size: 13, weight: .heavy))
+            Text(value)
+                .font(.system(size: 13, weight: .bold))
+        }
+        .foregroundColor(fg)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(RoundedRectangle(cornerRadius: 4).fill(bg))
+    }
+
+    /// 色彩档位徽章：杜比视界 = 白底黑字（醒目）；HDR10 = 半透明白底；SDR = 低调灰
+    @ViewBuilder
+    private var colorBadgeView: some View {
+        if let badge = colorBadge, !badge.isEmpty {
+            let isDolby = badge.hasPrefix("杜比视界")
+            let isSDR = badge == "SDR"
+            Text(badge)
+                .font(.system(size: 13, weight: .heavy))
+                .foregroundColor(isDolby ? Color.black : (isSDR ? .white.opacity(0.65) : .white))
+                .padding(.horizontal, isDolby ? 8 : 5)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 3)
+                        .fill(isDolby ? Color.white : Color.white.opacity(isSDR ? 0.10 : 0.16))
+                )
+        }
     }
 
     // MARK: - 顶部全屏 Hero
@@ -284,6 +351,19 @@ struct FNOSItemDetailView: View {
                             .padding(.vertical, 2)
                             .background(RoundedRectangle(cornerRadius: 3).fill(Color.yellow))
                     }
+                    // v85：评分（有数据才显示；IMDb/豆瓣/烂番茄按品牌色胶囊）
+                    if let imdb = imdbRating {
+                        ratingBadge(label: "IMDb", value: String(format: "%.1f", imdb),
+                                    bg: Color(red: 0.96, green: 0.78, blue: 0.09), fg: .black)
+                    }
+                    if let douban = doubanRating {
+                        ratingBadge(label: "豆瓣", value: String(format: "%.1f", douban),
+                                    bg: Color(red: 0.0, green: 0.71, blue: 0.11), fg: .white)
+                    }
+                    if let tomato = tomatoRating {
+                        ratingBadge(label: "烂番茄", value: String(format: "%.0f%%", tomato),
+                                    bg: Color(red: 0.93, green: 0.11, blue: 0.14), fg: .white)
+                    }
                 }
 
                 if let overview = item.Overview, !overview.isEmpty {
@@ -315,6 +395,8 @@ struct FNOSItemDetailView: View {
                             RoundedRectangle(cornerRadius: 3)
                                 .stroke(Color.white.opacity(0.6))
                         )
+                    // v85：色彩档位徽章（杜比视界 P 档 / HDR10 / SDR，原生 /stream 实测）
+                    colorBadgeView
                 }
 
                 if let loadError {

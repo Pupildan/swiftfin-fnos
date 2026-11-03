@@ -288,6 +288,16 @@ struct FNOSPlayerContainerView: View {
     @State private var handoffPosition: Double = 0
     /// 继续播放 seek 只做一次（首个时间回调触发，不猜引擎状态枚举）
     @State private var didResumeSeek = false
+    // v86 播放进度上报（本机记录 → 服务端多端同步）：10s 节流；mpv 记最后位置供 stopped 上报
+    @State private var lastReportAt: Date = .distantPast
+    @State private var lastMPVPosition: Double = 0
+
+    /// 10s 节流的进度上报
+    private func throttledProgressReport(_ seconds: Double) {
+        guard Date().timeIntervalSince(lastReportAt) > 10 else { return }
+        lastReportAt = Date()
+        Task { await client.reportPlayback(itemID: item.Id, positionSeconds: seconds, stage: "progress") }
+    }
     /// 探测到的片源摘要（显示在控制条上）
     @State private var sourceSummary: String?
     /// mpv 用的原生直链解析结果（含整季分集，供播放器内换集）
@@ -405,8 +415,19 @@ struct FNOSPlayerContainerView: View {
                 native: mpvClient,
                 range: mpvRange,
                 initialSeek: handoffPosition > 1 ? handoffPosition : resumeStartSeconds,
-                autoSelected: !useMPVEngine
+                autoSelected: !useMPVEngine,
+                onProgress: { position in
+                    lastMPVPosition = position
+                    throttledProgressReport(position)
+                }
             ) {
+                Task {
+                    await client.reportPlayback(
+                        itemID: item.Id,
+                        positionSeconds: lastMPVPosition,
+                        stage: "stopped"
+                    )
+                }
                 dismiss()
             }
         } else if mpvFailed {
@@ -505,6 +526,16 @@ struct FNOSPlayerContainerView: View {
             hideTask?.cancel()
             scrubCommitTask?.cancel()
             danmuEngine.setRate(0)
+            // v86：KS 侧停止上报（记录同步到服务端）
+            if !useMPVEngine, !forceMPV {
+                Task {
+                    await client.reportPlayback(
+                        itemID: item.Id,
+                        positionSeconds: Double(coordinator.timemodel.currentTime),
+                        stage: "stopped"
+                    )
+                }
+            }
         }
         .sheet(isPresented: $isSheetPresented, onDismiss: {
             audioSheetPresented = false
@@ -538,6 +569,7 @@ struct FNOSPlayerContainerView: View {
                     coordinator.seek(time: target)
                     print("FNOSℹ️继续播放: seek → \(Int(target))s")
                 }
+                throttledProgressReport(currentTime)
                 danmuEngine.sync(mediaTime: currentTime)
             }
             .onStateChanged { _, state in
@@ -1074,6 +1106,13 @@ struct FNOSPlayerContainerView: View {
         videoCodec = source.videoCodec
         videoBitDepth = source.bitDepth
         notice = ""
+
+        // v86：起播上报（本机记录 → 服务端，多端「继续播放」可见）
+        await client.reportPlayback(
+            itemID: item.Id,
+            positionSeconds: resumeStartSeconds ?? 0,
+            stage: "start"
+        )
 
         // 3) 弹幕（真实服务端；剧集按「剧名 + 集数」匹配，电影按标题匹配）
         danmuEngine.setRate(1)

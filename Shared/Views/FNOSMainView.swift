@@ -147,7 +147,7 @@ struct FNOSMainView: View {
                                     if !resumeItems.isEmpty {
                                         resumeShelf(screenWidth: geo.size.width)
                                     }
-                                    ForEach(sections) { section in
+                                    ForEach(sections.filter { !$0.items.isEmpty }) { section in
                                         shelf(section, screenWidth: geo.size.width)
                                     }
                                 }
@@ -557,19 +557,26 @@ struct FNOSMainView: View {
             }
             return 0
         }()
-        let label: String = {
-            if item.type == "Episode" {
-                let series = item.SeriesName ?? "剧集"
-                if let ep = item.IndexNumber { return "\(series) 第\(ep)集" }
-                return series
+        // ATV+ 版式：名称直接叠在图上；信息行 = 剧集「第N集 · 剩X分」/ 电影「剩 X小时Y分钟」
+        let cardTitle: String = item.type == "Episode"
+            ? (item.SeriesName ?? item.Name ?? "剧集")
+            : (item.Name ?? "未命名")
+        let infoText: String = {
+            var parts: [String] = []
+            if item.type == "Episode", let ep = item.IndexNumber {
+                parts.append("第\(ep)集")
             }
-            return item.Name ?? "未命名"
+            if let runtime = FNOSItem.plausibleSeconds(ticks: item.RunTimeTicks, isEpisode: item.type == "Episode") {
+                let remain = max(0, runtime * (1 - fraction))
+                parts.append("剩 " + Self.durationCN(remain))
+            }
+            return parts.joined(separator: " · ")
         }()
 
         return Button {
             openResume(item: item)
         } label: {
-            VStack(alignment: .leading, spacing: 10) {
+            ZStack(alignment: .bottomLeading) {
                 FNOSAsyncImage(
                     url: client?.resumeStillURL(item: item),
                     headers: client?.mediaHeaders ?? [:],
@@ -577,24 +584,51 @@ struct FNOSMainView: View {
                 )
                 .frame(width: width, height: width * 9 / 16)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                .overlay(alignment: .bottom) {
-                    // 观看进度条（白色，压在图底部）
-                    ZStack(alignment: .leading) {
-                        Capsule().fill(Color.white.opacity(0.28))
-                        Capsule().fill(Color.white).frame(width: max(0, width * fraction))
+
+                // 底部渐变（保证白字可读）
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0.45),
+                        .init(color: .black.opacity(0.85), location: 1),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(cardTitle)
+                        .font(.system(size: 21, weight: .semibold))
+                        .foregroundColor(.white)
+                        .lineLimit(1)
+                    HStack(spacing: 9) {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: 13, weight: .bold))
+                            .foregroundColor(.white)
+                        // 短进度条（74pt，ATV 同款，不再是横贯全宽的粗条）
+                        ZStack(alignment: .leading) {
+                            Capsule().fill(Color.white.opacity(0.32))
+                            Capsule().fill(Color.white).frame(width: max(2, 74 * fraction))
+                        }
+                        .frame(width: 74, height: 4)
+                        Text(infoText)
+                            .font(.system(size: 18, weight: .medium))
+                            .foregroundColor(.white.opacity(0.95))
+                            .lineLimit(1)
                     }
-                    .frame(height: 6)
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 8)
                 }
-                Text(label)
-                    .font(.system(size: 20, weight: .medium))
-                    .foregroundColor(.white.opacity(0.92))
-                    .lineLimit(1)
+                .padding(14)
             }
         }
         .buttonStyle(.card)
         .focused($shelfCardFocused, equals: item.Id)
+    }
+
+    /// ATV 风格中文时长：1小时30分钟 / 42分钟
+    private static func durationCN(_ seconds: Double) -> String {
+        let total = max(1, Int((seconds / 60).rounded()))
+        let h = total / 60, m = total % 60
+        if h > 0 { return "\(h)小时\(m)分钟" }
+        return "\(m)分钟"
     }
 
     /// 继续播放卡点击：按服务端记录的进度直接续播（剧集单集直开，不弹选集面板）
@@ -863,8 +897,8 @@ struct FNOSMainView: View {
             rollHeroIfNeeded()
             // Hero 快照只在此处（bootstrap / 下拉刷新）生成一次
             refreshHeroSnapshot()
-            // 继续播放（服务端多端同步记录）；失败/为空 → 行隐藏
-            resumeItems = await newClient.fetchResumeItems(userID: userID)
+            // 继续播放（服务端多端同步记录）；失败/为空 → 行隐藏；只展示最近 6 条（ATV 版式）
+            resumeItems = await newClient.fetchResumeItems(userID: userID, limit: 6)
         } catch {
             isLoading = false
             print("FNOS❗️加载媒体库失败: \(error)")
@@ -886,6 +920,11 @@ struct FNOSMainView: View {
 
         do {
             let envelope = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data)
+            if envelope.Items.isEmpty {
+                // v86 诊断：LiveTV（电视直播）/特殊库类型在 /Items?ParentId 下常为空，
+                // 需要专用端点。打印提示供用户抓日志回报。
+                print("FNOS⚠️「\(library.Name ?? "?")」返回 0 条（可能为 LiveTV/特殊库类型，需专用端点支持）")
+            }
             return envelope.Items
         } catch {
             let raw = String(data: data.prefix(400), encoding: .utf8) ?? "(非文本)"

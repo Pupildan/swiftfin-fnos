@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v85"
+    static let version = "v86"
 
     /// 本版主要变更摘要
-    static let changes = "v85 新功能三连：①首页「继续播放」横向列表——读飞牛服务端 /Items/Resume 多端同步记录，16:9 卡+进度条，点卡按服务端进度直接续播（KS 首个时间回调 seek / mpv initialSeek 双引擎支持）；②海报墙与继续播放卡选中改为系统 .card 液态玻璃（与 Demo 同款，自绘焦点视觉拆除，focusEffectDisabled 同步移除）；③详情页信息增强——时长行追加色彩档位徽章（杜比视界 P 档/HDR10/SDR，原生 /stream 实测），题材行追加评分胶囊（IMDb/豆瓣/烂番茄，play/info 防御性解析，无数据不显示）。搁置：进入方向同行推出动画（代码内 ⏸️ 标记 + 已排除项清单）。"
+    static let changes = "v86 反馈修复：①继续播放卡对齐 ATV+ 版式——名称与信息行直接叠图（底部渐变），进度条改 74pt 短条，信息行=剧集「第N集 · 剩X分」/电影「剩 X小时Y分钟」，只展示最近 6 条；②空媒体库行隐藏（tv直播/古风热歌mv 返回 0 条时不再显示空行，日志加诊断提示——LiveTV 类库需专用端点，后续版本接）；③本机播放记录同步到服务端——起播/每10s/停止三段上报（Jellyfin 标准 /Sessions/Playing*，KS 与 mpv 双引擎都接，兼容层未实现则静默失败不影响播放；tick 按微秒上报与 RunTimeTicks 实测一致）。"
 }

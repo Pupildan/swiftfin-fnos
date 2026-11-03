@@ -145,6 +145,43 @@ final class FNOSDirectClient {
             return []
         }
     }
+
+    /// POST JSON（播放进度上报用；Jellyfin 标准 /Sessions/Playing* 端点）。
+    /// 兼容层若未实现这些路由，静默失败（打印），绝不影响播放。
+    private func post(path: String, body: [String: Any]) async {
+        guard let url = try? self.url(path: path) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 10
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        for (key, value) in requestHeaders {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+        do {
+            let (data, response) = try await session.data(for: request)
+            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+            if !(200..<300).contains(code) {
+                print("FNOS⚠️POST \(path) → \(code)（进度上报未生效，不影响播放）")
+            }
+        } catch {
+            print("FNOS⚠️POST \(path): \(error)（进度上报未生效，不影响播放）")
+        }
+    }
+
+    /// 播放进度上报（v86）：本机记录同步到飞牛服务端 → 各端「继续播放」可见。
+    /// tick 单位：与该服务端 RunTimeTicks 实测一致按微秒（1e6/秒）上报；
+    /// 若服务端按标准 Jellyfin 100ns 解析则进度会偏慢 10 倍——真机核对后如不符改此系数。
+    func reportPlayback(itemID: String, positionSeconds: Double, stage: String) async {
+        let ticks = Int64(max(0, positionSeconds) * 1_000_000)
+        let path: String
+        switch stage {
+        case "start": path = "Sessions/Playing"
+        case "stopped": path = "Sessions/Playing/Stopped"
+        default: path = "Sessions/Playing/Progress"
+        }
+        await post(path: path, body: ["ItemId": itemID, "PositionTicks": ticks])
+    }
 }
 
 /// 带可读信息的错误（界面上能直接看到原因）

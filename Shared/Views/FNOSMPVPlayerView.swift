@@ -34,6 +34,8 @@ struct FNOSMPVPlayerView: View {
     var initialSeek: Double? = nil
     /// 由自动分流选中（而不是用户手动开 mpv）→ 顶部提示一次
     var autoSelected: Bool = false
+    /// v86：播放进度回调（ticker 每 ~4s 触发一次；容器做 10s 节流后上报服务端）
+    var onProgress: ((Double) -> Void)? = nil
     var onExit: () -> Void
 
     @State private var player: MPVPlayer?
@@ -730,6 +732,7 @@ struct FNOSMPVPlayerView: View {
                 if abs(position - lastPersist) > 4 {
                     lastPersist = position
                     UserDefaults.standard.set(position, forKey: resumeKey)
+                    onProgress?(position)
                 }
 
                 // 自动隐藏：播放中、无面板展开、5 秒无操作

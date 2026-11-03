@@ -16,8 +16,6 @@ struct FNOSItemDetailView: View {
     let userID: String
     /// 剧集：交给外层弹选集面板
     let onEpisodes: (FNOSItem) -> Void
-    /// Menu 关闭回调：覆盖层架构下由外层做反向缩回过渡（nil 时按 Menu 无操作）
-    var onClose: (() -> Void)? = nil
 
     /// 播放器在本页内打开（不先关详情页），避免 fullScreenCover 竞态导致请求被取消
     @State private var playbackTarget: FNOSPlaybackTarget?
@@ -52,6 +50,8 @@ struct FNOSItemDetailView: View {
     @State private var selectedTabIndex = 0
     @FocusState private var focusedTab: String?
     @FocusState private var focusedEpisode: String?
+    /// 临时诊断行（确认服务端字段/分集端点真实返回）
+    @State private var debugLines: [String] = []
 
     // 三个按钮的焦点
     private enum DetailButton { case play, plus, info }
@@ -178,6 +178,7 @@ struct FNOSItemDetailView: View {
                                 .padding(.bottom, 40)
                                 .id("detail-info")
 
+                            debugSection
                         }
                     }
                     .ignoresSafeArea()
@@ -186,8 +187,6 @@ struct FNOSItemDetailView: View {
             }
         }
         .ignoresSafeArea()
-        // Menu = 关闭详情（覆盖层架构：外层做反向缩回过渡）
-        .onExitCommand { onClose?() }
         .task {
             await loadDetail()
         }
@@ -561,6 +560,25 @@ struct FNOSItemDetailView: View {
         .animation(.easeOut(duration: 0.18), value: isFocused)
     }
 
+    // MARK: - 临时诊断（确认服务端字段与分集端点真实返回后删除）
+
+    @ViewBuilder
+    private var debugSection: some View {
+        if !debugLines.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(debugLines, id: \.self) { line in
+                    Text(line)
+                        .font(.system(size: 13, design: .monospaced))
+                        .foregroundColor(.yellow.opacity(0.7))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+            }
+            .padding(.horizontal, 60)
+            .padding(.bottom, 40)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
 
     // MARK: - 下方信息区块
 
@@ -711,8 +729,10 @@ struct FNOSItemDetailView: View {
                 fetchedBackdropTags = tags
             }
             let peopleKey = detail.rawKeys.contains("People")
+            debugLines.append("详情: 演员\(detail.people.count) 源\(detail.mediaSourceID == nil ? "无" : "有") People键=\(peopleKey ? "有" : "无") 原始[\(detail.peopleRaw)]")
             print("FNOSℹ️详情 \(item.Name ?? "?") 时长ticks=\(runtimeTicks ?? -1) 源=\(mediaSourceID ?? "nil") 演员=\(people.count) 字段=\(detail.rawKeys)")
         } catch {
+            debugLines.append("详情失败: \(error.localizedDescription)")
             print("FNOS⚠️ 详情接口失败（继续展示页面）: \(error.localizedDescription)")
             if item.type != "Series" {
                 loadError = "获取播放信息失败：\(error.localizedDescription)"
@@ -740,6 +760,7 @@ struct FNOSItemDetailView: View {
         // 原生接口要飞牛自己的 token（登录时换好存在凭据里），不是兼容层的 AccessToken
         let nativeToken = FNOSAuthStore.shared.credentials?.nativeToken
         if nativeToken == nil {
+            debugLines.append("原生: 缺少飞牛 token —— 请退出重新登录一次")
         }
         let native = FNOSNativeClient(baseURL: client.baseURL, token: nativeToken ?? client.token)
         nativeClient = native
@@ -764,6 +785,7 @@ struct FNOSItemDetailView: View {
             nativeDurationSeconds = seconds
         }
 
+        debugLines.append(contentsOf: resolved.debug)
         print("FNOSℹ️原生链路: \(resolved.debug.joined(separator: " | "))")
     }
 
@@ -771,6 +793,7 @@ struct FNOSItemDetailView: View {
     /// 失败再走两级兜底。任何失败只打日志，绝不影响详情页主体。
     @MainActor
     private func loadEpisodes(client: FNOSDirectClient) async {
+        debugLines.removeAll(where: { $0.hasPrefix("季") || $0.hasPrefix("分集") })
 
         // 端点 A：季列表（关键：必须带 UserId，这是旧季面板实测可用的调用）
         do {
@@ -779,9 +802,11 @@ struct FNOSItemDetailView: View {
                 query: ["UserId": userID]
             )
             seasons = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items
+            debugLines.append("季列表: \(seasons.count) 季")
             print("FNOSℹ️季列表 \(seasons.count) 季")
         } catch {
             seasons = []
+            debugLines.append("季列表失败: \(error.localizedDescription)")
             print("FNOS⚠️ 季列表失败: \(error.localizedDescription)")
         }
 
@@ -800,6 +825,7 @@ struct FNOSItemDetailView: View {
                 episodesBySeason[season.Id] = list
                 print("FNOSℹ️季「\(season.Name ?? season.Id)」\(list.count) 集")
             } catch {
+                debugLines.append("季「\(season.Name ?? "?")」取集失败: \(error.localizedDescription)")
                 print("FNOS⚠️ 季取集失败: \(error.localizedDescription)")
             }
         }
@@ -822,8 +848,10 @@ struct FNOSItemDetailView: View {
                     ]
                 )
                 all = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items
+                debugLines.append("全剧集(带UserId): \(all.count) 集")
                 print("FNOSℹ️全剧集 \(all.count) 集")
             } catch {
+                debugLines.append("全剧集失败: \(error.localizedDescription)")
                 print("FNOS⚠️ 全剧集失败: \(error.localizedDescription)")
             }
         }
@@ -844,13 +872,16 @@ struct FNOSItemDetailView: View {
                 )
                 let items = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items
                 all = items.filter { $0.type == "Episode" || $0.IndexNumber != nil }
+                debugLines.append("Items兜底: 共\(items.count) 条 取\(all.count) 集 类型[\(Set(items.compactMap(\.type)).sorted().joined(separator: ","))]")
                 print("FNOSℹ️Items兜底 \(items.count) 条 → \(all.count) 集")
             } catch {
+                debugLines.append("Items兜底失败: \(error.localizedDescription)")
                 print("FNOS❗️Items兜底失败: \(error)")
             }
         }
 
         guard !all.isEmpty else {
+            debugLines.append("结论: 没有拿到任何分集")
             print("FNOS⚠️ 剧集 \(item.Name ?? "?") 没有可用的分集数据")
             return
         }
@@ -875,8 +906,10 @@ struct FNOSItemDetailView: View {
             let epDetail = try? await client.fetchItemDetail(itemID: first.Id, userID: userID)
             if let epDetail, !epDetail.people.isEmpty {
                 people = epDetail.people
+                debugLines.append("演员取自第1集: \(epDetail.people.count) 人")
                 print("FNOSℹ️演员取自第1集 \(epDetail.people.count) 人")
             } else {
+                debugLines.append("第1集演员=\(epDetail?.people.count ?? -1) 原始[\(epDetail?.peopleRaw ?? "请求失败")]")
                 print("FNOS⚠️ 第1集也没有演员数据 raw=\(epDetail?.peopleRaw ?? "请求失败")")
             }
         }
@@ -884,6 +917,7 @@ struct FNOSItemDetailView: View {
         let probe = episodes.first
         let probeSeconds = FNOSItem.plausibleSeconds(ticks: probe?.RunTimeTicks, isEpisode: probe?.type == "Episode")
         let div = (probe?.RunTimeTicks).map { String(Int(Double($0) / 1_000_000)) } ?? "nil"
+        debugLines.append("结论: 共 \(episodes.count) 集 分 \(episodeTabs.count) 组；ticks=\(probe?.RunTimeTicks ?? -1) ÷1e6=\(div) 秒=\(probeSeconds.map { String(Int($0)) } ?? "nil") 角标=\(probe?.compactDuration ?? "nil")")
         print("FNOSℹ️剧集 \(item.Name ?? "?") 共 \(episodes.count) 集，分 \(episodeTabs.count) 组")
     }
 

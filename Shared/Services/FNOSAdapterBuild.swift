@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v76"
+    static let version = "v74"
 
     /// 本版主要变更摘要
-    static let changes = "修复实装版与 Demo 效果不一致：①详情改覆盖层架构（与 Demo 一致），放大到位后原地呈现、无 fullScreenCover 硬切闪烁；②放大终点改为全屏（与详情 hero 完全同位，零跳变）；③行放大修复为与起跳同一动画事务（此前瞬间跳变）；④点卡后原卡片隐藏（焦点玻璃不再残留）；⑤详情打开时禁用底层全部焦点（Menu 可靠关闭）；返回反向缩回与 Demo 对称"
+    static let changes = "过渡动画 Demo v3：改用真实电影数据（真海报卡片 + 焦点预取 1920 横图，起跳即横图对齐参考）；同行海报参与进出场（当前行以焦点卡为锚点整体放大，其他卡推出屏幕外，返回反向缩回）；修返回失效（关闭后焦点显式还给来源卡片 + 详情层焦点多次兜底）"
 }

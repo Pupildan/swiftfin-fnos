@@ -753,6 +753,9 @@ struct FNOSHomeSettingsView: View {
     // 若发现某些电影 Hero 图文对不上，多为飞牛刮削把 Backdrop 挂错条目，切到海报可规避。
     @AppStorage("fnos.hero.imageSource") private var heroImageSource = "backdrop"
 
+    // 详情页电影感过渡（与主视图共用同一个键，改完立刻生效）
+    @AppStorage("fnos.ui.heroTransition") private var heroTransition = true
+
     // 杜比视界按 HDR10 输出（规避紫绿偏色）
     @AppStorage("fnos.play.hdr10Compat") private var hdr10Compat = true
 

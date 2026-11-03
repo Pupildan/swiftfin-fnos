@@ -482,27 +482,27 @@ struct FNOSMainView: View {
 
         transitionTask?.cancel()
         transitionTask = Task { @MainActor in
-            // ① 按下即起跳（零等待）：窗口长到全屏 + 圆角收平
+            // 关键：详情页不是"等海报铺满后再闪进来"，而是**在放大的过程中就同步淡入**，
+            // 叠在海报之上一起走到全屏 —— 参考里"海报放大 + 详情页衔接出现"是一件事，不是两段。
+            // 时序：0.12s 起详情页就开始淡入，到 0.30s 海报到全屏时详情页已完全盖住它。
             withAnimation(.easeOut(duration: 0.30)) {
                 flightFrame = CGRect(origin: .zero, size: size)
                 flightRadius = 0
             }
-            // ② 只有这一行被推近（参考里上下两行纹丝不动）
             withAnimation(.easeOut(duration: 0.28)) {
                 rowScale = 1.55
                 rowDim = 1
             }
 
-            try? await Task.sleep(for: .milliseconds(300))
-
-            // ③ 与详情页 keyart 交叉溶解
-            withAnimation(.linear(duration: 0.16)) { detailOpacity = 1 }
-            try? await Task.sleep(for: .milliseconds(170))
+            // 详情页从放大进行到 40% 时开始淡入，和海报的放大重叠 —— 消除"闪一下"的割裂
+            try? await Task.sleep(for: .milliseconds(120))
+            withAnimation(.easeInOut(duration: 0.22)) { detailOpacity = 1 }
+            try? await Task.sleep(for: .milliseconds(200))
             flightItem = nil
 
-            // ④ 静置 1.2s（无任何 UI），再让信息层上移淡入
-            try? await Task.sleep(for: .milliseconds(1200))
-            withAnimation(.easeOut(duration: 0.45)) { detailPhase = .info }
+            // 降低纯图静置时间：文字信息更快出现（原 1.2s → 0.55s）
+            try? await Task.sleep(for: .milliseconds(550))
+            withAnimation(.easeOut(duration: 0.40)) { detailPhase = .info }
             shieldFocused = false
         }
     }
@@ -538,8 +538,9 @@ struct FNOSMainView: View {
             flightItem = item
             try? await Task.sleep(for: .milliseconds(30))
 
-            withAnimation(.linear(duration: 0.14)) { detailOpacity = 0 }
-            try? await Task.sleep(for: .milliseconds(150))
+            // keyart 与主图交叉：详情页淡出的同时飞行层已在下面，不会闪
+            withAnimation(.easeInOut(duration: 0.18)) { detailOpacity = 0 }
+            try? await Task.sleep(for: .milliseconds(130))
 
             // ② 窗口缩回来源卡片，同时整行从放大态缩回原位（同行其他卡一起归位）
             withAnimation(.easeInOut(duration: 0.34)) {

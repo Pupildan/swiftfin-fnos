@@ -1094,7 +1094,7 @@ struct FNOSHeroTransitionDemo: View {
 
     private func shelfRow(row: Int) -> some View {
         let rowItems = row < rows.count ? rows[row] : []
-        let selIndex = selected.flatMap { s in items.firstIndex(of: s) }
+        let selIndex = selected.flatMap { s in items.firstIndex(where: { $0.Id == s.Id }) }
         let isActive = selIndex != nil && selIndex! / 3 == row
         let anchor: UnitPoint = {
             guard let idx = selIndex, idx / 3 == row, !rowItems.isEmpty else { return .center }

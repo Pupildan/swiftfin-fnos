@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v62"
+    static let version = "v63"
 
     /// 本版主要变更摘要
-    static let changes = "海报→详情页自定义过渡：聚焦卡片放大铺满 → 与全屏横图交叉溶解 → 1 秒无 UI 沉浸预览 → 信息层淡入上移 16pt 并落到播放键；返回反向缩回来源海报并恢复焦点/滚动；横图预取避免溶解露灰底"
+    static let changes = "详情过渡重做（参考 Apple TV 版式）：竖版海报按原比例长成整屏高、同图模糊铺底填满两侧，主页同步压暗；弹簧缓动 0.5s → 详情横图 0.45s 淡入覆盖 → 1s 无 UI → 信息层上移淡入；返回反向缩回卡片"
 }

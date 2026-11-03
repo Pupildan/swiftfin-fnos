@@ -1016,7 +1016,7 @@ struct FNOSMainView: View {
             guard let lib = libraries.first(where: { ($0.Name ?? "").contains(target.keyword) }),
                   loaded.first(where: { $0.id == lib.Id })?.items.isEmpty == true else { continue }
             let natives = await native.listByAncestor(ancestorGUID: lib.Id, pageSize: 60)
-            let items: [FNOSItem] = natives.compactMap { li in
+            let items: [FNOSItem] = natives.compactMap { li -> FNOSItem? in
                 let cleanTitle = li.title
                     .replacingOccurrences(of: ".mp4", with: "")
                     .replacingOccurrences(of: ".mkv", with: "")

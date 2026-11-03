@@ -1037,9 +1037,9 @@ struct FNOSMainView: View {
                     IndexNumber: nil,
                     PremiereDate: nil,
                     SeriesName: nil,
-                    SeriesId: nil,
                     People: nil,
                     UserData: nil,
+                    SeriesId: nil,
                     nativePosterURL: poster
                 )
             }

@@ -26,6 +26,14 @@ struct FNOSLibrarySection: Identifiable {
     var id: String { library.Id }
 }
 
+/// 卡片屏幕位置上报（行放大锚点用；scaleEffect 是绘制变换，此布局 frame 稳定）
+struct FNOSCardFramePreference: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { $1 }
+    }
+}
+
 /// 飞牛影视（fnOS）主界面 —— Apple TV+ 沉浸式布局。
 ///
 /// 沉浸式第一原则：
@@ -48,6 +56,23 @@ struct FNOSMainView: View {
     @State private var seriesItem: FNOSItem?
     // 影视详情页（1:1 复刻 ATV+）
     @State private var detailItem: FNOSItem?
+
+    // MARK: 海报 → 详情 过渡（Demo v3/v4 真机验证机制的实装）
+    //
+    // 机制（单段连续动画，无 Task.sleep 分段）：
+    // - 进入：起跳层（预取的 1920 详情横图）从卡片位置一次 withAnimation 放大到全屏 16:9，
+    //   到位后 fullScreenCover 直出详情页 —— 起跳层与详情 hero 是同一张图，衔接无缝
+    // - 同行动画：当前行以焦点卡为锚点整体放大 3.0，其他卡被推出屏幕外；返回反向
+    // - 焦点预取：焦点落到卡片即预取横图进内存缓存，点按起跳必高清
+    // - 返回：cover 关闭后起跳层从全屏缩回卡片位置，完成后焦点还给来源卡
+    @State private var flightItem: FNOSItem?
+    @State private var flightFrame: CGRect = .zero
+    @State private var activeRowAnchor: UnitPoint = .center
+    /// 从海报墙进入详情的条目（返回时据此做反向缩回 + 还焦点；Hero 入口为 nil）
+    @State private var pendingReturn: FNOSItem?
+    /// 卡片屏幕位置（行放大锚点用；scaleEffect 不改布局，此值稳定）
+    @State private var cardFrames: [String: CGRect] = [:]
+    @State private var screenSize: CGSize = .zero
 
     // 首页设置面板（刷新/退出集成在内）
     @State private var showSettings = false
@@ -154,11 +179,29 @@ struct FNOSMainView: View {
                         .padding(.top, 20)
                         Spacer()
                     }
+
+                    // 起跳层：从卡片位置放大/缩回的详情横图（进入与返回共用）
+                    if let flight = flightItem {
+                        flightLayer(for: flight)
+                            .zIndex(30)
+                    }
                 }
+                .onPreferenceChange(FNOSCardFramePreference.self) { frames in
+                    cardFrames = frames
+                }
+                .onAppear { screenSize = geo.size }
+                .onChange(of: geo.size) { _, newSize in screenSize = newSize }
             }
         }
         .task {
             await bootstrapIfNeeded()
+        }
+        // 焦点落到卡片即预取该片详情横图（点按起跳必高清）
+        .onChange(of: shelfCardFocused) { _, focused in
+            guard let focused else { return }
+            if let item = sections.flatMap(\.items).first(where: { $0.Id == focused }) {
+                prefetchBackdrop(item)
+            }
         }
         .fullScreenCover(item: $playbackTarget) { target in
             FNOSPlayerContainerView(
@@ -168,7 +211,10 @@ struct FNOSMainView: View {
                 seriesName: target.seriesName
             )
         }
-        .fullScreenCover(item: $detailItem) { item in
+        .fullScreenCover(item: $detailItem, onDismiss: {
+            // 返回：起跳层从全屏缩回卡片位置，完成后焦点还给来源卡
+            closeDetailFlight()
+        }) { item in
             FNOSItemDetailView(
                 item: item,
                 client: client,
@@ -198,9 +244,7 @@ struct FNOSMainView: View {
                 },
                 onLogout: {
                     auth.logout()
-                },
-                demoClient: client,
-                demoItems: Array(demoPool)
+                }
             )
         }
         .sheet(item: $seriesItem) { series in
@@ -292,6 +336,12 @@ struct FNOSMainView: View {
             (screenWidth - hPadding * 2 - spacing * (visibleCount - 1)) / visibleCount
         )
 
+        // 行放大（对齐参考：详情打开时当前行以焦点卡为锚点整体放大，其他卡推出屏幕外）
+        let activeItem = detailItem ?? flightItem
+        let isRowActive = activeItem.map { active in
+            section.items.contains(where: { $0.Id == active.Id })
+        } ?? false
+
         return VStack(alignment: .leading, spacing: 14) {
             Text(section.library.Name ?? "未命名")
                 .font(.system(size: 22, weight: .semibold))
@@ -301,50 +351,92 @@ struct FNOSMainView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: spacing) {
                     ForEach(section.items) { item in
-                        let isFocused = shelfCardFocused == item.Id
                         Button {
-                            open(item: item)
+                            openFromCard(item)
                         } label: {
                             FNOSPosterTile(
                                 item: item,
                                 client: client,
-                                width: tileWidth,
-                                isFocused: isFocused
+                                width: tileWidth
                             )
                         }
-                        // 自定义 ButtonStyle：彻底去掉系统焦点板（ScrollView 内的 Button
-                        // 对 focusEffectDisabled 不生效，这是 tvOS 已知行为）
-                        .buttonStyle(FNOSBareButtonStyle())
+                        // 系统 .card 样式：tvOS 原生焦点玻璃高光 + 自动放大（Demo 真机验证的观感）
+                        .buttonStyle(.card)
                         // 每张卡注册独立焦点值（条目 Id 唯一，避免 Bool 歧义），供下键直达
                         .focused($shelfCardFocused, equals: item.Id)
+                        // 上报卡片屏幕位置（行放大锚点用）
+                        .background(
+                            GeometryReader { g in
+                                Color.clear.preference(
+                                    key: FNOSCardFramePreference.self,
+                                    value: [item.Id: g.frame(in: .global)]
+                                )
+                            }
+                        )
                     }
                 }
                 .padding(.horizontal, hPadding)
-                // 给聚焦放大（1.06）与阴影留出空间，避免被 ScrollView 裁掉
                 .padding(.vertical, 26)
-                // 双保险：把焦点特效关闭挂到内容容器上
-                .focusEffectDisabled()
             }
-            .focusEffectDisabled()
         }
-        .focusEffectDisabled()
+        .scaleEffect(isRowActive ? 3.0 : 1.0, anchor: activeRowAnchor)
     }
 
     // MARK: - 导航
 
-    /// 详情页入口（海报墙点击）
+    /// 详情页入口（Hero「详情」按钮）：无卡片 frame，直接呈现详情页
     private func open(item: FNOSItem) {
+        pendingReturn = nil
         detailItem = item
     }
 
-    /// 过渡动画 Demo 的真实电影池：全部媒体库条目去重，取前 6 部（有海报图）
-    private var demoPool: [FNOSItem] {
-        var seen = Set<String>()
-        return sections
-            .flatMap(\.items)
-            .filter { $0.ImageTags?["Primary"] != nil && seen.insert($0.Id).inserted }
-            .prefix(6)
-            .map { $0 }
+    /// 详情页入口（海报墙点击）：起跳层从卡片位置放大到全屏，到位后无缝切详情页
+    private func openFromCard(_ item: FNOSItem) {
+        guard let card = cardFrames[item.Id], screenSize.width > 0 else {
+            open(item: item)
+            return
+        }
+        // 行放大锚点 = 焦点卡屏幕中心
+        activeRowAnchor = UnitPoint(
+            x: min(max(card.midX / max(screenSize.width, 1), 0), 1),
+            y: min(max(card.midY / max(screenSize.height, 1), 0), 1)
+        )
+        // 起跳层起点 = 卡片位置（内容为预取的详情横图，参考行为：起跳瞬间即横图）
+        flightFrame = card
+        flightItem = item
+        pendingReturn = item
+        let target = CGRect(x: 0, y: 0, width: screenSize.width, height: screenSize.width * 9 / 16)
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+            flightFrame = target
+        }
+        // 到位后呈现详情页（起跳层与详情 hero 同为全屏横图，衔接无缝）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.50) {
+            detailItem = item
+            flightItem = nil
+        }
+    }
+
+    /// 返回：起跳层从全屏缩回卡片位置（单段连续动画），完成后焦点还给来源卡
+    private func closeDetailFlight() {
+        guard let item = pendingReturn else { return }
+        pendingReturn = nil
+        guard screenSize.width > 0 else {
+            shelfCardFocused = item.Id
+            return
+        }
+        flightFrame = CGRect(x: 0, y: 0, width: screenSize.width, height: screenSize.width * 9 / 16)
+        flightItem = item
+        let card = cardFrames[item.Id] ?? CGRect(
+            x: screenSize.width / 2 - 140, y: screenSize.height / 2 - 210,
+            width: 280, height: 420
+        )
+        withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+            flightFrame = card
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.50) {
+            flightItem = nil
+            shelfCardFocused = item.Id
+        }
     }
 
     /// Hero 播放入口：直接开始播放，不经过详情页
@@ -362,6 +454,58 @@ struct FNOSMainView: View {
             return
         }
         playbackTarget = FNOSPlaybackTarget(item: item, client: client, userID: userID)
+    }
+
+    // MARK: - 过渡动画（起跳层 / 横图预取）
+
+    /// 起跳层：预取的详情横图，从卡片位置放大到全屏（或反向缩回）
+    private func flightLayer(for item: FNOSItem) -> some View {
+        FNOSAsyncImage(
+            url: backdropURL(for: item),
+            headers: client?.mediaHeaders ?? [:],
+            contentMode: .fill
+        )
+        .frame(width: max(flightFrame.width, 1), height: max(flightFrame.height, 1))
+        .clipped()
+        .position(x: flightFrame.midX, y: flightFrame.midY)
+        .allowsHitTesting(false)
+        .ignoresSafeArea()
+    }
+
+    /// 详情横图 URL：优先 Backdrop 1920，无横图退高清海报
+    private func backdropURL(for item: FNOSItem) -> URL? {
+        guard let client else { return nil }
+        if let tag = item.BackdropImageTags?.first, !tag.isEmpty,
+           let url = try? client.url(
+               path: "Items/\(item.Id)/Images/Backdrop",
+               query: ["maxWidth": "1920", "quality": "90", "tag": tag]
+           ) {
+            return url
+        }
+        if let tag = item.ImageTags?["Primary"], !tag.isEmpty,
+           let url = try? client.url(
+               path: "Items/\(item.Id)/Images/Primary",
+               query: ["maxWidth": "1280", "quality": "90", "tag": tag]
+           ) {
+            return url
+        }
+        return nil
+    }
+
+    /// 预取横图进共享内存缓存（FNOSAsyncImage 命中缓存即秒显）
+    private func prefetchBackdrop(_ item: FNOSItem) {
+        guard let url = backdropURL(for: item) else { return }
+        let key = url.absoluteString as NSString
+        guard FNOSImageCache.shared.memory.object(forKey: key) == nil else { return }
+        var request = URLRequest(url: url)
+        request.timeoutInterval = 10
+        for (field, value) in client?.mediaHeaders ?? [:] {
+            request.setValue(value, forHTTPHeaderField: field)
+        }
+        URLSession.shared.dataTask(with: request) { data, _, _ in
+            guard let data, let image = UIImage(data: data) else { return }
+            FNOSImageCache.shared.memory.setObject(image, forKey: key)
+        }.resume()
     }
 
     // MARK: - 数据加载（沿用已跑通的网络层，全 do-catch）
@@ -457,9 +601,6 @@ struct FNOSHomeSettingsView: View {
 
     let onRefresh: () -> Void
     let onLogout: () -> Void
-    /// 过渡动画 Demo 数据（真实电影：真海报 + 预取横图）
-    var demoClient: FNOSDirectClient? = nil
-    var demoItems: [FNOSItem] = []
 
     @Environment(\.dismiss) private var dismiss
 
@@ -481,8 +622,6 @@ struct FNOSHomeSettingsView: View {
     @AppStorage("fnos.danmu.opacity") private var danmuOpacity: Double = 1
     @AppStorage("fnos.danmu.offsetY") private var danmuOffsetY: Double = 0
 
-    // 过渡动画 Demo（验证 matchedGeometryEffect 在真机上的顺滑度，确认后再决定是否集成到海报墙）
-    @State private var showTransitionDemo = false
 
     var body: some View {
         NavigationStack {
@@ -500,12 +639,6 @@ struct FNOSHomeSettingsView: View {
                         ) {
                             dismiss()
                             onLogout()
-                        }
-                        FNOSSettingRow(
-                            title: "过渡动画 Demo（实验）",
-                            systemImage: "wand.and.stars"
-                        ) {
-                            showTransitionDemo = true
                         }
                     }
 
@@ -622,9 +755,6 @@ struct FNOSHomeSettingsView: View {
                 .frame(maxWidth: .infinity, alignment: .center)
             }
             .navigationTitle("设置")
-            .fullScreenCover(isPresented: $showTransitionDemo) {
-                FNOSHeroTransitionDemo(client: demoClient, items: demoItems)
-            }
         }
     }
 
@@ -800,19 +930,15 @@ struct FNOSBareButtonStyle: ButtonStyle {
     }
 }
 
-// MARK: - 媒体库海报瓦片（ATV+ 风格：无文字、圆角矩形、焦点放大 + 液态玻璃高光）
+// MARK: - 媒体库海报瓦片（ATV+ 风格：无文字、圆角矩形）
 
-/// 纯海报瓦片：不显示标题/年份，聚焦时轻微放大 + 自绘玻璃描边。
-///
-/// 注意：这里刻意不用系统 glassEffect / Material ——
-/// tvOS 焦点引擎检测到材质会在聚焦视图上叠系统高亮板（HANDOVER 红线 5）。
-/// 玻璃感全部由「渐变描边 + 顶部高光 + 阴影」自绘实现。
+/// 纯海报瓦片：不显示标题/年份。焦点玻璃高光与放大由外层系统 .card 按钮样式提供
+/// （Demo v3 真机验证的观感），瓦片本身不再自绘焦点特效。
 fileprivate struct FNOSPosterTile: View {
 
     let item: FNOSItem
     let client: FNOSDirectClient?
     let width: CGFloat
-    let isFocused: Bool
 
     private var height: CGFloat { width * 3 / 2 }
     private var cornerRadius: CGFloat { 14 }
@@ -827,9 +953,6 @@ fileprivate struct FNOSPosterTile: View {
         )
         .frame(width: width, height: height)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
-        .shadow(color: .black.opacity(isFocused ? 0.55 : 0), radius: isFocused ? 22 : 0, y: 10)
-        .scaleEffect(isFocused ? 1.06 : 1.0)
-        .animation(.easeOut(duration: 0.18), value: isFocused)
     }
 }
 
@@ -1038,250 +1161,3 @@ fileprivate struct FNOSSeasonsSheet: View {
 // 焦点悬空，再按 Menu 走系统默认行为直接 dismiss 整个 Demo。
 // 修复：关闭后显式把焦点还给来源卡片；详情层焦点多次兜底。
 
-struct FNOSHeroTransitionDemo: View {
-
-    let client: FNOSDirectClient?
-    let items: [FNOSItem]
-
-    @Namespace private var ns
-    @State private var selected: FNOSItem?
-    @State private var infoVisible = false
-    @FocusState private var cardFocused: String?
-    @FocusState private var playFocused: Bool
-    @Environment(\.dismiss) private var dismiss
-
-    private var rows: [[FNOSItem]] {
-        [Array(items.prefix(3)), Array(items.dropFirst(3).prefix(3))]
-    }
-
-    var body: some View {
-        ZStack {
-            Color.black.ignoresSafeArea()
-
-            VStack(alignment: .leading, spacing: 56) {
-                shelfRow(row: 0)
-                shelfRow(row: 1)
-                Spacer()
-            }
-            .padding(.top, 70)
-            // 详情打开时整页海报行禁用（焦点必须转移到详情层）
-            .disabled(selected != nil)
-
-            if let item = selected {
-                detailOverlay(item)
-                    .zIndex(10)
-            }
-        }
-        .onAppear {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                if selected == nil { cardFocused = items.first?.Id }
-            }
-            // 全量预取横图（6 张，点按起跳必高清）
-            for item in items { prefetchBackdrop(item) }
-        }
-        .onChange(of: cardFocused) { _, focused in
-            if let focused, let item = items.first(where: { $0.Id == focused }) {
-                prefetchBackdrop(item)
-            }
-        }
-        // 详情未打开时按 Menu = 退出 Demo
-        .onExitCommand {
-            if selected == nil { dismiss() }
-        }
-    }
-
-    // MARK: 海报行（详情打开时：当前行以焦点卡为锚点整体放大，其他卡推出屏幕外）
-
-    private func shelfRow(row: Int) -> some View {
-        let rowItems = row < rows.count ? rows[row] : []
-        let selIndex = selected.flatMap { s in items.firstIndex(where: { $0.Id == s.Id }) }
-        let isActive = selIndex != nil && selIndex! / 3 == row
-        let anchor: UnitPoint = {
-            guard let idx = selIndex, idx / 3 == row, !rowItems.isEmpty else { return .center }
-            let col = idx % 3
-            return UnitPoint(x: (CGFloat(col) + 0.5) / 3, y: 0.5)
-        }()
-
-        return VStack(alignment: .leading, spacing: 20) {
-            Text("演示片单 · \(row + 1)")
-                .font(.system(size: 24, weight: .semibold))
-                .foregroundColor(.white.opacity(0.9))
-                .padding(.horizontal, 90)
-
-            HStack(spacing: 34) {
-                ForEach(rowItems) { item in
-                    cardButton(item)
-                }
-            }
-            .padding(.horizontal, 90)
-            // 同行整体放大（参考：焦点卡以外的同行卡片一起被放大推出屏幕外；返回反向缩回）
-            .scaleEffect(isActive ? 3.0 : 1.0, anchor: anchor)
-        }
-    }
-
-    private func cardButton(_ item: FNOSItem) -> some View {
-        Button {
-            open(item)
-        } label: {
-            Group {
-                if selected?.Id == item.Id {
-                    // 该卡起跳中：海报占位隐藏，让位给详情层的横图 matched 视图
-                    cardPoster(item).opacity(0)
-                } else {
-                    cardPoster(item)
-                        .matchedGeometryEffect(id: item.Id, in: ns)
-                }
-            }
-            .frame(width: 300, height: 450)
-        }
-        .buttonStyle(.card)
-        .focused($cardFocused, equals: item.Id)
-    }
-
-    // 卡片海报（竖版 Primary）
-    private func cardPoster(_ item: FNOSItem) -> some View {
-        FNOSAsyncImage(
-            url: client?.posterURL(itemID: item.Id, tag: item.ImageTags?["Primary"]),
-            headers: client?.mediaHeaders ?? [:]
-        )
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-
-    // MARK: 详情覆盖层（放大层内容 = 预取的详情横图，起跳即高清）
-
-    private func detailOverlay(_ item: FNOSItem) -> some View {
-        GeometryReader { geo in
-            ZStack(alignment: .bottomLeading) {
-                Color.black.ignoresSafeArea()
-
-                // 放大层：从卡片位置（matched 起点）连续插值到顶部 16:9 全屏
-                FNOSAsyncImage(
-                    url: backdropURL(for: item),
-                    headers: client?.mediaHeaders ?? [:],
-                    contentMode: .fill
-                )
-                .matchedGeometryEffect(id: item.Id, in: ns)
-                .frame(width: geo.size.width, height: geo.size.width * 9 / 16)
-                .clipped()
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-                .ignoresSafeArea(edges: .top)
-
-                // 底部渐变 + 信息层（延迟淡入，独立于几何插值）
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear, location: 0.4),
-                        .init(color: .black.opacity(0.9), location: 1),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .opacity(infoVisible ? 1 : 0)
-                .allowsHitTesting(false)
-
-                VStack(alignment: .leading, spacing: 20) {
-                    Text(item.Name ?? "未命名")
-                        .font(.system(size: 56, weight: .bold))
-                        .foregroundColor(.white)
-
-                    HStack(spacing: 14) {
-                        if let year = item.ProductionYear { Text(String(year)) }
-                        if let genres = item.Genres, !genres.isEmpty {
-                            Text(genres.prefix(2).joined(separator: " · "))
-                        }
-                    }
-                    .font(.system(size: 20))
-                    .foregroundColor(.white.opacity(0.85))
-
-                    Text("Demo v3 —— 按 Menu 键返回")
-                        .font(.system(size: 18))
-                        .foregroundColor(.white.opacity(0.55))
-
-                    Button {
-                        // Demo 占位
-                    } label: {
-                        Text("立即播放")
-                            .font(.system(size: 24, weight: .semibold))
-                    }
-                    .buttonStyle(.card)
-                    .focused($playFocused)
-                }
-                .padding(90)
-                .opacity(infoVisible ? 1 : 0)
-                .offset(y: infoVisible ? 0 : 16)
-            }
-        }
-        .ignoresSafeArea()
-        .onAppear {
-            // 焦点立即落 + 两次兜底（防插入动画期间设置丢失 → Menu 失灵）
-            playFocused = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) {
-                withAnimation(.easeOut(duration: 0.35)) { infoVisible = true }
-                playFocused = true
-            }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-                playFocused = true
-            }
-        }
-        // 按 Menu = 关闭详情（此时海报行 disabled，焦点必在本层）
-        .onExitCommand { close() }
-    }
-
-    // MARK: 横图 URL 与预取
-
-    private func backdropURL(for item: FNOSItem) -> URL? {
-        guard let client else { return nil }
-        if let tag = item.BackdropImageTags?.first, !tag.isEmpty,
-           let url = try? client.url(
-               path: "Items/\(item.Id)/Images/Backdrop",
-               query: ["maxWidth": "1920", "quality": "90", "tag": tag]
-           ) {
-            return url
-        }
-        // 无横图退高清海报
-        if let tag = item.ImageTags?["Primary"], !tag.isEmpty,
-           let url = try? client.url(
-               path: "Items/\(item.Id)/Images/Primary",
-               query: ["maxWidth": "1280", "quality": "90", "tag": tag]
-           ) {
-            return url
-        }
-        return nil
-    }
-
-    /// 预取横图进共享内存缓存（FNOSAsyncImage 命中缓存即秒显）
-    private func prefetchBackdrop(_ item: FNOSItem) {
-        guard let url = backdropURL(for: item) else { return }
-        let key = url.absoluteString as NSString
-        guard FNOSImageCache.shared.memory.object(forKey: key) == nil else { return }
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 10
-        for (field, value) in client?.mediaHeaders ?? [:] {
-            request.setValue(value, forHTTPHeaderField: field)
-        }
-        URLSession.shared.dataTask(with: request) { data, _, _ in
-            guard let data, let image = UIImage(data: data) else { return }
-            FNOSImageCache.shared.memory.setObject(image, forKey: key)
-        }.resume()
-    }
-
-    // MARK: 打开 / 关闭
-
-    private func open(_ item: FNOSItem) {
-        infoVisible = false
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
-            selected = item
-        }
-    }
-
-    private func close() {
-        let returning = selected?.Id
-        withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
-            infoVisible = false
-            selected = nil
-        }
-        // 关键修复：焦点显式还给来源卡片（等海报行恢复 enabled 后再设）
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            if let returning { cardFocused = returning }
-        }
-    }
-}

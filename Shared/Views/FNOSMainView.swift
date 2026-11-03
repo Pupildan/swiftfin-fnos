@@ -55,10 +55,11 @@ struct FNOSMainView: View {
     @Namespace private var transitionNS
     /// 飞行层上下文；非 nil = 过渡进行中。落地后置 nil（真实详情页已全屏接管）。
     @State private var flight: FNOSDetailFlightContext?
-    /// 真实详情页是否已落地显示（飞行动画完成→置 true 交叉淡入；保持 false 直到落地）
-    @State private var detailRevealed = false
     /// 最近打开的卡片 Id：关闭过渡后把焦点显式还给它（否则焦点悬空，Menu 失灵）
     @State private var lastOpenedCardID: String?
+    /// 每个媒体库行的内容 frame（全局坐标，含水平滚动偏移），供行副本 1:1 对齐。
+    /// 非响应式引用类型：滚动时只写不触发重渲染（避免海报墙滚动掉帧）。
+    @State private var rowFrames = FNOSRowFrameStore()
 
     // 首页设置面板（刷新/退出集成在内）
     @State private var showSettings = false
@@ -173,26 +174,16 @@ struct FNOSMainView: View {
                     .disabled(flight != nil || detailItem != nil)
                 }
 
-                // ---- 详情过渡动画（方案 B+）----
-                // 真实详情页：落地后交叉淡入（opacity 0→1）。飞行层(zIndex 30)在其下，
-                // 故落地时详情页的「全屏横图 Hero」正好接住飞行层的起跳横图终点，无缝。
-                if let item = detailItem {
-                    FNOSItemDetailView(
-                        item: item,
-                        client: client,
-                        userID: userID,
-                        onEpisodes: { _ in }
-                    )
-                    .opacity(detailRevealed ? 1 : 0)
-                    .zIndex(40)
-                    .onExitCommand { closeDetail() }
-                }
-
-                // 飞行层：压暗背景 + 起跳横图(matched) + 信息层。
-                // 放在 ScrollView 外（顶层 ZStack），不受垂直裁剪 / LazyHStack 懒加载 / 焦点泄漏影响。
+                // ---- 详情过渡（方案 B+ v78：cover-at-land）----
+                // 关键：详情页【不】原地嵌入 —— v77 嵌入导致 .onExitCommand 在 tvOS 对
+                // 非呈现视图不可靠，焦点没落稳时 Menu 穿透到系统 → 退出到桌面。
+                // 改为：飞行层在主视图做 matched（同树，A/B 端共享命名空间），
+                // 落地瞬间才 present 详情页 cover（系统原生处理 Menu，可靠）。
+                // 详情 cover 的 Hero（全屏横图）与飞行层终点同位同尺寸 → 零跳位。
                 if let flight {
                     FNOSDetailFlightOverlay(ctx: flight, ns: transitionNS)
                         .zIndex(30)
+                        .onExitCommand { cancelFlight() }
                 }
             }
         }
@@ -207,8 +198,17 @@ struct FNOSMainView: View {
                 seriesName: target.seriesName
             )
         }
-        // 详情页已改为原地嵌入（见 body 内 detailItem 覆盖层），不再走 fullScreenCover，
-        // 以便 matchedGeometryEffect 的 A/B 端共享同一命名空间（跨 cover 无法做 matched 插值）。
+        // 详情页走 fullScreenCover（系统原生处理 Menu，可靠关闭，v77 嵌入已回滚）。
+        // 注意：cover 的「系统 Menu 关闭」由 SwiftUI 自动把 detailItem 置 nil；
+        // 此处 onDismiss 只负责把焦点显式还给来源卡。
+        .fullScreenCover(item: $detailItem, onDismiss: { closeDetail() }) { item in
+            FNOSItemDetailView(
+                item: item,
+                client: client,
+                userID: userID,
+                onEpisodes: { _ in }
+            )
+        }
         .sheet(isPresented: $showSettings) {
             FNOSHomeSettingsView(
                 onRefresh: {
@@ -370,6 +370,8 @@ struct FNOSMainView: View {
             140,
             (screenWidth - hPadding * 2 - spacing * (visibleCount - 1)) / visibleCount
         )
+        // 行副本对齐需要 tileWidth（行内容 frame 已由 .onPreferenceChange 写入）
+        rowFrames.tileWidths[section.Id] = tileWidth
 
         return VStack(alignment: .leading, spacing: 14) {
             Text(section.library.Name ?? "未命名")
@@ -381,9 +383,15 @@ struct FNOSMainView: View {
                 LazyHStack(spacing: spacing) {
                     ForEach(section.items) { item in
                         let isFocused = shelfCardFocused == item.Id
+                        let rowIndex = section.items.firstIndex(where: { $0.Id == item.Id })
                         // 详情打开期间（飞行中+落地后）该卡都保持隐藏 & 去 matched，
                         // 避免落地时 flight=nil 导致 matched 几何反向触发（A 端突然回归）。
                         let isFlightCard = detailItem?.Id == item.Id
+                        // 飞行行窗口内的卡也隐藏（交给行副本渲染），避免与副本「重影」。
+                        let isInFlightWindow: Bool = {
+                            guard let f = flight, f.rowSectionID == section.Id, let rowIndex else { return false }
+                            return rowIndex >= f.focusIndex - 3 && rowIndex <= f.focusIndex + 3
+                        }()
                         Button {
                             openCard(item: item)
                         } label: {
@@ -403,12 +411,14 @@ struct FNOSMainView: View {
                                 } else {
                                     // A 端：卡片海报（matched 起点）。Demo 结论：起跳内容不是海报，
                                     // 而是预取横图，所以这里只提供【几何起点】，内容由 B 端覆盖。
+                                    // 窗口内非焦点卡：opacity 0（副本渲染），保留 matched（无配对即惰性）。
                                     FNOSPosterTile(
                                         item: item,
                                         client: client,
                                         width: tileWidth,
                                         isFocused: isFocused
                                     )
+                                    .opacity(isInFlightWindow ? 0 : 1)
                                     .matchedGeometryEffect(id: item.Id, in: transitionNS)
                                 }
                             }
@@ -420,11 +430,24 @@ struct FNOSMainView: View {
                         .focused($shelfCardFocused, equals: item.Id)
                     }
                 }
+                // 行内容 frame 捕获（全局坐标，含水平滚动偏移）：
+                // 行副本用它把「焦点卡中心」对齐到屏幕上的真实位置，1:1 起跳。
+                .background(
+                    GeometryReader { g in
+                        Color.clear.preference(
+                            key: FNOSRowContentFrameKey.self,
+                            value: g.frame(in: .global)
+                        )
+                    }
+                )
                 .padding(.horizontal, hPadding)
                 // 给聚焦放大（1.06）与阴影留出空间，避免被 ScrollView 裁掉
                 .padding(.vertical, 26)
                 // 双保险：把焦点特效关闭挂到内容容器上
                 .focusEffectDisabled()
+                .onPreferenceChange(FNOSRowContentFrameKey.self) { frame in
+                    rowFrames.frames[section.Id] = frame
+                }
             }
             .focusEffectDisabled()
         }
@@ -433,26 +456,32 @@ struct FNOSMainView: View {
 
     // MARK: - 导航（详情过渡）
 
-    /// 海报墙卡片点击：起飞行层（方案 B+）。
+    /// 海报墙卡片点击：起飞行层（方案 B+ v78）。
     /// 单次 withAnimation(.spring) 是底线 —— v62~v67 用 Task.sleep 分段动画导致卡顿割裂。
     private func openCard(item: FNOSItem) {
         guard let client else {
             print("FNOS❗️客户端未初始化，无法打开详情")
             return
         }
+        guard let ctx = buildFlightContext(item: item, client: client) else {
+            // 找不到行/frame（理论不该发生）：退化直出详情，保证不卡死
+            print("FNOS❗️未取到飞行上下文，退化直出详情: \(item.Name ?? "?")")
+            openDetailDirect(item: item)
+            return
+        }
         lastOpenedCardID = item.Id
-        detailRevealed = false
-        let ctx = FNOSDetailFlightContext(item: item, client: client, userID: userID)
         withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
             flight = ctx
-            detailItem = item
         }
         // 落地时序（与弹簧 0.45s 对齐）：
-        // 0.46s → 真实详情交叉淡入（其全屏横图 Hero 正好接住飞行层终点，无缝）
-        // 0.74s → 移除飞行层（详情已完全不透明接管）
+        // 0.46s → present 详情页 cover，抑制其动画（fullScreenCover 默认会滑入 → 跳位）。
+        //          cover 的 Hero（全屏横图）与飞行层终点同位同尺寸 → 零跳位。
+        // 0.74s → 移除飞行层（cover 已全屏接管，位于飞行层之上）。
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.46) {
             guard flight?.item.Id == item.Id else { return }
-            withAnimation(.easeOut(duration: 0.25)) { detailRevealed = true }
+            var tx = Transaction()
+            tx.animation = nil
+            withTransaction(tx) { detailItem = item }
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.74) {
             guard flight?.item.Id == item.Id else { return }
@@ -461,20 +490,57 @@ struct FNOSMainView: View {
         print("FNOSℹ️详情过渡起跳: \(item.Name ?? "?")")
     }
 
+    /// 构造飞行上下文：定位条目所在行、取行内容 frame、算焦点卡 frame、组装行副本数据。
+    private func buildFlightContext(item: FNOSItem, client: FNOSDirectClient) -> FNOSDetailFlightContext? {
+        guard let section = sections.first(where: { $0.items.contains(where: { $0.Id == item.Id }) }),
+              let rowIndex = section.items.firstIndex(where: { $0.Id == item.Id }),
+              let contentFrame = rowFrames.frames[section.Id],
+              contentFrame != .zero,
+              let tileWidth = rowFrames.tileWidths[section.Id] else {
+            return nil
+        }
+        let spacing: CGFloat = 28
+        let hPadding: CGFloat = 72
+        let tileH = tileWidth * 1.5
+        let focusFrame = CGRect(
+            x: contentFrame.minX + CGFloat(rowIndex) * (tileWidth + spacing),
+            y: contentFrame.minY,
+            width: tileWidth,
+            height: tileH
+        )
+        return FNOSDetailFlightContext(
+            item: item,
+            client: client,
+            userID: userID,
+            rowSectionID: section.Id,
+            rowItems: section.items,
+            focusIndex: rowIndex,
+            tileWidth: tileWidth,
+            spacing: spacing,
+            hPadding: hPadding,
+            focusCardFrame: focusFrame
+        )
+    }
+
     /// Hero 详情入口（无卡片可起跳，直接出详情页，不走飞行动画）
     private func openDetailDirect(item: FNOSItem) {
-        detailRevealed = true
         detailItem = item
         lastOpenedCardID = nil
     }
 
-    /// 关闭详情：交叉淡出 + 显式把焦点还给来源卡片（否则焦点悬空 → Menu 失灵，v2 教训）。
+    /// 详情 cover 关闭（系统 Menu 已把 detailItem 置 nil）：只负责清飞行层 + 还焦点。
     private func closeDetail() {
-        withAnimation(.easeOut(duration: 0.22)) {
-            detailRevealed = false
-            flight = nil
-            detailItem = nil
+        flight = nil
+        if let returning = lastOpenedCardID {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                shelfCardFocused = returning
+            }
         }
+    }
+
+    /// 飞行层期间按 Menu：取消过渡（此时详情 cover 尚未 present）。
+    private func cancelFlight() {
+        withAnimation(.easeOut(duration: 0.2)) { flight = nil }
         if let returning = lastOpenedCardID {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
                 shelfCardFocused = returning
@@ -1431,13 +1497,13 @@ struct FNOSHeroTransitionDemo: View {
     }
 }
 
-// MARK: - 详情过渡飞行层（方案 B+，v77 核心缩放）
+// MARK: - 详情过渡飞行层（方案 B+ v78：核心缩放 + 同行推出）
 //
 // v75/v76 实装失败的三座大山（垂直 ScrollView 裁剪 / LazyHStack 懒加载空洞 / 焦点泄漏）
 // 全是因为动画放在主页容器【内部】。本飞行层放在 FNOSMainView 顶层 ZStack（ScrollView 之外），
 // 所以：
 //   - 起跳横图（matched B 端）从卡片位置插值到全屏，不受任何 ScrollView 裁剪；
-//   - 不做行缩放（v77 无行副本），不触发 LazyHStack 懒加载空洞；
+//   - 同行推出（行副本 scale 3.0）也在飞行层内，不触发 LazyHStack 懒加载空洞；
 //   - 主页在该层下方整体 .disabled(true)，焦点不可能漏进被盖住的元素。
 //
 // 为什么不用截图（方案 B 原案）：
@@ -1446,15 +1512,41 @@ struct FNOSHeroTransitionDemo: View {
 //   既遮住裁剪/空洞/焦点，又让起跳内容是真正的 1920 横图。
 //
 // 终点（方案甲）：飞行层横图终点 = 全屏 = 真实详情页 Hero 的同位同尺寸（见 FNOSItemDetailView
-//   heroSection: frame(width: size.width, height: size.height)），落地交叉淡入零跳位。
+//   heroSection: frame(width: size.width, height: size.height)）。落地才 present 详情 cover，
+//   cover 的 Hero 与飞行层终点同位同尺寸 → 零跳位（cover-at-land，v78 修 Menu 退桌面）。
 //
-// 注意：同行推出（行副本 scale 3.0）留待 v78。它需要逐卡/逐行 frame 捕获 + 水平滚动偏移换算，
-// 是唯一无法本地验证、最易算错的部分；先交付最稳的核心缩放，跑通后再叠加。
+// 同行推出：行副本 = 焦点卡 ±3 张的 HStack（非懒），scale 1→3 锚定焦点卡中心。
+//   真实行的窗口卡 opacity 0（交给副本），避免与副本重影；远端的卡保持可见（被压暗）。
+//   行副本位置用「行内容 frame + 焦点下标」算出（FNOSRowFrameStore，含水平滚动偏移）。
 
 struct FNOSDetailFlightContext {
     let item: FNOSItem
     let client: FNOSDirectClient?
     let userID: String
+    /// 条目所在行的 section.Id（窗口卡隐藏判断用）
+    let rowSectionID: String?
+    /// 该行全部条目（行副本数据源）
+    let rowItems: [FNOSItem]
+    /// 焦点卡在 rowItems 里的下标
+    let focusIndex: Int
+    /// 卡片布局参数（与 shelf() 完全一致，副本才能 1:1 对齐）
+    let tileWidth: CGFloat
+    let spacing: CGFloat
+    let hPadding: CGFloat
+    /// 焦点卡全局 frame（行内容 frame + 下标算出，含水平滚动偏移）
+    let focusCardFrame: CGRect
+}
+
+/// 行内容 frame 存储（非响应式：滚动只写不触发重渲染，避免海报墙掉帧）
+final class FNOSRowFrameStore {
+    var frames: [String: CGRect] = [:]        // section.Id -> LazyHStack 内容 frame（全局）
+    var tileWidths: [String: CGFloat] = [:]   // section.Id -> tileWidth
+}
+
+/// 行内容 frame 的 preference key
+struct FNOSRowContentFrameKey: PreferenceKey {
+    static var defaultValue: CGRect = .zero
+    static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
 }
 
 struct FNOSDetailFlightOverlay: View {
@@ -1463,6 +1555,7 @@ struct FNOSDetailFlightOverlay: View {
     let ns: Namespace.ID
 
     @State private var infoVisible = false
+    @State private var rowScale: CGFloat = 1.0
 
     /// 起跳横图：1920 Backdrop 优先，无横图退 1280 Primary（与 Demo backdropURL 一致）
     private var backdropURL: URL? {
@@ -1484,12 +1577,29 @@ struct FNOSDetailFlightOverlay: View {
         return nil
     }
 
+    /// 行副本窗口：焦点卡 ±3 张（至少含焦点卡本身）
+    private var window: [FNOSItem] {
+        let items = ctx.rowItems
+        guard !items.isEmpty else { return [] }
+        let lo = max(0, ctx.focusIndex - 3)
+        let hi = min(items.count - 1, ctx.focusIndex + 3)
+        return Array(items[lo...hi])
+    }
+
+    /// 焦点卡在窗口内的列下标
+    private var focusColInWindow: Int {
+        let lo = max(0, ctx.focusIndex - 3)
+        return ctx.focusIndex - lo
+    }
+
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
-                // 压暗背景：整页 0.35（ATV 式）。主页在其下方保持可见、只被压暗不隐藏，
-                // 从而落地时「主页仍在、只是暗」而非闪黑。
+                // 压暗背景：整页 0.35（ATV 式）。主页在其下方保持可见、只被压暗不隐藏。
                 Color.black.opacity(0.35).ignoresSafeArea()
+
+                // 同行推出副本：scale 1→3 锚定焦点卡中心（焦点卡中心屏幕坐标不变）
+                rowReplica
 
                 // 起跳横图（B 端）：matched 从卡片(A 端)位置单次弹簧插值到全屏。
                 // 单段连续动画是底线（v62~v67 分段 Task.sleep = 卡顿割裂，禁用）。
@@ -1539,10 +1649,47 @@ struct FNOSDetailFlightOverlay: View {
         }
         .ignoresSafeArea()
         .onAppear {
+            // 行副本 1→3（与 matched 同一弹簧，视觉同步）
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+                rowScale = 3.0
+            }
             // 信息层延迟淡入：单段连续动画
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.30) {
                 withAnimation(.easeOut(duration: 0.35)) { infoVisible = true }
             }
         }
+    }
+
+    // MARK: 同行推出副本
+
+    private var rowReplica: some View {
+        let win = window
+        let n = CGFloat(win.count)
+        let tileW = ctx.tileWidth
+        let tileH = tileW * 1.5
+        let spacing = ctx.spacing
+        // 副本 HStack 宽（无左右 padding，位置由 .position 绝对定位）
+        let hW = n * tileW + (n - 1) * spacing
+        // 焦点卡中心在副本内的 x（从副本左边缘起）
+        let focusCX = CGFloat(focusColInWindow) * (tileW + spacing) + tileW / 2
+        // 锚点：把焦点卡中心放在其真实屏幕位置（focusCardFrame 中心）
+        let anchor = UnitPoint(x: focusCX / hW, y: 0.5)
+        let posX = ctx.focusCardFrame.midX - focusCX + hW / 2
+        let posY = ctx.focusCardFrame.midY
+
+        return HStack(spacing: spacing) {
+            ForEach(win) { w in
+                FNOSAsyncImage(
+                    url: ctx.client?.posterURL(itemID: w.Id, tag: w.ImageTags?["Primary"]),
+                    headers: ctx.client?.mediaHeaders ?? [:]
+                )
+                .frame(width: tileW, height: tileH)
+                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            }
+        }
+        .frame(width: hW, height: tileH)
+        // .position 后 .scaleEffect：焦点卡中心在 .position 处，缩放绕该点（中心不漂移）
+        .position(x: posX, y: posY)
+        .scaleEffect(rowScale, anchor: anchor)
     }
 }

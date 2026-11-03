@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v77"
+    static let version = "v78"
 
     /// 本版主要变更摘要
-    static let changes = "详情过渡动画实装 v77（方案 B+ 核心缩放）：海报墙点击→起跳横图(matched A→B)从卡片位单次弹簧放大到全屏，落地交叉淡入真实详情 Hero（终点=全屏，方案甲零跳位）；压暗背景 0.35 + 延迟信息层；主页过渡期整体 disabled 防焦点泄漏；落地/关闭后焦点显式还给来源卡。同行推出(行副本 3.0)留待 v78。"
+    static let changes = "v78 修复：①详情页改回 fullScreenCover（cover-at-land：飞行层落地才 present 详情，系统原生处理 Menu），修复 v77 详情页按返回高概率退出到系统桌面；②实装同行推出（行副本 ±3 张 scale 3.0 锚定焦点卡，行内容 frame 捕获 1:1 对齐）；③飞行层期间按 Menu 可取消过渡。核心缩放与 v77 一致。"
 }

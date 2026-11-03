@@ -292,9 +292,13 @@ struct FNOSPlayerContainerView: View {
     @State private var handoffPosition: Double = 0
     /// 继续播放 seek 只做一次（首个时间回调触发，不猜引擎状态枚举）
     @State private var didResumeSeek = false
-    // v86 播放进度上报（本机记录 → 服务端多端同步）：10s 节流；mpv 记最后位置供 stopped 上报
+    // v86 播放进度上报：10s 节流；mpv 记最后位置供 stopped 上报
     @State private var lastReportAt: Date = .distantPast
     @State private var lastMPVPosition: Double = 0
+    // v94 原生上报上下文（飞牛 play/record 需要 media_guid + 原生 item_guid）
+    @State private var reporterNative: FNOSNativeClient?
+    @State private var reporterMediaGUID: String?
+    @State private var reporterItemGUID: String?
     // v87 续播：本地进度为可靠主链路；记录 > 30s 时弹「从头/继续」选择（3s 自动续播）
     @State private var pendingResumeTarget: Double?
     @State private var resumeAutoTask: Task<Void, Never>?
@@ -310,12 +314,42 @@ struct FNOSPlayerContainerView: View {
         return episodes[idx + 1]
     }
 
-    /// 10s 节流的进度上报
+    /// 10s 节流的进度上报（v94：飞牛原生 play/record，兼容层 Sessions 是空壳已定案）
     private func throttledProgressReport(_ seconds: Double) {
         guard Date().timeIntervalSince(lastReportAt) > 10 else { return }
         lastReportAt = Date()
-        Task { await client.reportPlayback(itemID: item.Id, positionSeconds: seconds, stage: "progress") }
+        guard let native = reporterNative, let mg = reporterMediaGUID, let ig = reporterItemGUID else { return }
+        Task { _ = await native.playRecord(mediaGUID: mg, itemGUID: ig, ts: seconds) }
     }
+
+    /// v94：解析原生上报上下文（标题搜条目 → item_guid → play/info → media_guid），
+    /// 成功后立即上报起播位置。失败只留诊断，不影响播放与本地续播。
+    @MainActor
+    private func resolveReporter() async {
+        guard reporterNative == nil else { return }
+        guard let credentials = FNOSAuthStore.shared.credentials,
+              let nativeToken = credentials.nativeToken, !nativeToken.isEmpty else {
+            FNOSDiag.shared.add("上报: 无原生 token（不同步）", dedupeKey: "rep.tok")
+            return
+        }
+        let native = FNOSNativeClient(baseURL: credentials.serverURL, token: nativeToken)
+        let isEp = item.type == "Episode"
+        guard let range = await native.mediaRange(
+            itemTitle: isEp ? nil : item.Name,
+            seriesTitle: isEp ? (item.SeriesName ?? seriesName) : nil,
+            episodeNumber: isEp ? item.IndexNumber : nil
+        ) else {
+            FNOSDiag.shared.add("上报: 原生条目未匹配（不同步）", dedupeKey: "rep.none.\(item.Id)")
+            return
+        }
+        reporterNative = native
+        reporterMediaGUID = range.mediaGUID
+        reporterItemGUID = range.itemGUID
+        let startTS = resumeStartSeconds ?? 0
+        _ = await native.playRecord(mediaGUID: range.mediaGUID, itemGUID: range.itemGUID, ts: startTS)
+        FNOSDiag.shared.add("上报: 起播 ts=\(Int(startTS))（原生协议）")
+    }
+
     /// 探测到的片源摘要（显示在控制条上）
     @State private var sourceSummary: String?
     /// mpv 用的原生直链解析结果（含整季分集，供播放器内换集）
@@ -360,6 +394,10 @@ struct FNOSPlayerContainerView: View {
         // 无感探测：KS 正常起播，同时后台问一次飞牛"这片子是什么格式"，
         // 只有 P5/P7（KS 必然偏色）才在几百毫秒内切到 mpv 并带进度续播。
         .task { await probeProfile() }
+        // v94：原生上报上下文解析 + 起播上报（多端同步写通道）
+        .task { await resolveReporter() }
+        // v94：原生上报上下文解析 + 起播上报（多端同步写通道）
+        .task { await resolveReporter() }
     }
 
     // MARK: 片源格式探测（无感切换的核心）
@@ -461,12 +499,8 @@ struct FNOSPlayerContainerView: View {
                     }
                 }
             ) {
-                Task {
-                    await client.reportPlayback(
-                        itemID: item.Id,
-                        positionSeconds: lastMPVPosition,
-                        stage: "stopped"
-                    )
+                if let native = reporterNative, let mg = reporterMediaGUID, let ig = reporterItemGUID {
+                    Task { _ = await native.playRecord(mediaGUID: mg, itemGUID: ig, ts: lastMPVPosition) }
                 }
                 dismiss()
             }
@@ -582,15 +616,9 @@ struct FNOSPlayerContainerView: View {
             danmuEngine.setRate(0)
             // v88：清全局转盘桥，下一会话重挂新闭包（否则写进已销毁会话的状态）
             FNOSPanBridge.shared.onPan = nil
-            // v86：KS 侧停止上报（记录同步到服务端）
-            if !useMPVEngine, !forceMPV {
-                Task {
-                    await client.reportPlayback(
-                        itemID: item.Id,
-                        positionSeconds: Double(coordinator.timemodel.currentTime),
-                        stage: "stopped"
-                    )
-                }
+            // v94：KS 侧停止上报（飞牛原生 play/record → 多端可见）
+            if let native = reporterNative, let mg = reporterMediaGUID, let ig = reporterItemGUID {
+                Task { _ = await native.playRecord(mediaGUID: mg, itemGUID: ig, ts: Double(coordinator.timemodel.currentTime)) }
             }
         }
         .sheet(isPresented: $isSheetPresented, onDismiss: {
@@ -1275,13 +1303,6 @@ struct FNOSPlayerContainerView: View {
         videoCodec = source.videoCodec
         videoBitDepth = source.bitDepth
         notice = ""
-
-        // v86：起播上报（本机记录 → 服务端，多端「继续播放」可见）
-        await client.reportPlayback(
-            itemID: item.Id,
-            positionSeconds: resumeStartSeconds ?? 0,
-            stage: "start"
-        )
 
         // v87 续播选择：本地/服务端记录 > 30s → 底部弹「从头开始/继续播放」（3s 未确认自动续播）；
         // ≤30s 的小进度不弹窗，由 onPlay 的静默 seek 直接续

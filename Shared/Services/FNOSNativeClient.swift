@@ -550,7 +550,7 @@ extension FNOSNativeClient {
     /// - 电影：标题 → 条目 guid → play/info（media_guid + item 字典）→ /stream 探测
     /// - 剧集：剧名 + 第 1 集（代表整剧档位）
     /// 一次调用同时拿色彩与评分（共用同一次 search + play/info）。
-    func detailEnrichment(itemTitle: String?, seriesTitle: String?, episodeNumber: Int?) async -> (badge: String?, imdb: Double?, douban: Double?, tomato: Double?)? {
+    func detailEnrichment(itemTitle: String?, seriesTitle: String?, episodeNumber: Int?) async -> (badge: String?, vote: Double?, imdb: Double?, douban: Double?, tomato: Double?)? {
         let log = DebugLog()
         var guid: String?
         if let seriesTitle, !seriesTitle.isEmpty, let episodeNumber, episodeNumber > 0 {
@@ -584,10 +584,27 @@ extension FNOSNativeClient {
         }
         let ratings = Self.parseRatings(info.itemDict)
 
+        // v94：评分（飞牛刮削的 TMDb 分，字符串数字）+ 色彩（play/info 的 media_stream
+        // 直接带 color_range_type，剧集也能用，不再只依赖 /stream 探测）
+        var vote: Double?
+        if let v = info.itemDict?["vote_average"] as? String { vote = Double(v) }
+        if vote == nil, let n = info.itemDict?["vote_average"] as? NSNumber { vote = n.doubleValue }
+        var colorRange = ""
+        if let ms = info.itemDict?["media_stream"] as? [String: Any],
+           let colors = ms["color_range_type"] as? [Any] {
+            colorRange = colors.compactMap { $0 as? String }.joined(separator: ",")
+        }
+
         var badge: String?
         if let traits = await videoTraits(mediaGUID: info.mediaGUID) {
             if let p = traits.dvProfile {
                 badge = "杜比视界 P\(p)"
+            } else if colorRange.contains("Dolby") {
+                badge = "杜比视界"
+            } else if colorRange.contains("HDR10") {
+                badge = "HDR10"
+            } else if colorRange.contains("HLG") {
+                badge = "HLG"
             } else if let depth = traits.bitDepth, depth >= 10 {
                 // 无 DoVi 报告的 10bit HEVC/AV1 在电影库里基本都是 HDR10/HLG；
                 // 杜比视界只认 dv_profile（compat 层 VideoRangeType 不可信，见 probeProfile 注释）
@@ -596,7 +613,7 @@ extension FNOSNativeClient {
                 badge = "SDR"
             }
         }
-        return (badge, ratings["imdb"], ratings["douban"], ratings["tomato"])
+        return (badge, vote, ratings["imdb"], ratings["douban"], ratings["tomato"])
     }
 
     /// 视频轨真实格式（来自 `POST /v/api/v1/stream` 的能力协商响应）
@@ -626,6 +643,25 @@ extension FNOSNativeClient {
             if let bitDepth { parts.append("\(bitDepth)bit") }
             if let width, let height { parts.append("\(width)×\(height)") }
             return parts.isEmpty ? "未知" : parts.joined(separator: " · ")
+        }
+    }
+
+    /// 写入播放记录（v94 多端同步：POST /play/record {media_guid,item_guid,ts}）。
+    /// 协议来源：飞牛 Web 播放器 JS（RestartPlay → ts:0；ContinuePlay → ts:当前秒）。
+    /// 实测 200 {"code":0,"data":true} 且 GET /play/list 可见——兼容层 Sessions 空壳的替代通道。
+    func playRecord(mediaGUID: String, itemGUID: String, ts: Double) async -> Bool {
+        let body = "{\"media_guid\":\"\(Self.escape(mediaGUID))\",\"item_guid\":\"\(Self.escape(itemGUID))\",\"ts\":\(Int(ts))}"
+        do {
+            let json = try await post(path: "api/v1/play/record", body: body)
+            let ok = (json["code"] as? NSNumber)?.intValue == 0
+            if !ok {
+                FNOSDiag.shared.add("play/record 被拒: \(json["msg"] ?? "?")", dedupeKey: "rec.deny")
+            }
+            return ok
+        } catch {
+            print("FNOS❗️play/record 失败: \(error)")
+            FNOSDiag.shared.add("play/record 失败: \(error.localizedDescription)", dedupeKey: "rec.err")
+            return false
         }
     }
 

@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v93"
+    static let version = "v94"
 
     /// 本版主要变更摘要
-    static let changes = "v93 修继续播放卡进度条/剩余时间错误：飞牛同一响应里位置与时长的 tick 单位不一致（位置≈100ns、时长≈微秒），直接做比值必错。改为位置/时长各自按宽边界归一化成秒（100ns/微秒/毫秒/秒试探）再取比值，剩余时间统一用归一化后的最优时长；本机条目的时长基准同理（条目 ticks 归一化优先，播放器实测兜底）。多端同步需飞牛原生进度端点（兼容层 Sessions 为空壳已定案），待服务端探测后接入。"
+    static let changes = "v94（服务端探测定案，测试账号授权下的原生 API 探测）：①多端同步真通道——飞牛原生 POST /play/record {media_guid,item_guid,ts}（协议取自飞牛 Web 播放器 JS，实测 200 落库、GET /play/list 可见），播放器起播/每10s/停止三段上报全部切换到原生协议，兼容层 Sessions 空壳弃用；②评分实装——play/info 的 vote_average（飞牛刮削 TMDb 分）→ 详情页星级徽章；③色彩徽章增强——play/info 的 media_stream.color_range_type 直读（剧集可用），dv_profile 探测仍最高优先。测试账号密码可在飞牛后台修改，不影响已发版功能。"
 }

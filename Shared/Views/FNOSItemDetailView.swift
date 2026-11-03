@@ -47,6 +47,8 @@ struct FNOSItemDetailView: View {
 
     // v85 信息增强：色彩档位徽章（原生 /stream 探测）+ 评分（play/info 防御性解析）
     @State private var colorBadge: String?
+    // v94：飞牛刮削评分（play/info 的 vote_average，TMDb 系）
+    @State private var voteRating: Double?
     @State private var imdbRating: Double?
     @State private var doubanRating: Double?
     @State private var tomatoRating: Double?
@@ -290,10 +292,11 @@ struct FNOSItemDetailView: View {
         )
         guard let result else { return }
         colorBadge = result.badge
+        voteRating = result.vote
         imdbRating = result.imdb
         doubanRating = result.douban
         tomatoRating = result.tomato
-        print("FNOSℹ️Hero 增强: \(result.badge ?? "—") IMDb=\(result.imdb.map { String(format: "%.1f", $0) } ?? "—") 豆瓣=\(result.douban.map { String(format: "%.1f", $0) } ?? "—") 烂番茄=\(result.tomato.map { String(format: "%.0f%%", $0) } ?? "—")")
+        print("FNOSℹ️Hero 增强: \(result.badge ?? "—") 评分=\(result.vote.map { String(format: "%.1f", $0) } ?? "—") IMDb=\(result.imdb.map { String(format: "%.1f", $0) } ?? "—") 豆瓣=\(result.douban.map { String(format: "%.1f", $0) } ?? "—") 烂番茄=\(result.tomato.map { String(format: "%.0f%%", $0) } ?? "—")")
     }
 
     /// 评分胶囊（IMDb 黄 / 豆瓣 绿 / 烂番茄 红 —— 各家品牌色近似）
@@ -388,6 +391,19 @@ struct FNOSItemDetailView: View {
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
                             .background(RoundedRectangle(cornerRadius: 3).fill(Color.yellow))
+                    }
+                    // v94：飞牛刮削评分（vote_average，星级徽章）
+                    if let vote = voteRating {
+                        HStack(spacing: 4) {
+                            Image(systemName: "star.fill")
+                                .font(.system(size: 12))
+                            Text(String(format: "%.1f", vote))
+                                .font(.system(size: 14, weight: .bold))
+                        }
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(RoundedRectangle(cornerRadius: 4).fill(Color.yellow))
                     }
                     // v85：评分（有数据才显示；IMDb/豆瓣/烂番茄按品牌色胶囊）
                     if let imdb = imdbRating {

@@ -371,7 +371,7 @@ struct FNOSItem: Codable, Identifiable {
 }
 
 /// 播放进度（Jellyfin UserData 标准结构；/Items/Resume 默认返回）
-struct FNOSUserData: Decodable {
+struct FNOSUserData: Codable {
     let PlaybackPositionTicks: Int64?
     let PlayedPercentage: Double?
     let Played: Bool?

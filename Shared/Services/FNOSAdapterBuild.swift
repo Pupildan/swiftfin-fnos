@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v94"
+    static let version = "v95"
 
     /// 本版主要变更摘要
-    static let changes = "v94（服务端探测定案，测试账号授权下的原生 API 探测）：①多端同步真通道——飞牛原生 POST /play/record {media_guid,item_guid,ts}（协议取自飞牛 Web 播放器 JS，实测 200 落库、GET /play/list 可见），播放器起播/每10s/停止三段上报全部切换到原生协议，兼容层 Sessions 空壳弃用；②评分实装——play/info 的 vote_average（飞牛刮削 TMDb 分）→ 详情页星级徽章；③色彩徽章增强——play/info 的 media_stream.color_range_type 直读（剧集可用），dv_profile 探测仍最高优先。测试账号密码可在飞牛后台修改，不影响已发版功能。"
+    static let changes = "v95：①TV直播 / 古风热歌MV 数据行实装——服务端探测证实兼容层 /Items 对这两类库返回真空（/LiveTv 路由不存在），改走原生 item/list + ancestor_guid 过滤（实测 TV直播 81 频道 / 古风MV 文件条目），海报经原生 sys/img 鉴权直通；点击播放需原生直播流/文件直链协议，本版先出列表（点击给提示），播放接入下一版；②继续播放诊断加强：每条记录的秒数/比例/时长基准进全屏诊断。多端同步（原生 play/record 三段上报）与评分（vote_average 星级）v94 已实装。"
 }

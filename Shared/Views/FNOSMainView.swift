@@ -34,12 +34,14 @@ struct FNOSLibrarySection: Identifiable {
 
 /// 继续播放条目（v91）：服务端记录（多端）+ 本地记录兜底合并后的展示单元。
 /// startSeconds 非空 = 本机记录（直接按秒续播）；否则按 fraction（服务端 UserData 比例）。
-/// runtimeSeconds = v93 归一化后的最优时长（秒），进度条与剩余时间的统一基准。
+/// runtimeSeconds = v93 归一化后的最优时长（秒）；posSeconds = v95 归一化后的观看位置（秒），
+/// 剩余时间用 pos×(1-f)/f 反推——完全绕开时长字段的单位坑。
 struct FNOSResumeEntry: Identifiable {
     let item: FNOSItem
     let fraction: Double
     let startSeconds: Double?
     let runtimeSeconds: Double?
+    var posSeconds: Double? = nil
     var id: String { item.Id }
 }
 
@@ -58,6 +60,8 @@ struct FNOSMainView: View {
     @State private var userID = ""
 
     @State private var sections: [FNOSLibrarySection] = []
+    /// v95 原生客户端（TV直播/古风MV 数据行 + sys/img 鉴权头）
+    @State private var nativeClient: FNOSNativeClient?
     /// 继续播放（v91：服务端记录 + 本地记录兜底合并）；为空 → 行隐藏
     @State private var resumeEntries: [FNOSResumeEntry] = []
     @State private var isLoading = false
@@ -476,7 +480,9 @@ struct FNOSMainView: View {
                                         item: item,
                                         client: client,
                                         width: tileWidth,
-                                        isFocused: isFocused
+                                        isFocused: isFocused,
+                                        nativePosterURL: item.nativePosterURL,
+                                        nativeHeaders: nativeClient?.imageHeaders
                                     )
                                     .opacity(0)
                                 } else {
@@ -487,7 +493,9 @@ struct FNOSMainView: View {
                                         item: item,
                                         client: client,
                                         width: tileWidth,
-                                        isFocused: isFocused
+                                        isFocused: isFocused,
+                                        nativePosterURL: item.nativePosterURL,
+                                        nativeHeaders: nativeClient?.imageHeaders
                                     )
                                     .opacity(isInFlightWindow ? 0 : 1)
                                     .matchedGeometryEffect(id: item.Id, in: transitionNS)
@@ -579,10 +587,18 @@ struct FNOSMainView: View {
             if item.type == "Episode", let ep = item.IndexNumber {
                 parts.append("第\(ep)集")
             }
-            // v93：剩余时间统一用归一化后的最优时长（条目 ticks 归一化 → 播放器实测兜底）
-            if let runtime = entry.runtimeSeconds {
-                let remain = max(0, runtime * (1 - fraction))
-                parts.append("剩 " + Self.durationCN(remain))
+            // v95：剩余时间 = 位置 × (1-f)/f 反推——绕开时长字段的单位坑；
+            // 无位置时退回时长基准
+            let remain: Double?
+            if let pos = entry.posSeconds, fraction > 0.02 {
+                remain = pos * (1 - fraction) / fraction
+            } else if let runtime = entry.runtimeSeconds {
+                remain = runtime * (1 - fraction)
+            } else {
+                remain = nil
+            }
+            if let remain {
+                parts.append("剩 " + Self.durationCN(max(0, remain)))
             }
             return parts.joined(separator: " · ")
         }()
@@ -681,7 +697,7 @@ struct FNOSMainView: View {
                     ?? FNOSItem.secondsFromTicks(p.item.RunTimeTicks)
                     ?? (p.runtimeSeconds.flatMap { $0 > 60 ? $0 : nil })
                 let fraction = (runtime ?? 0) > 0 ? min(0.98, max(0.01, p.seconds / runtime!)) : 0
-                entries.append(FNOSResumeEntry(item: p.item, fraction: fraction, startSeconds: p.seconds, runtimeSeconds: runtime))
+                entries.append(FNOSResumeEntry(item: p.item, fraction: fraction, startSeconds: p.seconds, runtimeSeconds: runtime, posSeconds: p.seconds))
             }
             let localCount = entries.count
             // 2) 服务端多端记录补位（其他设备的进度）。
@@ -692,15 +708,26 @@ struct FNOSMainView: View {
                 let runtimeSec = FNOSItem.plausibleSeconds(ticks: item.RunTimeTicks, isEpisode: item.type == "Episode")
                     ?? FNOSItem.secondsFromTicks(item.RunTimeTicks)
                 var fraction = 0.0
-                if let posSec, let runtimeSec, runtimeSec > 0 {
-                    fraction = min(0.98, max(0.01, posSec / runtimeSec))
-                } else if let pct = item.UserData?.PlayedPercentage {
+                // v95：PlayedPercentage（服务端自算，天然一致）优先；tick 比值为兜底
+                if let pct = item.UserData?.PlayedPercentage, pct > 0, pct < 100 {
                     fraction = min(0.98, max(0.01, pct / 100))
+                } else if let posSec, let runtimeSec, runtimeSec > 0 {
+                    fraction = min(0.98, max(0.01, posSec / runtimeSec))
                 }
-                entries.append(FNOSResumeEntry(item: item, fraction: fraction, startSeconds: nil, runtimeSeconds: runtimeSec))
+                entries.append(FNOSResumeEntry(item: item, fraction: fraction, startSeconds: nil, runtimeSeconds: runtimeSec, posSeconds: posSec))
             }
             let serverCount = entries.count - localCount
             FNOSDiag.shared.add("继续播放合并: 本机\(localCount) + 服务端\(serverCount) → \(min(entries.count, 6)) 条")
+            // v95：前 3 条的数值基准进诊断（进度条/剩余时间争议的判决数据）
+            for e in entries.prefix(3) {
+                FNOSDiag.shared.add(String(
+                    format: "续播条目: %@ frac=%.2f pos=%@ runtime=%@",
+                    e.item.Name ?? "?",
+                    e.fraction,
+                    e.posSeconds.map { Int($0) }.map(String.init) ?? "-",
+                    e.runtimeSeconds.map { Int($0) }.map(String.init) ?? "-"
+                ))
+            }
             resumeEntries = Array(entries.prefix(6))
         }
     }
@@ -708,6 +735,11 @@ struct FNOSMainView: View {
     /// 海报墙卡片点击：起飞行层（方案 B+ v78）。
     /// 单次 withAnimation(.spring) 是底线 —— v62~v67 用 Task.sleep 分段动画导致卡顿割裂。
     private func openCard(item: FNOSItem) {
+        // v95：原生直通行（TV直播频道 / 古风MV 文件）——列表已接入，播放需原生直播流/文件直链协议（待接）
+        if item.nativePosterURL != nil {
+            showDiag("「\(item.Name ?? "?")」播放接入中——先看列表")
+            return
+        }
         guard let client else {
             print("FNOS❗️客户端未初始化，无法打开详情")
             return
@@ -951,6 +983,11 @@ struct FNOSMainView: View {
                 sections = loaded
             }
 
+            // v95：TV直播 / 古风热歌MV —— 兼容层 /Items 不桥接这两类库（服务端确认真空），
+            // 走原生 item/list + ancestor_guid 过滤；条目转 FNOSItem（海报走 sys/img 直通）。
+            await loadNativeSections(into: &loaded, libraries: libraries)
+            sections = loaded
+
             isLoading = false
             rollHeroIfNeeded()
             // Hero 快照只在此处（bootstrap / 下拉刷新）生成一次
@@ -960,6 +997,54 @@ struct FNOSMainView: View {
         } catch {
             isLoading = false
             print("FNOS❗️加载媒体库失败: \(error)")
+        }
+    }
+
+    /// v95：原生库数据行（TV直播=LiveChannel 频道、古风MV=Directory 文件）。
+    /// 库定位用兼容层 /Views 的名称匹配（其 Id == 原生 ancestor_guid，探测证实）。
+    @MainActor
+    private func loadNativeSections(into loaded: inout [FNOSLibrarySection], libraries: [FNOSLibrary]) async {
+        guard let credentials = FNOSAuthStore.shared.credentials,
+              let nativeToken = credentials.nativeToken, !nativeToken.isEmpty else { return }
+        let native = FNOSNativeClient(baseURL: credentials.serverURL, token: nativeToken)
+        nativeClient = native
+        let targets: [(keyword: String, label: String)] = [
+            ("直播", "TV直播"),
+            ("MV", "古风热歌MV"),
+        ]
+        for target in targets {
+            guard let lib = libraries.first(where: { ($0.Name ?? "").contains(target.keyword) }),
+                  loaded.first(where: { $0.id == lib.Id })?.items.isEmpty == true else { continue }
+            let natives = await native.listByAncestor(ancestorGUID: lib.Id, pageSize: 60)
+            let items: [FNOSItem] = natives.compactMap { li in
+                let cleanTitle = li.title
+                    .replacingOccurrences(of: ".mp4", with: "")
+                    .replacingOccurrences(of: ".mkv", with: "")
+                guard !cleanTitle.isEmpty else { return nil }
+                let poster = native.posterImageURL(posterPath: li.posterPath)?.absoluteString
+                return FNOSItem(
+                    Id: li.guid,
+                    Name: cleanTitle,
+                    ItemType: "Video",
+                    ProductionYear: nil,
+                    Overview: nil,
+                    ImageTags: nil,
+                    BackdropImageTags: nil,
+                    RunTimeTicks: li.durationSeconds.map { Int64($0 * 1_000_000) },
+                    OfficialRating: nil,
+                    Genres: nil,
+                    ParentIndexNumber: nil,
+                    IndexNumber: nil,
+                    PremiereDate: nil,
+                    SeriesName: nil,
+                    SeriesId: nil,
+                    People: nil,
+                    UserData: nil,
+                    nativePosterURL: poster
+                )
+            }
+            loaded.append(FNOSLibrarySection(library: lib, items: items))
+            FNOSDiag.shared.add("原生库「\(target.label)」\(items.count) 条")
         }
     }
 
@@ -1374,17 +1459,28 @@ fileprivate struct FNOSPosterTile: View {
     let width: CGFloat
     /// 保留入参以兼容既有调用点；焦点视觉已由 .card 接管（当前未使用）
     let isFocused: Bool
+    /// v95 原生条目直通海报（TV直播/古风MV；nil = 走 compat posterURL）
+    var nativePosterURL: String? = nil
+    var nativeHeaders: [String: String]? = nil
 
     private var height: CGFloat { width * 3 / 2 }
     private var cornerRadius: CGFloat { 14 }
 
+    private var posterURL: URL? {
+        if let nativePosterURL, !nativePosterURL.isEmpty {
+            return URL(string: nativePosterURL)
+        }
+        return client?.posterURL(itemID: item.Id, tag: item.ImageTags?["Primary"])
+    }
+
+    private var posterHeaders: [String: String] {
+        nativeHeaders ?? client?.mediaHeaders ?? [:]
+    }
+
     var body: some View {
         FNOSAsyncImage(
-            url: client?.posterURL(
-                itemID: item.Id,
-                tag: item.ImageTags?["Primary"]
-            ),
-            headers: client?.mediaHeaders ?? [:],
+            url: posterURL,
+            headers: posterHeaders,
             usePosterCache: true
         )
         .frame(width: width, height: height)

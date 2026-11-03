@@ -158,6 +158,45 @@ final class FNOSNativeClient {
         return url
     }
 
+    /// 海报/剧照 URL（走 sys/img，需要 Authx 头）——v95 原生库行（TV直播/古风MV）用
+    func posterImageURL(posterPath: String, width: Int = 600) -> URL? {
+        guard !posterPath.isEmpty else { return nil }
+        let base = baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return URL(string: "\(base)/v/api/v1/sys/img\(posterPath)?w=\(width)")
+    }
+
+    /// v95 原生 item/list 单条（TV直播=LiveChannel、古风MV=Directory 文件）
+    struct FNOSNativeListItem {
+        let guid: String
+        let title: String
+        let type: String
+        let posterPath: String
+        let durationSeconds: Double?
+    }
+
+    /// 按库（ancestor_guid=兼容层库 Id）列原生条目。实测：TV直播 81 频道（LiveChannel）、
+    /// 古风MV 为 Directory 文件条目；兼容层 /Items 对这两类库返回空，必须走原生。
+    func listByAncestor(ancestorGUID: String, pageSize: Int = 60) async -> [FNOSNativeListItem] {
+        let body = "{\"ancestor_guid\":\"\(Self.escape(ancestorGUID))\",\"page\":1,\"page_size\":\(pageSize)}"
+        do {
+            let json = try await post(path: "api/v1/item/list", body: body)
+            let list = (json["data"] as? [String: Any])?["list"] as? [[String: Any]] ?? []
+            return list.compactMap { d in
+                guard let guid = d["guid"] as? String, !guid.isEmpty else { return nil }
+                return FNOSNativeListItem(
+                    guid: guid,
+                    title: d["title"] as? String ?? "",
+                    type: d["type"] as? String ?? "",
+                    posterPath: d["poster"] as? String ?? "",
+                    durationSeconds: (d["duration"] as? NSNumber).map { $0.doubleValue }
+                )
+            }
+        } catch {
+            FNOSDiag.shared.add("原生 listByAncestor 失败: \(error.localizedDescription)", dedupeKey: "anc.\(ancestorGUID)")
+            return []
+        }
+    }
+
     /// 头像/图片请求头（Authx 用 sys/img 路径签名，body 为空）
     var imageHeaders: [String: String] {
         [

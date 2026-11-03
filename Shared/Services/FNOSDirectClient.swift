@@ -355,6 +355,8 @@ struct FNOSItem: Codable, Identifiable {
     let UserData: FNOSUserData?
     // 所属剧 Id（剧集续播：剧→最近集映射用）
     let SeriesId: String?
+    // v95 原生条目直通海报（sys/img 完整 URL；仅 TV直播/古风MV 等原生行使用）
+    let nativePosterURL: String?
 
     var id: String { Id }
     var type: String? { ItemType }
@@ -366,7 +368,7 @@ struct FNOSItem: Codable, Identifiable {
         case ProductionYear, Overview, ImageTags, BackdropImageTags
         case RunTimeTicks, OfficialRating, Genres
         case ParentIndexNumber, IndexNumber, PremiereDate, SeriesName, SeriesId
-        case People, UserData
+        case People, UserData, nativePosterURL
     }
 }
 

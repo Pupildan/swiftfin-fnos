@@ -192,6 +192,13 @@ struct FNOSMainView: View {
                 if let flight {
                     FNOSDetailFlightOverlay(ctx: flight, ns: transitionNS)
                         .zIndex(30)
+                        // v83 关键修复：正向飞行层在 withAnimation(spring) 事务内插入，
+                        // SwiftUI 默认给新视图套 .opacity 过渡 → 整层（含行副本）从 0 淡入
+                        // ~0.45s，副本未显形就被放大的横图盖住 → 「进入时同行不参与动画」。
+                        // 反向是在 nil 动画事务里插入的（无过渡）→ 反而正常，正好印证。
+                        // .identity = 插入帧即全量渲染；matched 几何插值不受影响
+                        //（那是 GeometryEffect，不是 transition）。
+                        .transition(.identity)
                         .onExitCommand { cancelFlight() }
                 }
 
@@ -516,8 +523,7 @@ struct FNOSMainView: View {
             openDetailDirect(item: item)
             return
         }
-        // v81 诊断：确认走飞行分支（若用户看到 ✓起跳 但仍无动画 → 是飞行层渲染问题）
-        showDiag("✓起跳(\(flightResult.reason))", duration: 1.2)
+        // v83：✓起跳诊断 toast 已撤（动画链路已验收）；⚠️退化直出的失败路径诊断保留
         lastOpenedCardID = item.Id
         lastFlightCtx = ctx   // v82：Menu 反向缩回需要起跳时的同一份几何上下文
         withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {

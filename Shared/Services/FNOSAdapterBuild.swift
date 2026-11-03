@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v82"
+    static let version = "v83"
 
     /// 本版主要变更摘要
-    static let changes = "v82 新增返回反向缩回动画 + 修同行推出不可见：①详情页 Menu 改由 cover 内容内 onExitCommand 拦截（可靠，Demo 同款），有卡片来源时走反向飞行——横图全屏单段弹簧缩回卡片 + 行副本 3→1 + 压暗淡出，与 Demo 反向缩回一致；Hero 来源走系统默认收场。②正向行副本 1→3 起跳由 async(0) 改 asyncAfter(0.05)——真机上 async(0) 仍可能与插入事务合并致首帧即 3 倍（推出效果不可见）。③反向不用 matched（cover 与主树不共享命名空间），用显式 frame/position/圆角插值。"
+    static let changes = "v83 修「进入时同行不参与动画」：正向飞行层在 spring 事务内插入被 SwiftUI 默认套 .opacity 过渡，整层（含行副本）从 0 淡入，副本未显形即被放大的横图盖住；反向在 nil 动画事务内插入无过渡故正常（不对称现象的根源）。飞行层显式 .transition(.identity) 插入帧即全量渲染，matched 几何插值不受影响；撤去每次起跳的 ✓ 诊断 toast（失败路径 ⚠️ 保留）。"
 }

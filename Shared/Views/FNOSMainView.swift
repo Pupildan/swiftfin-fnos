@@ -748,6 +748,7 @@ struct FNOSMainView: View {
 
     /// v96：原生条目直接播放（直播频道：play/info → media_guid → mpv media/range 直链）
     private func playNativeDirect(item: FNOSItem) {
+        guard let client else { return }
         lastOpenedCardID = nil
         lastFlightCtx = nil
         FNOSDiag.shared.add("直播播放: \(item.Name ?? "?")（原生直链）")

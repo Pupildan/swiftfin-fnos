@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v80"
+    static let version = "v81"
 
     /// 本版主要变更摘要
-    static let changes = "v80 修复：①详情页返回高概率丢焦点——cover 展示期间不再 disabled 主页（仅飞行期禁用），保住焦点引擎的归还锚点；closeDetail 焦点恢复由单发 0.18s 改为 0.1/0.3/0.6/1.0s 多次幂等兜底。②同行海报不参与动画——行副本 scaleEffect 锚点坐标系错误（.position 包装视图占满全屏，anchor 须按全屏比例而非副本内部占比），改为焦点卡真实屏幕中心占比；行副本 1→3 缩放由 onAppear 同步设置（会被插入事务合并→首帧即 3.0，邻居凭空消失）改为隔帧起弹簧；窗口 ±3 放宽到 ±6 并抽成共享常量 windowHalf，主页隐藏窗口与飞行层副本保证同宽。"
+    static let changes = "v81 修复「详情过渡动画消失」：根因锁定为 v78 起的行级 frame 捕获（LazyHStack background preference）在真机上疑似不触发，飞行上下文恒为空 → 每次点卡片都静默退化直出。现改为双层来源：卡片级 GeometryReader 实时捕获（焦点卡点按瞬间必可见，frame 最新鲜）为主，行级推算为兜底；新增屏显诊断 toast（⚠️退化直出+缺失项 / ✓起跳+frame 来源），确认根因后 v82 移除。v80 的返回焦点与行副本锚点修复保留。"
 }

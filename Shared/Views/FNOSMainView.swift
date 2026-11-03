@@ -61,6 +61,10 @@ struct FNOSMainView: View {
     /// 非响应式引用类型：滚动时只写不触发重渲染（避免海报墙滚动掉帧）。
     @State private var rowFrames = FNOSRowFrameStore()
 
+    // v81 屏显诊断（真机无控制台；确认根因后 v82 移除）
+    @State private var diagMessage: String?
+    @State private var diagToken = 0
+
     // 首页设置面板（刷新/退出集成在内）
     @State private var showSettings = false
     // 设置按钮焦点（与 Hero 按钮同一套视觉）
@@ -187,6 +191,21 @@ struct FNOSMainView: View {
                     FNOSDetailFlightOverlay(ctx: flight, ns: transitionNS)
                         .zIndex(30)
                         .onExitCommand { cancelFlight() }
+                }
+
+                // v81 诊断 toast（zIndex 40 高于飞行层：起跳确认不被动画盖住；
+                // cover 呈现后属主视图内容，被系统呈现层自然盖住，无碍）
+                if let diag = diagMessage {
+                    Text(diag)
+                        .font(.system(size: 20, weight: .semibold, design: .monospaced))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 18)
+                        .padding(.vertical, 10)
+                        .background(Color.red.opacity(0.85), in: RoundedRectangle(cornerRadius: 10))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                        .padding(36)
+                        .allowsHitTesting(false)
+                        .zIndex(40)
                 }
             }
         }
@@ -436,6 +455,16 @@ struct FNOSMainView: View {
                         .buttonStyle(FNOSBareButtonStyle())
                         // 每张卡注册独立焦点值（条目 Id 唯一，避免 Bool 歧义），供下键直达
                         .focused($shelfCardFocused, equals: item.Id)
+                        // v81：卡片级全局 frame 捕获（起跳 frame 的主来源）。焦点卡点按
+                        // 瞬间必然可见，GeometryReader 必然已上报最新 frame（含滚动偏移）。
+                        .background(
+                            GeometryReader { g in
+                                Color.clear.preference(
+                                    key: FNOSCardFrameKey.self,
+                                    value: [item.Id: g.frame(in: .global)]
+                                )
+                            }
+                        )
                     }
                 }
                 // 行内容 frame 捕获（全局坐标，含水平滚动偏移）：
@@ -456,6 +485,11 @@ struct FNOSMainView: View {
                 .onPreferenceChange(FNOSRowContentFrameKey.self) { frame in
                     rowFrames.frames[section.id] = frame
                 }
+                // v81：卡片级 frame 汇总。可见卡各自上报，reduce 合并为整行可见字典；
+                // 直接覆盖写即可——点按瞬间焦点卡必在可见集合里，frame 必新鲜。
+                .onPreferenceChange(FNOSCardFrameKey.self) { dict in
+                    rowFrames.cardFrames[section.id] = dict
+                }
             }
             .focusEffectDisabled()
         }
@@ -471,12 +505,16 @@ struct FNOSMainView: View {
             print("FNOS❗️客户端未初始化，无法打开详情")
             return
         }
-        guard let ctx = buildFlightContext(item: item, client: client) else {
-            // 找不到行/frame（理论不该发生）：退化直出详情，保证不卡死
-            print("FNOS❗️未取到飞行上下文，退化直出详情: \(item.Name ?? "?")")
+        let flightResult = buildFlightContext(item: item, client: client)
+        guard let ctx = flightResult.ctx else {
+            // 找不到行/frame：退化直出详情保证不卡死；屏显原因（v81 诊断，真机无控制台）
+            print("FNOS❗️未取到飞行上下文(\(flightResult.reason))，退化直出详情: \(item.Name ?? "?")")
+            showDiag("⚠️退化直出：\(flightResult.reason)")
             openDetailDirect(item: item)
             return
         }
+        // v81 诊断：确认走飞行分支（若用户看到 ✓起跳 但仍无动画 → 是飞行层渲染问题）
+        showDiag("✓起跳(\(flightResult.reason))", duration: 1.2)
         lastOpenedCardID = item.Id
         withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
             flight = ctx
@@ -498,25 +536,39 @@ struct FNOSMainView: View {
         print("FNOSℹ️详情过渡起跳: \(item.Name ?? "?")")
     }
 
-    /// 构造飞行上下文：定位条目所在行、取行内容 frame、算焦点卡 frame、组装行副本数据。
-    private func buildFlightContext(item: FNOSItem, client: FNOSDirectClient) -> FNOSDetailFlightContext? {
-        guard let section = sections.first(where: { $0.items.contains(where: { $0.Id == item.Id }) }),
-              let rowIndex = section.items.firstIndex(where: { $0.Id == item.Id }),
-              let contentFrame = rowFrames.frames[section.id],
-              contentFrame != .zero,
-              let tileWidth = rowFrames.tileWidths[section.id] else {
-            return nil
+    /// 构造飞行上下文：定位条目所在行，取焦点卡 frame，组装行副本数据。
+    /// v81：frame 来源改双层——「卡片级实时捕获为主 + 行级推算兜底」，并返回失败原因
+    /// （真机无控制台，退化直出时屏显诊断）。v80 实测真机恒退化直出（动画消失），
+    /// 主嫌疑是行级 LazyHStack background preference 不触发 → 行 frame 永远缺失；
+    /// 而卡片级 background GeometryReader 在点按瞬间必然已上报（焦点卡必可见）。
+    private func buildFlightContext(item: FNOSItem, client: FNOSDirectClient) -> (ctx: FNOSDetailFlightContext?, reason: String) {
+        guard let section = sections.first(where: { $0.items.contains(where: { $0.Id == item.Id }) }) else {
+            return (nil, "未找到所在行")
         }
-        let spacing: CGFloat = 28
-        let hPadding: CGFloat = 72
-        let tileH = tileWidth * 1.5
-        let focusFrame = CGRect(
-            x: contentFrame.minX + CGFloat(rowIndex) * (tileWidth + spacing),
-            y: contentFrame.minY,
-            width: tileWidth,
-            height: tileH
-        )
-        return FNOSDetailFlightContext(
+        guard let rowIndex = section.items.firstIndex(where: { $0.Id == item.Id }) else {
+            return (nil, "行内无下标")
+        }
+        // 主来源：卡片级实时 frame（含水平滚动偏移，最新鲜）
+        let cardFrame = rowFrames.cardFrames[section.id]?[item.Id]
+        // 兜底：行内容 frame + 下标推算（v78 原逻辑；行级 preference 真机疑似不触发）
+        var computed: CGRect?
+        if let contentFrame = rowFrames.frames[section.id], contentFrame != .zero,
+           let tileW = rowFrames.tileWidths[section.id] {
+            computed = CGRect(
+                x: contentFrame.minX + CGFloat(rowIndex) * (tileW + 28),
+                y: contentFrame.minY,
+                width: tileW,
+                height: tileW * 1.5
+            )
+        }
+        guard let focusFrame = cardFrame ?? computed, focusFrame != .zero,
+              let tileWidth = rowFrames.tileWidths[section.id] ?? cardFrame.map({ $0.width }) else {
+            let hasRow = rowFrames.frames[section.id] != nil
+            let hasTile = rowFrames.tileWidths[section.id] != nil
+            let hasCard = cardFrame != nil
+            return (nil, "帧缺失 row=\(hasRow) tile=\(hasTile) card=\(hasCard)")
+        }
+        return (FNOSDetailFlightContext(
             item: item,
             client: client,
             userID: userID,
@@ -524,10 +576,10 @@ struct FNOSMainView: View {
             rowItems: section.items,
             focusIndex: rowIndex,
             tileWidth: tileWidth,
-            spacing: spacing,
-            hPadding: hPadding,
+            spacing: 28,
+            hPadding: 72,
             focusCardFrame: focusFrame
-        )
+        ), cardFrame != nil ? "card-frame" : "row-frame")
     }
 
     /// Hero 详情入口（无卡片可起跳，直接出详情页，不走飞行动画）
@@ -559,6 +611,16 @@ struct FNOSMainView: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
                 shelfCardFocused = returning
             }
+        }
+    }
+
+    /// v81 屏显诊断 toast：真机无控制台，用短命 toast 区分「退化直出」与「已起跳」。
+    private func showDiag(_ msg: String, duration: Double = 2.5) {
+        diagToken += 1
+        let token = diagToken
+        diagMessage = msg
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
+            if diagToken == token { diagMessage = nil }
         }
     }
 
@@ -1561,12 +1623,25 @@ struct FNOSDetailFlightContext {
 final class FNOSRowFrameStore {
     var frames: [String: CGRect] = [:]        // section.id -> LazyHStack 内容 frame（全局）
     var tileWidths: [String: CGFloat] = [:]   // section.id -> tileWidth
+    // v81：卡片级实时捕获（section.id -> [item.Id: 卡片全局 frame]）。
+    // 行级 background preference 在真机上疑似不触发（v80 实测恒退化直出），
+    // 而焦点卡点按瞬间必然可见、其卡片级 GeometryReader 必然已上报——最可靠来源。
+    var cardFrames: [String: [String: CGRect]] = [:]
 }
 
 /// 行内容 frame 的 preference key
 struct FNOSRowContentFrameKey: PreferenceKey {
     static var defaultValue: CGRect = .zero
     static func reduce(value: inout CGRect, nextValue: () -> CGRect) { value = nextValue() }
+}
+
+/// v81 卡片级 frame 的 preference key：每张可见卡上报 [item.Id: 全局 frame]，
+/// reduce 合并为整行可见卡的字典。焦点卡点按瞬间必然可见 → frame 必然存在。
+struct FNOSCardFrameKey: PreferenceKey {
+    static var defaultValue: [String: CGRect] = [:]
+    static func reduce(value: inout [String: CGRect], nextValue: () -> [String: CGRect]) {
+        value.merge(nextValue()) { _, new in new }
+    }
 }
 
 struct FNOSDetailFlightOverlay: View {

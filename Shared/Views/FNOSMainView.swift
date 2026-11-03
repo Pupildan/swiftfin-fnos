@@ -683,18 +683,16 @@ struct FNOSMainView: View {
             }
             let localCount = entries.count
             // 2) 服务端多端记录补位（其他设备的进度；UserData 位置/时长同响应，比值与飞牛 tick 单位无关）
-            if let client {
-                for item in await client.fetchResumeItems(userID: userID, limit: 6) {
-                    guard seen.insert(item.Id).inserted else { continue }
-                    var fraction = 0.0
-                    if let pos = item.UserData?.PlaybackPositionTicks, pos > 0,
-                       let runtime = item.RunTimeTicks, runtime > 0 {
-                        fraction = min(0.98, max(0.01, Double(pos) / Double(runtime)))
-                    } else if let pct = item.UserData?.PlayedPercentage {
-                        fraction = min(0.98, max(0.01, pct / 100))
-                    }
-                    entries.append(FNOSResumeEntry(item: item, fraction: fraction, startSeconds: nil))
+            for item in await client.fetchResumeItems(userID: userID, limit: 6) {
+                guard seen.insert(item.Id).inserted else { continue }
+                var fraction = 0.0
+                if let pos = item.UserData?.PlaybackPositionTicks, pos > 0,
+                   let runtime = item.RunTimeTicks, runtime > 0 {
+                    fraction = min(0.98, max(0.01, Double(pos) / Double(runtime)))
+                } else if let pct = item.UserData?.PlayedPercentage {
+                    fraction = min(0.98, max(0.01, pct / 100))
                 }
+                entries.append(FNOSResumeEntry(item: item, fraction: fraction, startSeconds: nil))
             }
             let serverCount = entries.count - localCount
             FNOSDiag.shared.add("继续播放合并: 本机\(localCount) + 服务端\(serverCount) → \(min(entries.count, 6)) 条")

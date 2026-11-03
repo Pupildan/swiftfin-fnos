@@ -96,7 +96,7 @@ struct FNOSMPVPlayerView: View {
         range: FNOSNativeClient.MediaRange,
         initialSeek: Double? = nil,
         autoSelected: Bool = false,
-        onProgress: ((Double) -> Void)? = nil,
+        onProgress: ((Double, Double) -> Void)? = nil,
         onExit: @escaping () -> Void
     ) {
         self.item = item

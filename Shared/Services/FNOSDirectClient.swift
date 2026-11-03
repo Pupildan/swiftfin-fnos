@@ -330,7 +330,7 @@ struct FNOSItemsEnvelope: Decodable {
     let Items: [FNOSItem]
 }
 
-struct FNOSItem: Decodable, Identifiable {
+struct FNOSItem: Codable, Identifiable {
     let Id: String
     let Name: String?
     let ItemType: String?
@@ -378,7 +378,7 @@ struct FNOSUserData: Decodable {
 }
 
 /// 条目上的演职人员（Jellyfin BaseItemPerson 结构）
-struct FNOSPeopleEntry: Decodable {
+struct FNOSPeopleEntry: Codable {
     let Name: String?
     let Id: String?
     let Role: String?

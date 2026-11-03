@@ -87,12 +87,29 @@ extension FNOSDirectClient {
 final class FNOSImageCache {
     static let shared = FNOSImageCache()
 
+    /// 通用缓存：1920 横图 / 剧照 / 头像等大图。v84 加成本核算（压缩字节）+
+    /// totalCostLimit——详情页每 2s 轮播一张 ~8MB 解码横图，此前 countLimit=400
+    /// 的混合缓存反复进出详情后把海报墙的图全部挤出 → 返回时整墙「黑色转圈」重载。
     let memory: NSCache<NSString, UIImage>
+
+    /// v84 海报专用缓存：海报墙瓦片 / 行副本 / 选集卡（~0.1-1MB/张，按张数管理）。
+    /// 与大图缓存完全隔离——详情页横图轮播的内存churn永远不会挤掉海报，
+    /// 且这是反复进出详情不转圈的硬保证（NSCache 的内存警告驱逐只波及大图侧）。
+    let posters: NSCache<NSString, UIImage>
 
     private init() {
         let cache = NSCache<NSString, UIImage>()
         cache.countLimit = 400
+        cache.totalCostLimit = 80 * 1024 * 1024   // 80MB（按压缩字节计成本）
         memory = cache
+
+        let posterCache = NSCache<NSString, UIImage>()
+        posterCache.countLimit = 300
+        posters = posterCache
+    }
+
+    func cache(forPoster: Bool) -> NSCache<NSString, UIImage> {
+        forPoster ? posters : memory
     }
 }
 
@@ -103,6 +120,9 @@ struct FNOSAsyncImage: View {
     let url: URL?
     let headers: [String: String]
     var contentMode: ContentMode = .fill
+    /// v84：海报类小图走独立 posters 缓存（海报墙/行副本/选集卡传 true），
+    /// 与 1920 横图通用缓存隔离，杜绝互相挤兑。
+    var usePosterCache: Bool = false
 
     private enum Phase {
         case loading, loaded, failed
@@ -112,25 +132,33 @@ struct FNOSAsyncImage: View {
     @State private var phase: Phase = .loading
 
     var body: some View {
-        ZStack {
-            switch phase {
-            case .loading:
-                Rectangle()
-                    .fill(Color.white.opacity(0.06))
-                ProgressView()
-            case .failed:
+        // v84：首帧同步查缓存。视图被重建时（从详情返回海报墙、行副本插入等），
+        // .task 是异步的——此前哪怕缓存命中也要先渲染一帧 loading（黑底转圈）。
+        // body 内同步查一次：命中则第一帧直接出图，转圈彻底消失。
+        let syncCached: UIImage? = (phase != .loaded)
+            ? url.flatMap {
+                FNOSImageCache.shared.cache(forPoster: usePosterCache)
+                    .object(forKey: $0.absoluteString as NSString)
+            }
+            : nil
+        let resolvedImage = image ?? syncCached
+        let resolvedLoaded = phase == .loaded || (syncCached != nil && phase == .loading)
+        return ZStack {
+            if resolvedLoaded, let resolvedImage {
+                Image(uiImage: resolvedImage)
+                    .resizable()
+                    .aspectRatio(contentMode: contentMode)
+                    .transition(.opacity)
+            } else if phase == .failed {
                 Rectangle()
                     .fill(Color.white.opacity(0.06))
                 Image(systemName: "film")
                     .font(.title2)
                     .foregroundColor(.white.opacity(0.35))
-            case .loaded:
-                if let image {
-                    Image(uiImage: image)
-                        .resizable()
-                        .aspectRatio(contentMode: contentMode)
-                        .transition(.opacity)
-                }
+            } else {
+                Rectangle()
+                    .fill(Color.white.opacity(0.06))
+                ProgressView()
             }
         }
         .animation(.easeOut(duration: 0.25), value: phase)
@@ -152,7 +180,8 @@ struct FNOSAsyncImage: View {
         // 注意：SwiftUI View 是值类型，异步返回后 self.url 仍是调用时的快照，
         // 判断「URL 是否已变」只能靠 .task(id: url) 的取消机制（Task.isCancelled）。
         let key = url.absoluteString as NSString
-        if let cached = FNOSImageCache.shared.memory.object(forKey: key) {
+        let cache = FNOSImageCache.shared.cache(forPoster: usePosterCache)
+        if let cached = cache.object(forKey: key) {
             guard !Task.isCancelled else { return }
             image = cached
             phase = .loaded
@@ -192,7 +221,9 @@ struct FNOSAsyncImage: View {
                 throw FNOSDirectError("海报解码失败: \(url.absoluteString)")
             }
 
-            FNOSImageCache.shared.memory.setObject(decoded, forKey: key)
+            // v84：cost = 压缩字节数。通用缓存按成本驱逐（1920 横图远重于海报），
+            // 防止详情页轮播大图把缓存挤爆；海报缓存按张数管理（cost 被忽略）
+            cache.setObject(decoded, forKey: key, cost: data.count)
             // 过期结果丢弃：url 已变（.task 被取消）时不要覆盖当前视图
             guard !Task.isCancelled else { return }
             image = decoded

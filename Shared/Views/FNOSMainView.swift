@@ -1158,7 +1158,8 @@ fileprivate struct FNOSPosterTile: View {
                 itemID: item.Id,
                 tag: item.ImageTags?["Primary"]
             ),
-            headers: client?.mediaHeaders ?? [:]
+            headers: client?.mediaHeaders ?? [:],
+            usePosterCache: true
         )
         .frame(width: width, height: height)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
@@ -1182,7 +1183,8 @@ fileprivate struct FNOSItemCard: View {
                     itemID: item.Id,
                     tag: item.ImageTags?["Primary"]
                 ),
-                headers: client?.mediaHeaders ?? [:]
+                headers: client?.mediaHeaders ?? [:],
+                usePosterCache: true
             )
             .aspectRatio(2 / 3, contentMode: .fit)
             .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -1477,7 +1479,8 @@ struct FNOSHeroTransitionDemo: View {
     private func cardPoster(_ item: FNOSItem) -> some View {
         FNOSAsyncImage(
             url: client?.posterURL(itemID: item.Id, tag: item.ImageTags?["Primary"]),
-            headers: client?.mediaHeaders ?? [:]
+            headers: client?.mediaHeaders ?? [:],
+            usePosterCache: true
         )
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
@@ -1840,10 +1843,14 @@ struct FNOSDetailFlightOverlay: View {
                     }
                 }
             } else {
-                // 行副本 1→3：v81 用 async(0)，真机上仍可能与插入事务合并（首帧即 3.0
-                // → 推出效果不可见）。v82 改 asyncAfter(0.05) 稳出插入事务，保证真实插值。
+                // 行副本 1→3：v84 关键修复——弹簧从 0.45 提速到 0.26。
+                // 机理：横图边缘（matched，0.45 弹簧）与邻居（副本）同速后退时，
+                // 相对运动≈0，肉眼看不到「推出」；邻居跑得比图像边缘快一倍，
+                // 差距瞬间拉大，推出动作才可见（这正是 ATV 的行为：行快速让位，
+                // 图像随后铺开）。仍是单段连续弹簧，无分段。反向保持 0.45 不动
+                //（反向横图往里缩、行往回收，相对运动天然巨大，用户已验收）。
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                    withAnimation(.spring(response: 0.45, dampingFraction: 0.86)) {
+                    withAnimation(.spring(response: 0.26, dampingFraction: 0.86)) {
                         rowScale = 3.0
                     }
                 }
@@ -1885,7 +1892,8 @@ struct FNOSDetailFlightOverlay: View {
             ForEach(win) { w in
                 FNOSAsyncImage(
                     url: ctx.client?.posterURL(itemID: w.Id, tag: w.ImageTags?["Primary"]),
-                    headers: ctx.client?.mediaHeaders ?? [:]
+                    headers: ctx.client?.mediaHeaders ?? [:],
+                    usePosterCache: true
                 )
                 .frame(width: tileW, height: tileH)
                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))

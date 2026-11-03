@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v83"
+    static let version = "v84"
 
     /// 本版主要变更摘要
-    static let changes = "v83 修「进入时同行不参与动画」：正向飞行层在 spring 事务内插入被 SwiftUI 默认套 .opacity 过渡，整层（含行副本）从 0 淡入，副本未显形即被放大的横图盖住；反向在 nil 动画事务内插入无过渡故正常（不对称现象的根源）。飞行层显式 .transition(.identity) 插入帧即全量渲染，matched 几何插值不受影响；撤去每次起跳的 ✓ 诊断 toast（失败路径 ⚠️ 保留）。"
+    static let changes = "v84 收官版：①进入同行推出不可见的真机理——副本与横图边缘同用 0.45 弹簧，同速后退相对运动≈0（反向横图内缩、相对运动大故可见）；正向副本弹簧提速到 0.26，邻居跑赢图像边缘一倍，推出动作清晰可见（ATV 同款：行快速让位、图像随后铺开）。②反复进出详情海报黑色转圈——原单一混合缓存（countLimit=400）被详情页 2s 轮播的 ~8MB 横图挤爆：海报改独立缓存（300 张，与大图完全隔离）+ 通用缓存按压缩字节成本驱逐（80MB）+ FNOSAsyncImage 首帧同步查缓存（视图重建不再闪 loading）。"
 }

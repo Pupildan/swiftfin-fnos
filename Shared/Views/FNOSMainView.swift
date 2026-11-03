@@ -22,6 +22,8 @@ struct FNOSPlaybackTarget: Identifiable {
     var startFraction: Double? = nil
     /// 继续播放起点（秒，v91 直通——绕开条目 RunTimeTicks 缺失导致的换算失败）
     var startSeconds: Double? = nil
+    /// v96 原生直通条目（直播频道等）：播放器走原生 play/info → media/range 直链（mpv）
+    var nativeItemGUID: String? = nil
 }
 
 /// 单个媒体库的横向海报墙数据
@@ -260,7 +262,8 @@ struct FNOSMainView: View {
                 seriesName: target.seriesName,
                 seriesID: target.seriesID,
                 startFraction: target.startFraction,
-                startSeconds: target.startSeconds
+                startSeconds: target.startSeconds,
+                nativeItemGUID: target.nativeItemGUID
             )
         }
         // 详情页走 fullScreenCover（系统原生处理 Menu，可靠关闭，v77 嵌入已回滚）。
@@ -690,22 +693,33 @@ struct FNOSMainView: View {
             var seen = Set<String>()
             // 1) 本机记录（>30s 才上榜）：直接解码完整条目（单集自带海报/集号）——
             //    不从海报墙反查：单集不在条目池里，反查会漏掉所有剧集记录。
-            //    v93：时长基准 = 条目 ticks 归一化优先，播放器实测时长兜底（早期 totalTime 可能为 0）
+            //    v96：时长基准重排——播放器实测时长（ totalTime，秒，最可靠）优先，
+            //    条目 ticks 归一化次之（兼容层时长 ticks 不可信，诊断证实 runtime=100/42 垃圾值）
             for p in FNOSProgressStore.localList() {
                 guard seen.insert(p.item.Id).inserted, p.seconds > 30 else { continue }
-                let runtime = FNOSItem.plausibleSeconds(ticks: p.item.RunTimeTicks, isEpisode: p.item.type == "Episode")
+                let runtime = (p.runtimeSeconds.flatMap { $0 > 60 ? $0 : nil })
+                    ?? FNOSItem.plausibleSeconds(ticks: p.item.RunTimeTicks, isEpisode: p.item.type == "Episode")
                     ?? FNOSItem.secondsFromTicks(p.item.RunTimeTicks)
-                    ?? (p.runtimeSeconds.flatMap { $0 > 60 ? $0 : nil })
                 let fraction = (runtime ?? 0) > 0 ? min(0.98, max(0.01, p.seconds / runtime!)) : 0
                 entries.append(FNOSResumeEntry(item: p.item, fraction: fraction, startSeconds: p.seconds, runtimeSeconds: runtime, posSeconds: p.seconds))
             }
             let localCount = entries.count
             // 2) 服务端多端记录补位（其他设备的进度）。
-            //    v93：位置/时长各自按宽边界归一化成秒再取比值——两个字段单位可能不一致
+            //    v96：时长基准优先用原生 /play/list 的 duration（秒，唯一可靠来源，
+            //    按标题匹配）——兼容层 Resume 条目的 RunTimeTicks 已证实是垃圾值
+            var nativeDurationByTitle: [String: Double] = [:]
+            if let credentials = FNOSAuthStore.shared.credentials,
+               let nativeToken = credentials.nativeToken, !nativeToken.isEmpty {
+                let native = FNOSNativeClient(baseURL: credentials.serverURL, token: nativeToken)
+                for rec in await native.playList() {
+                    if rec.duration > 0 { nativeDurationByTitle[rec.title] = rec.duration }
+                }
+            }
             for item in await client.fetchResumeItems(userID: userID, limit: 6) {
                 guard seen.insert(item.Id).inserted else { continue }
                 let posSec = FNOSItem.secondsFromTicks(item.UserData?.PlaybackPositionTicks, lower: 5)
-                let runtimeSec = FNOSItem.plausibleSeconds(ticks: item.RunTimeTicks, isEpisode: item.type == "Episode")
+                let runtimeSec = nativeDurationByTitle[item.Name ?? ""]
+                    ?? FNOSItem.plausibleSeconds(ticks: item.RunTimeTicks, isEpisode: item.type == "Episode")
                     ?? FNOSItem.secondsFromTicks(item.RunTimeTicks)
                 var fraction = 0.0
                 // v95：PlayedPercentage（服务端自算，天然一致）优先；tick 比值为兜底
@@ -732,12 +746,29 @@ struct FNOSMainView: View {
         }
     }
 
+    /// v96：原生条目直接播放（直播频道：play/info → media_guid → mpv media/range 直链）
+    private func playNativeDirect(item: FNOSItem) {
+        lastOpenedCardID = nil
+        lastFlightCtx = nil
+        FNOSDiag.shared.add("直播播放: \(item.Name ?? "?")（原生直链）")
+        playbackTarget = FNOSPlaybackTarget(
+            item: item,
+            client: client,
+            userID: userID,
+            nativeItemGUID: item.Id
+        )
+    }
+
     /// 海报墙卡片点击：起飞行层（方案 B+ v78）。
     /// 单次 withAnimation(.spring) 是底线 —— v62~v67 用 Task.sleep 分段动画导致卡顿割裂。
     private func openCard(item: FNOSItem) {
-        // v95：原生直通行（TV直播频道 / 古风MV 文件）——列表已接入，播放需原生直播流/文件直链协议（待接）
+        // v96：原生直通行——直播频道走原生直链播放（协议实测）；MV 目录层级未解暂提示
         if item.nativePosterURL != nil {
-            showDiag("「\(item.Name ?? "?")」播放接入中——先看列表")
+            if item.type == "LiveChannel" {
+                playNativeDirect(item: item)
+            } else {
+                showDiag("MV 播放接入中（目录层级解析）")
+            }
             return
         }
         guard let client else {
@@ -1474,7 +1505,12 @@ fileprivate struct FNOSPosterTile: View {
     }
 
     private var posterHeaders: [String: String] {
-        nativeHeaders ?? client?.mediaHeaders ?? [:]
+        // v96 修复：头跟 URL 走——compat 条目用 compat 头（此前无条件传原生 Authx 头
+        // 导致整面海报 401 丢失）；仅原生直通条目用 sys/img 头
+        if let nativePosterURL, !nativePosterURL.isEmpty {
+            return nativeHeaders ?? [:]
+        }
+        return client?.mediaHeaders ?? [:]
     }
 
     var body: some View {

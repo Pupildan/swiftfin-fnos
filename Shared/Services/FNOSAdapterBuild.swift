@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v95"
+    static let version = "v96"
 
     /// 本版主要变更摘要
-    static let changes = "v95：①TV直播 / 古风热歌MV 数据行实装——服务端探测证实兼容层 /Items 对这两类库返回真空（/LiveTv 路由不存在），改走原生 item/list + ancestor_guid 过滤（实测 TV直播 81 频道 / 古风MV 文件条目），海报经原生 sys/img 鉴权直通；点击播放需原生直播流/文件直链协议，本版先出列表（点击给提示），播放接入下一版；②继续播放诊断加强：每条记录的秒数/比例/时长基准进全屏诊断。多端同步（原生 play/record 三段上报）与评分（vote_average 星级）v94 已实装。"
+    static let changes = "v96：①修复 v95 引入的媒体库海报丢失——瓦片请求头跟 URL 走（compat 条目误用原生 Authx 头导致整面 401）；②直播频道播放实装——原生 play/info(频道guid) → media_guid → media/range 直链走 mpv（协议实测），点击频道直接看；③继续播放时长基准修正——本机记录以播放器实测时长优先（兼容层时长 ticks 证实为垃圾值），服务端记录以原生 /play/list duration（秒）按标题匹配优先；④MV 目录层级播放待下版（库→目录→文件多级结构需递归解析）；⑤直播频道不写续播记录。"
 }

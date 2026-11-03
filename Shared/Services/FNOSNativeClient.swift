@@ -704,6 +704,34 @@ extension FNOSNativeClient {
         }
     }
 
+    /// GET /play/list 单条记录（v96：duration 为秒，是服务端记录里唯一可靠的时长来源）
+    struct FNOSNativeRecord {
+        let guid: String
+        let title: String
+        let duration: Double
+        let ts: Double
+    }
+
+    /// 读取播放记录列表（多端写入都在这里：本机原生上报 + 其他设备）
+    func playList() async -> [FNOSNativeRecord] {
+        do {
+            let json = try await get(path: "api/v1/play/list")
+            let list = Self.extractList(json["data"])
+            return list.compactMap { d in
+                guard let guid = d["guid"] as? String, !guid.isEmpty else { return nil }
+                return FNOSNativeRecord(
+                    guid: guid,
+                    title: d["title"] as? String ?? "",
+                    duration: (d["duration"] as? NSNumber)?.doubleValue ?? 0,
+                    ts: (d["ts"] as? NSNumber)?.doubleValue ?? 0
+                )
+            }
+        } catch {
+            FNOSDiag.shared.add("play/list 失败: \(error.localizedDescription)", dedupeKey: "plist.err")
+            return []
+        }
+    }
+
     /// 查询视频轨真实格式。实测 0.06s 返回，只做能力协商、不产生转码会话。
     func videoTraits(mediaGUID: String) async -> VideoTraits? {
         let now = Int(Date().timeIntervalSince1970 * 1000)

@@ -254,6 +254,8 @@ struct FNOSPlayerContainerView: View {
     var startFraction: Double? = nil
     /// 继续播放起点（秒，v91 直通——详情页本地记录不再经 RunTimeTicks 换算）
     var startSeconds: Double? = nil
+    /// v96 原生直通条目（直播频道）：play/info(guid) → media/range 直链，走 mpv
+    var nativeItemGUID: String? = nil
 
     @Environment(\.dismiss)
     private var dismiss
@@ -314,8 +316,10 @@ struct FNOSPlayerContainerView: View {
         return episodes[idx + 1]
     }
 
-    /// 10s 节流的进度上报（v94：飞牛原生 play/record，兼容层 Sessions 是空壳已定案）
+    /// 10s 节流的进度上报（v94：飞牛原生 play/record，兼容层 Sessions 是空壳已定案）。
+    /// v96：直播频道不记录（直播无续播语义）。
     private func throttledProgressReport(_ seconds: Double) {
+        guard item.type != "LiveChannel" else { return }
         guard Date().timeIntervalSince(lastReportAt) > 10 else { return }
         lastReportAt = Date()
         guard let native = reporterNative, let mg = reporterMediaGUID, let ig = reporterItemGUID else { return }
@@ -327,6 +331,8 @@ struct FNOSPlayerContainerView: View {
     @MainActor
     private func resolveReporter() async {
         guard reporterNative == nil else { return }
+        // v96：直播频道不记录观看进度（无续播语义）
+        if nativeItemGUID != nil || item.type == "LiveChannel" { return }
         guard let credentials = FNOSAuthStore.shared.credentials,
               let nativeToken = credentials.nativeToken, !nativeToken.isEmpty else {
             FNOSDiag.shared.add("上报: 无原生 token（不同步）", dedupeKey: "rep.tok")
@@ -385,7 +391,7 @@ struct FNOSPlayerContainerView: View {
 
     var body: some View {
         Group {
-            if useMPVEngine || forceMPV {
+            if useMPVEngine || forceMPV || nativeItemGUID != nil {
                 mpvLayer
             } else {
                 ksLayer
@@ -548,6 +554,19 @@ struct FNOSPlayerContainerView: View {
         let native = FNOSNativeClient(baseURL: credentials.serverURL, token: nativeToken)
         let series = item.SeriesName ?? seriesName
 
+        // v96：原生直通条目（直播频道）按 guid 直接换直链（协议实测：play/info 对频道 guid 返回 media_guid）
+        if let nativeGUID = nativeItemGUID {
+            guard let range = await native.mediaRange(itemGUID: nativeGUID) else {
+                mpvNotice = "直播流解析失败"
+                mpvFailed = true
+                return
+            }
+            mpvToken = nativeToken
+            mpvClient = native
+            mpvRange = range
+            return
+        }
+
         guard let range = await native.mediaRange(
             itemTitle: item.Name,
             seriesTitle: series,
@@ -655,7 +674,9 @@ struct FNOSPlayerContainerView: View {
                     print("FNOSℹ️继续播放: seek → \(Int(target))s")
                 }
                 // v87 本地进度（续播主链路）+ 剧集观看位置（5s 节流落盘；v92 存完整条目供首页合并）
-                if Date().timeIntervalSince(lastLocalSaveAt) > 5 {
+                // v96：直播频道不写本地续播记录
+                if item.type != "LiveChannel",
+                   Date().timeIntervalSince(lastLocalSaveAt) > 5 {
                     lastLocalSaveAt = Date()
                     let total = Double(coordinator.timemodel.totalTime)
                     FNOSProgressStore.save(

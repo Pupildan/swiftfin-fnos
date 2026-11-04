@@ -230,7 +230,7 @@ struct FNOSBangumiDetailView: View {
             let nameCN = json["name_cn"] as? String ?? item.nameCN
             let images = json["images"] as? [String: Any]
             let imgPath = (images?["large"] as? String) ?? (images?["common"] as? String)
-            let backdropURL = imgPath.map { URL(string: $0)! }
+            let backdropURL = imgPath.flatMap { URL(string: $0) }
 
             // 标签
             let tagList = (json["tags"] as? [[String: Any]])?.prefix(8).compactMap { t -> String? in
@@ -252,7 +252,7 @@ struct FNOSBangumiDetailView: View {
                         let role = (c["role_name"] as? String) ?? (c["relation"] as? String) ?? ""
                         let cImages = c["images"] as? [String: Any]
                         let cImgPath = (cImages?["medium"] as? String) ?? (cImages?["large"] as? String)
-                        let cImgURL = cImgPath.map { URL(string: $0)! }
+                        let cImgURL = cImgPath.flatMap { URL(string: $0) }
                         return FNOSBangumiDetail.BangumiChar(id: cid, name: name, role: role, imageURL: cImgURL)
                     }
                 }

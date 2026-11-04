@@ -1190,7 +1190,7 @@ struct FNOSMainView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: spacing) {
                     ForEach(bangumiItems) { item in
-                        VStack(alignment: .leading, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 24) {
                             // 只有海报图在 Button 内参与焦点，文字在 Button 外不抢焦点
                             Button {
                                 bangumiDetailItem = item
@@ -1306,7 +1306,7 @@ struct FNOSMainView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: spacing) {
                     ForEach(tmdbItems) { item in
-                        VStack(alignment: .leading, spacing: 16) {
+                        VStack(alignment: .leading, spacing: 24) {
                             // v112：只有海报图在 Button 内参与焦点，文字在 Button 外不抢焦点
                             Button {
                                 tmdbDetailItem = item
@@ -1325,12 +1325,6 @@ struct FNOSMainView: View {
                                 .font(.system(size: 15, weight: .medium))
                                 .foregroundColor(.white.opacity(0.85))
                                 .lineLimit(1)
-
-                            if let year = item.year {
-                                Text(year)
-                                    .font(.system(size: 13))
-                                    .foregroundColor(.white.opacity(0.45))
-                            }
                         }
                     }
                 }

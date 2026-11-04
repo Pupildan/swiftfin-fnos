@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v117"
+    static let version = "v118"
 
     /// 本版主要变更摘要
-    static let changes = "v117:热门番剧数据源改近期注目(HTML解析+800px封面,官方API无此端点)+TMDB/Bangumi每日持久缓存(AppStorage JSON,同日重启零请求,跨日刷新,失败退缓存)+海报文字间距6→16(焦点动画不再压字)+两个详情页infoSection加focusable(下键可滚动)。"
+    static let changes = "v118:三修。1)海报文字间距16→24(焦点放大动画不再压字)。2)热门影视行删除年份显示。3)两个详情页强解包URL(string:)!全改flatMap空字符串返回nil,修复有概率闪退。"
 }

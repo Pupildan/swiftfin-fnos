@@ -254,12 +254,12 @@ struct FNOSTMDBDetailView: View {
                 let name = c["name"] as? String ?? ""
                 let character = c["character"] as? String ?? ""
                 let profilePath = c["profile_path"] as? String
-                let profileURL = profilePath.map { URL(string: "https://image.tmdb.org/t/p/w185\($0)")! }
+                let profileURL = profilePath.flatMap { URL(string: "https://image.tmdb.org/t/p/w185\($0)") }
                 return FNOSTMDBDetail.TMDBCastMember(id: cid, name: name, character: character, profileURL: profileURL)
             } ?? []
 
-            let backdropURL = backdropPath.map { URL(string: "https://image.tmdb.org/t/p/w1280\($0)")! }
-            let posterURL = posterPath.map { URL(string: "https://image.tmdb.org/t/p/w500\($0)")! }
+            let backdropURL = backdropPath.flatMap { URL(string: "https://image.tmdb.org/t/p/w1280\($0)") }
+            let posterURL = posterPath.flatMap { URL(string: "https://image.tmdb.org/t/p/w500\($0)") }
 
             detail = FNOSTMDBDetail(
                 id: item.id,

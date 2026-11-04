@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v97"
+    static let version = "v98"
 
     /// 本版主要变更摘要
-    static let changes = "v97：①TV直播 0 条修复——诊断证实 App 原生请求缺 X-Trim-Client 头（飞牛服务端按此识别调用方，缺失时直播库返回 Permission Error），原生 client 全量补上 web/631 头；②MV 播放实装——目录树递归下钻（play/info 探测可播 + parent_guid 逐层深入，深度 5），找到可播文件后走原生直链 mpv；③直播频道播放保持（v96 协议）。此前已实装：电影/剧集续播、自动连播、多端同步（原生 play/record）、评分/色彩徽章、继续播放合并（本机优先）。"
+    static let changes = "v98：TV直播/古风热歌MV 两行搁置下架（功能代码全部保留带 📴 标记，随时可启用）——实测库数据通道已通（权限头修复后 81 频道/文件条目可拉），卡在播放层：直播直链 mpv 拉流失败（疑直播源不支持 range，需抓飞牛自家播放器流协议）、MV 为多级目录树（下钻已实现，最深层文件 play/info 返回 -6 待探）。其余功能不受影响：电影/剧集续播（含弹窗/自动连播）、多端同步（原生 play/record 三段上报）、评分/色彩徽章、继续播放合并数字（诊断证实 runtime 全部正确）。"
 }

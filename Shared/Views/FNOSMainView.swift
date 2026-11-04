@@ -764,7 +764,8 @@ struct FNOSMainView: View {
     /// 海报墙卡片点击：起飞行层（方案 B+ v78）。
     /// 单次 withAnimation(.spring) 是底线 —— v62~v67 用 Task.sleep 分段动画导致卡顿割裂。
     private func openCard(item: FNOSItem) {
-        // v97：原生直通行——直播频道直接播；MV 目录树递归下钻找可播文件后播
+        // 📴【搁置 · TV直播/古风MV】v98 起原生行不上墙，此分支不会触发；保留待启用。
+        // 直播频道直接播；MV 目录树递归下钻找可播文件后播（resolvePlayableGUID）。
         if item.nativePosterURL != nil {
             if item.type == "LiveChannel" {
                 playNativeDirect(item: item, guid: item.Id)
@@ -1027,10 +1028,21 @@ struct FNOSMainView: View {
                 sections = loaded
             }
 
-            // v95：TV直播 / 古风热歌MV —— 兼容层 /Items 不桥接这两类库（服务端确认真空），
-            // 走原生 item/list + ancestor_guid 过滤；条目转 FNOSItem（海报走 sys/img 直通）。
-            await loadNativeSections(into: &loaded, libraries: libraries)
-            sections = loaded
+            // 📴【搁置 · TV直播/古风MV · v98 · 2026-11-04】数据行暂不上墙，原因与现状：
+            //   - 数据通道已通：X-Trim-Client 头修复权限后，TV直播 81 频道 / MV 文件条目
+            //     均可经原生 item/list + ancestor_guid 拉取（诊断「原生库…N 条」可证）
+            //   - 直播播放未通：play/info(频道guid)→media_guid→media/range 直链 mpv 起播
+            //     失败（诊断「原生播放: CCTV-9…」有行无画面），疑直播源中继不支持 range
+            //     拉流，或需专用 live 播放端点——待抓飞牛自家播放器的直播流请求再接
+            //   - MV 播放：目录树递归下钻已实现（resolvePlayableGUID，parent_guid 逐层
+            //     + play/info 探测），最深层文件 guid 的 play/info 返回 -6 Not Found，
+            //     需再探文件型条目的正确 guid 形态
+            // 重新启用步骤：解开下方两行调用即可——全部关联代码保留未删：
+            //   loadNativeSections / listByAncestor / listItemChildren / resolvePlayableGUID /
+            //   playNativeDirect / openCard 原生分支 / FNOSPlaybackTarget.nativeItemGUID /
+            //   容器 mpvLayer 原生分支 / FNOSPosterTile.nativePosterURL
+            // await loadNativeSections(into: &loaded, libraries: libraries)
+            // sections = loaded
 
             isLoading = false
             rollHeroIfNeeded()
@@ -1044,7 +1056,8 @@ struct FNOSMainView: View {
         }
     }
 
-    /// v95：原生库数据行（TV直播=LiveChannel 频道、古风MV=Directory 文件）。
+    /// 📴【搁置 · TV直播/古风MV】v95 原生库数据行——v98 起调用点已注释（见 bootstrap
+    /// 内搁置标记），本函数与全部关联代码保留，解开调用即恢复。
     /// 库定位用兼容层 /Views 的名称匹配（其 Id == 原生 ancestor_guid，探测证实）。
     @MainActor
     private func loadNativeSections(into loaded: inout [FNOSLibrarySection], libraries: [FNOSLibrary]) async {

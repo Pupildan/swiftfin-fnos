@@ -754,6 +754,10 @@ struct FNOSMPVPlayerView: View {
 
     private func startTicker(_ player: MPVPlayer) {
         ticker?.cancel()
+        // v119：结束回调——先绑定到显式类型的局部变量。
+        // 直接写 `if let finished = onFinished` 会让 Swift 把 `()` 元组
+        // 和尾随闭包语法混在一起解析，导致 ticker 块被误认为字典字面量。
+        let didFinishCallback: (() -> Void)? = onFinished
         ticker = Task { @MainActor in
             while !Task.isCancelled {
                 let position = seconds(player.position)
@@ -774,9 +778,9 @@ struct FNOSMPVPlayerView: View {
                 let nearEnd: Bool = totalSeconds > 60 && (totalSeconds - position) <= 1.5
                 if !didFinish && !paused && nearEnd {
                     didFinish = true
-                    danmu.setRate(0.0)
-                    if let finished = onFinished {
-                        finished()
+                    danmu.setRate(0)
+                    if let callback = didFinishCallback {
+                        callback()
                     }
                 }
 

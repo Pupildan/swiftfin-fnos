@@ -66,6 +66,10 @@ struct FNOSMainView: View {
     @State private var nativeClient: FNOSNativeClient?
     /// 继续播放（v91：服务端记录 + 本地记录兜底合并）；为空 → 行隐藏
     @State private var resumeEntries: [FNOSResumeEntry] = []
+    /// v110：续播封面图片强引用——完全脱离 FNOSAsyncImage 管线，
+    /// 用 Image(uiImage:) 直接渲染，无 async、无缓存、无 spinner、无闪动可能。
+    /// key = item.Id，value = 解码后的 UIImage
+    @State private var resumeCoverImages: [String: UIImage] = [:]
     @State private var isLoading = false
     @State private var didBootstrap = false
 
@@ -611,12 +615,15 @@ struct FNOSMainView: View {
             openResume(entry: entry)
         } label: {
             ZStack(alignment: .bottomLeading) {
-                FNOSAsyncImage(
-                    url: client?.resumeStillURL(item: item),
-                    headers: client?.mediaHeaders ?? [:],
-                    usePosterCache: true,
-                    hardPin: true
-                )
+                // v110：直接用强引用字典的 UIImage 渲染，完全脱离 FNOSAsyncImage 管线
+                if let coverImg = resumeCoverImages[item.Id] {
+                    Image(uiImage: coverImg)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                } else {
+                    Rectangle().fill(Color.white.opacity(0.06))
+                    ProgressView()
+                }
                 .frame(width: width, height: width * 9 / 16)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
 
@@ -746,7 +753,35 @@ struct FNOSMainView: View {
                 ))
             }
             resumeEntries = Array(entries.prefix(6))
+
+            // v110：下载全部续播封面 → 强引用字典 → resumeCard 用 Image(uiImage:) 渲染。
+            // 完全脱离 FNOSAsyncImage 管线（无 async/无缓存/无 spinner），彻底消灭闪动。
+            await downloadResumeCoverImages()
         }
+    }
+
+    /// v110：下载续播封面图片进 resumeCoverImages 强引用字典。
+    /// 每次 rebuildResumeEntries 后调用；图片常驻内存（6×~1MB=6MB），永不驱逐。
+    private func downloadResumeCoverImages() async {
+        guard let client else { return }
+        var newImages: [String: UIImage] = [:]
+        for entry in resumeEntries {
+            let item = entry.item
+            guard let url = client.resumeStillURL(item: item) else { continue }
+            // 已有则跳过（避免重复下载）
+            if resumeCoverImages[item.Id] != nil { newImages[item.Id] = resumeCoverImages[item.Id]; continue }
+            do {
+                var req = URLRequest(url: url)
+                req.timeoutInterval = 12
+                for (field, value) in client.mediaHeaders { req.setValue(value, forHTTPHeaderField: field) }
+                let (data, _) = try await URLSession.shared.data(for: req)
+                guard let img = UIImage(data: data) else { continue }
+                newImages[item.Id] = img
+            } catch {
+                print("FNOS⚠️续播封面下载失败: \(error.localizedDescription)")
+            }
+        }
+        resumeCoverImages = newImages
     }
 
     /// v96/v97：原生条目直接播放（直播频道 / MV 文件：play/info → media_guid → mpv media/range 直链）

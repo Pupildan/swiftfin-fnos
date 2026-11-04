@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v109"
+    static let version = "v110"
 
     /// 本版主要变更摘要
-    static let changes = "v109:FNOSAsyncImage实现Equatable,SwiftUI父视图重算时比较新旧结构体,相等则跳过body重算。切断焦点移动→父视图重算→续播封面被无谓重评估→闪动的链路。仅比url/usePosterCache/hardPin,忽略headers字典。"
+    static let changes = "v110:续播封面完全脱离FNOSAsyncImage管线。用强引用字典[String:UIImage]直接持有图片, resumeCard用Image(uiImage:)渲染, 无async/无缓存/无spinner/无闪动可能。每次rebuildResumeEntries后下载全部封面进字典, 永不驱逐。"
 }

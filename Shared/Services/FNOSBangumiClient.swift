@@ -57,7 +57,7 @@ enum FNOSBangumiClient {
 
                 let images = dict["images"] as? [String: Any]
                 let imgPath = (images?["common"] as? String) ?? (images?["large"] as? String) ?? (images?["medium"] as? String)
-                let imageURL = imgPath.map { URL(string: $0) }
+                let imageURL = imgPath.flatMap { URL(string: $0) }
 
                 items.append(FNOSBangumiItem(
                     id: id,

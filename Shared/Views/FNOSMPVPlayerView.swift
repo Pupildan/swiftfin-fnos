@@ -754,7 +754,6 @@ struct FNOSMPVPlayerView: View {
 
     private func startTicker(_ player: MPVPlayer) {
         ticker?.cancel()
-        let finishHandler: () -> Void = { [onFinished] in onFinished?() }
         ticker = Task { @MainActor in
             while !Task.isCancelled {
                 let position = seconds(player.position)
@@ -777,7 +776,9 @@ struct FNOSMPVPlayerView: View {
                 if !didFinish && !paused && nearEnd {
                     didFinish = true
                     danmu.setRate(0.0)
-                    finishHandler()
+                    if let finished = onFinished {
+                        finished()
+                    }
                 }
 
                 // 自动隐藏：播放中、无面板展开、5 秒无操作

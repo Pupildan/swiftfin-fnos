@@ -110,6 +110,8 @@ struct FNOSMainView: View {
     // v81 屏显诊断（真机无控制台；确认根因后 v82 移除）
     @State private var diagMessage: String?
     @State private var diagToken = 0
+    /// v122：首页连按两次播放/暂停键刷新——上次按键时间
+    @State private var lastPlayPauseTap = Date.distantPast
 
     // 首页设置面板（刷新/退出集成在内）
     @State private var showSettings = false
@@ -343,21 +345,8 @@ struct FNOSMainView: View {
         .sheet(isPresented: $showSettings) {
             FNOSHomeSettingsView(
                 onRefresh: {
-                    // 清掉当日抽选标记 → 刷新后 Hero 强制重新随机抽选
-                    heroDate = ""
-                    // 清全部图片缓存（内存图 + URL 缓存），排除缓存导致的错图
-                    FNOSImageCache.shared.memory.removeAllObjects()
-                    URLCache.shared.removeAllCachedResponses()
-                    // 关键：旧 sections / heroSnapshot 必须清空。
-                    // 否则新库数据回来前，Hero 仍按旧快照渲染，新数据到达后
-                    // 索引与页面错位 → 标题与海报不是同一部（图文错位）。
-                    sections = []
-                    heroSnapshot = []
-                    resumeEntries = []
-                    // 立即进入加载态：避免清空数据到新数据回来之间闪一下「暂无内容」
-                    isLoading = true
-                    didBootstrap = false
-                    Task { await bootstrapIfNeeded() }
+                    // v122：刷新逻辑收敛到 refreshAll()（与首页双击播放/暂停键共用）
+                    refreshAll()
                 },
                 onLogout: {
                     auth.logout()
@@ -381,7 +370,39 @@ struct FNOSMainView: View {
             guard let focused, let client else { return }
             prefetchDetailBackdrop(itemID: focused, client: client)
         }
+        // v122：首页连按两次播放/暂停键 → 从飞牛刷新媒体库（单按给提示）
+        .onPlayPauseCommand {
+            let now = Date()
+            if now.timeIntervalSince(lastPlayPauseTap) < 0.8 {
+                lastPlayPauseTap = .distantPast
+                refreshAll()
+            } else {
+                lastPlayPauseTap = now
+                showDiag("再按一次播放/暂停键刷新媒体库", duration: 1.6)
+            }
+        }
         .ignoresSafeArea()
+    }
+
+    /// v122：手动刷新（设置页「刷新媒体库」与首页双击播放/暂停键共用）。
+    /// 清空全部内存态 + 缓存，从飞牛重新拉取；飞行/详情/播放期间拒绝执行。
+    private func refreshAll() {
+        guard flight == nil, detailItem == nil, playbackTarget == nil, seriesItem == nil, !isLoading else {
+            showDiag("当前状态不可刷新")
+            return
+        }
+        heroDate = ""
+        FNOSImageCache.shared.memory.removeAllObjects()
+        URLCache.shared.removeAllCachedResponses()
+        // 旧 sections / heroSnapshot 必须清空，否则新数据到达前后索引错位（图文错位老坑）
+        sections = []
+        heroSnapshot = []
+        resumeEntries = []
+        resumeCoverImages = [:]
+        isLoading = true
+        didBootstrap = false
+        showDiag("正在刷新媒体库…", duration: 2.0)
+        Task { await bootstrapIfNeeded() }
     }
 
     /// 预取详情 1920 横图进共享内存缓存（FNOSAsyncImage 命中缓存即秒显）。
@@ -1416,8 +1437,9 @@ struct FNOSMainView: View {
                 "ParentId": library.Id,
                 "Recursive": "true",
                 "Limit": "100",
-                "SortBy": "SortName",
-                "SortOrder": "Ascending",
+                // v122：按加入库时间从新到旧排（MoviePilot 下载的新片排最前）
+                "SortBy": "DateCreated",
+                "SortOrder": "Descending",
                 "Fields": "PrimaryImageAspectRatio,ProductionYear,Overview,BackdropImageTags,RunTimeTicks,OfficialRating,Genres",
             ]
         )

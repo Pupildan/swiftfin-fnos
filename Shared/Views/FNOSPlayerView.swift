@@ -503,6 +503,18 @@ struct FNOSPlayerContainerView: View {
                             seconds: position
                         )
                     }
+                },
+                // v119：mpv 引擎播放结束 —— 与 KS 的 .playedToTheEnd 同一条链路
+                //（清进度 → 延迟 1.2s 开下一集，也让「看完」提示有时间出现）
+                onFinished: {
+                    danmuEngine.setRate(0)
+                    FNOSProgressStore.clear(itemID: item.Id)
+                    if let next = nextEpisode {
+                        print("FNOSℹ️[mpv] 自动连播 → \(next.Name ?? "?")")
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                            onSelectEpisode?(next)
+                        }
+                    }
                 }
             ) {
                 if let native = reporterNative, let mg = reporterMediaGUID, let ig = reporterItemGUID {
@@ -639,6 +651,8 @@ struct FNOSPlayerContainerView: View {
             if let native = reporterNative, let mg = reporterMediaGUID, let ig = reporterItemGUID {
                 Task { _ = await native.playRecord(mediaGUID: mg, itemGUID: ig, ts: Double(coordinator.timemodel.currentTime)) }
             }
+            // v119：离开播放器恢复系统屏保策略
+            UIApplication.shared.isIdleTimerDisabled = false
         }
         .sheet(isPresented: $isSheetPresented, onDismiss: {
             audioSheetPresented = false
@@ -729,6 +743,8 @@ struct FNOSPlayerContainerView: View {
                 revealControls()
             }
             .onAppear {
+                // v119：播放期间禁止系统屏保/休眠
+                UIApplication.shared.isIdleTimerDisabled = true
                 attachPanRecognizer()
             }
     }

@@ -1,6 +1,7 @@
 import Foundation
 import MPVUI
 import SwiftUI
+import UIKit
 
 // MARK: - MPV 引擎播放页（实验）
 //
@@ -37,6 +38,8 @@ struct FNOSMPVPlayerView: View {
     /// v86：播放进度回调（ticker 每 ~4s 触发一次；容器做 10s 节流后上报服务端）。
     /// v92：带总时长（本地记录存 runtime 供首页进度条换算）
     var onProgress: ((Double, Double) -> Void)? = nil
+    /// v119：播完回调（mpv 引擎自动连播下一集；KS 引擎同签名）
+    var onFinished: (() -> Void)? = nil
     var onExit: () -> Void
 
     @State private var player: MPVPlayer?
@@ -68,6 +71,8 @@ struct FNOSMPVPlayerView: View {
     @State private var lastPersist: Double = 0
     @State private var lastSeekAt = Date.distantPast
     @State private var seekBurst = 0
+    /// v119：播放结束只回调一次
+    @State private var didFinish = false
 
     // 弹幕外观（与 FNOSDanmuView 共用同一批键）
     @AppStorage("fnos.danmu.fontSize") private var danmuFontSize: Double = 26
@@ -97,6 +102,7 @@ struct FNOSMPVPlayerView: View {
         initialSeek: Double? = nil,
         autoSelected: Bool = false,
         onProgress: ((Double, Double) -> Void)? = nil,
+        onFinished: (() -> Void)? = nil,
         onExit: @escaping () -> Void
     ) {
         self.item = item
@@ -107,6 +113,7 @@ struct FNOSMPVPlayerView: View {
         self.initialSeek = initialSeek
         self.autoSelected = autoSelected
         self.onProgress = onProgress
+        self.onFinished = onFinished
         self.onExit = onExit
         _currentURL = State(initialValue: range.url)
         _currentGUID = State(initialValue: range.itemGUID)
@@ -116,6 +123,9 @@ struct FNOSMPVPlayerView: View {
             initialValue: autoSelected ? "已自动切换 mpv 引擎（杜比视界色彩转换）" : nil
         )
     }
+
+    /// v119：播放结束容差（秒）
+    private static let endTolerance: Double = 1.5
 
     private var resumeKey: String { "fnos.resume.native.\(currentGUID)" }
 
@@ -175,8 +185,15 @@ struct FNOSMPVPlayerView: View {
                 }
             }
         }
-        .onAppear(perform: startIfNeeded)
-        .onDisappear(perform: teardown)
+            .onAppear {
+                // v119：播放期间禁止系统屏保/休眠
+                UIApplication.shared.isIdleTimerDisabled = true
+                startIfNeeded()
+            }
+            .onDisappear {
+                UIApplication.shared.isIdleTimerDisabled = false
+                teardown()
+            }
         .onExitCommand(perform: handleExitCommand)
         .onPlayPauseCommand {
             bumpActivity()
@@ -671,6 +688,20 @@ struct FNOSMPVPlayerView: View {
         let configuration = MPVPlayerConfiguration(
             additionalOptions: [
                 "http-header-fields": "Authorization: \(authToken)",
+                // v119：DoVi→SDR 转换时别把画面压成灰雾。libplacebo 默认 tonemap
+                // (spline/bt.2390) 对 P5 高光处理偏软；改 hable 并抬高对比度/饱和度
+                // 还原通透感，同时把黑位压下去。纯白字幕/弹幕不再发灰。
+                "vo=gpu-next",
+                "tone-mapping": "hable",
+                "hdr-compute-peak": "yes",
+                "target-peak": "100",
+                "target-contrast": "auto",
+                "gamut-mapping-mode": "clip",
+                "sub-color": "#FFFFFFFF",
+                "sub-border-color": "#FF000000",
+                "sub-shadow-color": "#B4000000",
+                "sub-ass-color": "#FFFFFFFF",
+                "sub-ass-override": "force",
             ],
             autoPlay: true,
             hardwareDecoding: .videoToolbox,
@@ -736,6 +767,19 @@ struct FNOSMPVPlayerView: View {
                     lastPersist = position
                     UserDefaults.standard.set(position, forKey: resumeKey)
                     onProgress?(position, seconds(player.duration))
+                }
+
+                // v119：播放结束检测（MPVUI 无 eof 事件，用位置逼近时长判定）。
+                // 只对剧集单集触发；容差 1.5s 吸收 ticker 250ms 粒度与关键帧抖动。
+                // 防御：暂停状态下位置接近末尾不算「播完」（用户可能在片尾拖拽）
+                let total = seconds(player.duration)
+                if !didFinish,
+                   total > 60,
+                   !player.isPaused,
+                   total - position <= Self.endTolerance {
+                    didFinish = true
+                    danmu.setRate(0)
+                    onFinished?()
                 }
 
                 // 自动隐藏：播放中、无面板展开、5 秒无操作

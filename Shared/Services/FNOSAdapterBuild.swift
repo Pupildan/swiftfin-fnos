@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v120"
+    static let version = "v121"
 
     /// 本版主要变更摘要
-    static let changes = "v120:加入影视库功能上线。热门影视详情页按钮接 MoviePilot 订阅：点击即发起订阅(自动搜种/推下载/入库)，按钮三态(加入影视库/已订阅下载中/已在库中)，已在库中=飞牛库内标题探测+MP订阅态双查。设置面板新增 MoviePilot 服务地址+API 密钥。API 契约全部实测(X-API-KEY 头)。番剧入库需 ID 映射二期接入。"
+    static let changes = "v121:热门番剧详情页接入加入影视库。POST 带 bangumiid(MoviePilot 经 Bangumi 源识别后自动转存 TMDB 订阅)；查询改列表+按名匹配(bangumi: 前缀转存后失效)；已在库中=飞牛库内标题探测。实测 FX战士久留美 订阅成功。"
 }

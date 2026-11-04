@@ -325,10 +325,18 @@ struct FNOSMainView: View {
                 onDismiss: { tmdbDetailItem = nil }
             )
         }
-        // v115：Bangumi 番剧详情页 fullScreenCover
+        // v115：Bangumi 番剧详情页 fullScreenCover（v121 接入 MoviePilot 入库）
         .fullScreenCover(item: $bangumiDetailItem) { bgItem in
             FNOSBangumiDetailView(
                 item: bgItem,
+                mpBase: mpURLSetting,
+                mpKey: mpKeySetting,
+                inLibraryCheck: { bgItem in
+                    guard let creds = FNOSAuthStore.shared.credentials,
+                          let nt = creds.nativeToken, !nt.isEmpty else { return false }
+                    let native = FNOSNativeClient(baseURL: creds.serverURL, token: nt)
+                    return await native.existsInLibrary(title: bgItem.displayTitle, isSeries: true)
+                },
                 onDismiss: { bangumiDetailItem = nil }
             )
         }

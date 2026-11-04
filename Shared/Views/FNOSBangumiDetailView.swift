@@ -29,9 +29,31 @@ struct FNOSBangumiDetail: Identifiable {
 struct FNOSBangumiDetailView: View {
     let item: FNOSBangumiItem
     let onDismiss: () -> Void
+    /// v121：MoviePilot 入库（未配置则隐藏按钮）
+    var mpBase: String = ""
+    var mpKey: String = ""
+    /// v121：飞牛库内探测闭包（主视图注入，返回 true = 已在库）
+    var inLibraryCheck: ((FNOSBangumiItem) async -> Bool)? = nil
 
     @State private var detail: FNOSBangumiDetail?
     @State private var isLoading = true
+
+    /// v121：入库按钮状态机（与 TMDB 详情页同构）
+    private enum LibState {
+        case idle, checking, subscribed, inLibrary, adding
+    }
+    @State private var libState: LibState = .idle
+    @State private var mpMessage: String = ""
+
+    private var mpConfigured: Bool {
+        FNOSMoviePilotClient.configured(base: mpBase, apiKey: mpKey)
+    }
+
+    /// 番剧放送年份（airDate 形如 "2026-10" 或 "2026"）
+    private var subYear: String? {
+        guard let y = item.airDate, y.count >= 4 else { return nil }
+        return String(y.prefix(4))
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -73,6 +95,42 @@ struct FNOSBangumiDetailView: View {
         }
         .ignoresSafeArea()
         .task { await loadDetail() }
+        .task { await refreshLibState() }
+    }
+
+    // MARK: - v121 入库状态机（番剧）
+
+    private func refreshLibState() async {
+        guard mpConfigured else { return }
+        libState = .checking
+        let sub = await FNOSMoviePilotClient.lookupSubscribeByName(
+            base: mpBase, apiKey: mpKey, name: item.displayTitle
+        )
+        var inLib = false
+        if let check = inLibraryCheck {
+            inLib = await check(item)
+        }
+        libState = inLib ? .inLibrary : (sub != nil ? .subscribed : .idle)
+    }
+
+    private func addToLibrary() async {
+        guard libState == .idle else { return }
+        libState = .adding
+        let (ok, message) = await FNOSMoviePilotClient.addSubscribe(
+            base: mpBase,
+            apiKey: mpKey,
+            type: "tv",
+            name: item.displayTitle,
+            year: subYear,
+            bangumiid: item.id
+        )
+        if ok {
+            mpMessage = ""
+            libState = .subscribed
+        } else {
+            mpMessage = message.isEmpty ? "添加失败" : message
+            libState = .idle
+        }
     }
 
     // MARK: - Hero
@@ -127,7 +185,52 @@ struct FNOSBangumiDetailView: View {
                     }
                 }
 
-                // v120：番剧入库需 Bangumi→TMDB ID 映射，二期接入（按钮暂不显示）
+                // v121：加入影视库按钮（状态机，POST 带 bangumiid，MP 经 Bangumi 源识别）
+                if mpConfigured {
+                    Button {
+                        Task { await addToLibrary() }
+                    } label: {
+                        HStack(spacing: 8) {
+                            switch libState {
+                            case .checking:
+                                ProgressView().tint(.white)
+                                Text("检查中…")
+                            case .inLibrary:
+                                Image(systemName: "checkmark.circle.fill")
+                                Text("已在库中")
+                            case .subscribed:
+                                Image(systemName: "arrow.down.circle.fill")
+                                Text("已订阅·下载中")
+                            case .adding:
+                                ProgressView().tint(.white)
+                                Text("提交中…")
+                            case .idle:
+                                Image(systemName: "plus")
+                                Text("加入影视库")
+                            }
+                        }
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 32)
+                        .padding(.vertical, 14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(libState == .inLibrary ? Color.green.opacity(0.35) : Color.white.opacity(0.18))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .stroke(Color.white.opacity(0.4), lineWidth: 1.5)
+                                )
+                        )
+                    }
+                    .buttonStyle(.card)
+                    .disabled(libState != .idle)
+
+                    if !mpMessage.isEmpty {
+                        Text(mpMessage)
+                            .font(.system(size: 15))
+                            .foregroundColor(.orange.opacity(0.9))
+                    }
+                }
             }
             .padding(.horizontal, 60)
             .padding(.bottom, 30)

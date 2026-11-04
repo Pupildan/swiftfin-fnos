@@ -329,6 +329,7 @@ struct FNOSMainView: View {
         .fullScreenCover(item: $bangumiDetailItem) { bgItem in
             FNOSBangumiDetailView(
                 item: bgItem,
+                onDismiss: { bangumiDetailItem = nil },
                 mpBase: mpURLSetting,
                 mpKey: mpKeySetting,
                 inLibraryCheck: { bgItem in
@@ -336,8 +337,7 @@ struct FNOSMainView: View {
                           let nt = creds.nativeToken, !nt.isEmpty else { return false }
                     let native = FNOSNativeClient(baseURL: creds.serverURL, token: nt)
                     return await native.existsInLibrary(title: bgItem.displayTitle, isSeries: true)
-                },
-                onDismiss: { bangumiDetailItem = nil }
+                }
             )
         }
         .sheet(isPresented: $showSettings) {

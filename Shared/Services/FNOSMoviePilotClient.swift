@@ -32,7 +32,7 @@ enum FNOSMoviePilotClient {
 
     /// v121：订阅列表条目（番剧查询用——MP 会把 bangumi 订阅转存为 tmdb，
     /// `bangumi:` 前缀查询/删除会落空，只能拿列表按名匹配）
-    struct MPSubscribeBrief {
+    struct MPSubscribeBrief: Decodable {
         let id: Int?
         let name: String?
         let state: String?

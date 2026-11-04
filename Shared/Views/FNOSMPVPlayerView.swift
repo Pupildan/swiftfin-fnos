@@ -759,7 +759,8 @@ struct FNOSMPVPlayerView: View {
             while !Task.isCancelled {
                 let position = seconds(player.position)
                 danmu.sync(mediaTime: position)
-                danmu.setRate(player.isPaused ? 0 : 1)
+                let isPausedNow: Bool = player.isPaused
+                danmu.setRate(isPausedNow ? 0.0 : 1.0)
 
                 if abs(position - lastPersist) > 4 {
                     lastPersist = position
@@ -775,7 +776,7 @@ struct FNOSMPVPlayerView: View {
                 let nearEnd: Bool = totalSeconds > 60 && (totalSeconds - position) <= 1.5
                 if !didFinish && !paused && nearEnd {
                     didFinish = true
-                    danmu.setRate(0)
+                    danmu.setRate(0.0)
                     finishHandler()
                 }
 

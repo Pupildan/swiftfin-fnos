@@ -7,7 +7,7 @@ import Foundation
 
 // MARK: - TMDB 条目数据模型
 
-struct FNOSTMDBItem: Identifiable {
+struct FNOSTMDBItem: Identifiable, Codable {
     let id: Int
     let title: String
     let posterPath: String?

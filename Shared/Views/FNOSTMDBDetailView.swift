@@ -67,6 +67,8 @@ struct FNOSTMDBDetailView: View {
                             .padding(.horizontal, 60)
                             .padding(.top, 20)
                             .padding(.bottom, 40)
+                            // v117: 信息区可聚焦，否则下键无可落点、ScrollView 不滚动
+                            .focusable()
                     }
                 }
                 .ignoresSafeArea()

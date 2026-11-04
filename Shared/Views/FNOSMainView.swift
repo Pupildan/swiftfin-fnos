@@ -1,4 +1,4 @@
-//
+﻿//
 // Swiftfin is subject to the terms of the Mozilla Public
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, can be obtained one at https://mozilla.org/MPL/2.0/.
@@ -74,10 +74,14 @@ struct FNOSMainView: View {
     @State private var tmdbItems: [FNOSTMDBItem] = []
     @State private var tmdbDetailItem: FNOSTMDBItem?
     @AppStorage("fnos.tmdb.apikey") private var tmdbApiKey = ""
+    @AppStorage("fnos.tmdb.date") private var tmdbDate = ""
+    /// v117：每日持久缓存（JSON），跨启动复用——同日重启不再请求
+    @AppStorage("fnos.tmdb.cache") private var tmdbCache = ""
     /// v115：Bangumi 番剧推荐
     @State private var bangumiItems: [FNOSBangumiItem] = []
     @State private var bangumiDetailItem: FNOSBangumiItem?
-    @AppStorage("fnos.tmdb.date") private var tmdbDate = ""
+    @AppStorage("fnos.bangumi.date") private var bangumiDate = ""
+    @AppStorage("fnos.bangumi.cache") private var bangumiCache = ""
     @State private var isLoading = false
     @State private var didBootstrap = false
 
@@ -1127,9 +1131,9 @@ struct FNOSMainView: View {
             refreshHeroSnapshot()
             // 继续播放（v91：服务端 + 本机记录合并；只展示最近 6 条，ATV 版式）
             rebuildResumeEntries()
-            // v111：TMDB 热门推荐（每日首次进入刷新）
+            // v117：TMDB 热门影视（每日一次，同日命中持久缓存不请求）
             await fetchTMDBIfNeeded()
-            // v115：Bangumi 番剧推荐（每次启动刷新，公开 API 无限流顾虑）
+            // v115/v117：Bangumi 热门番剧（近期注目，每日一次）
             await fetchBangumi()
         } catch {
             isLoading = false
@@ -1137,16 +1141,27 @@ struct FNOSMainView: View {
         }
     }
 
-    // MARK: - v115 Bangumi 番剧推荐
+    // MARK: - v115/v117 Bangumi 热门番剧
 
-    /// 每次启动从 Bangumi 抓取每日放送日历，扁平化为番剧列表（限前 30 条）
+    /// v117：数据源改「近期注目」；每日一次——同日命中持久缓存直接解码
     private func fetchBangumi() async {
+        guard bangumiItems.isEmpty else { return }
+        let today = Self.dateString()
+
+        if bangumiDate == today, let items = decodeBangumiCache(), !items.isEmpty {
+            bangumiItems = items
+            return
+        }
         do {
-            let items = try await FNOSBangumiClient.calendar()
-            bangumiItems = Array(items.prefix(30))
-            print("FNOS✅Bangumi 热门番剧: \(items.count) 条（取前 30）")
+            let items = try await FNOSBangumiClient.trending()
+            let top = Array(items.prefix(30))
+            bangumiItems = top
+            bangumiDate = today
+            bangumiCache = encodeBangumiCache(top)
+            print("FNOS✅Bangumi 热门番剧(近期注目): \(top.count) 条")
         } catch {
             print("FNOS⚠️Bangumi 获取失败: \(error.localizedDescription)")
+            if let items = decodeBangumiCache(), !items.isEmpty { bangumiItems = items }
         }
     }
 
@@ -1175,7 +1190,7 @@ struct FNOSMainView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: spacing) {
                     ForEach(bangumiItems) { item in
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 16) {
                             // 只有海报图在 Button 内参与焦点，文字在 Button 外不抢焦点
                             Button {
                                 bangumiDetailItem = item
@@ -1220,21 +1235,50 @@ struct FNOSMainView: View {
 
     // MARK: - v111 TMDB 热门推荐
 
-    /// v114：每次 App 启动时从 TMDB 抓取热门推荐（tmdbItems 是 @State，启动为空总会抓取）
+    /// v117：每日一次——同日命中持久缓存直接解码（跨启动有效），跨日/无缓存才请求
     private func fetchTMDBIfNeeded() async {
         guard !tmdbApiKey.isEmpty else { return }
-        guard tmdbItems.isEmpty else { return } // 同一会话内已有数据则跳过
+        guard tmdbItems.isEmpty else { return }
+        let today = Self.dateString()
 
+        if tmdbDate == today, let items = decodeTMDBCache(), !items.isEmpty {
+            tmdbItems = items
+            return
+        }
         do {
             let items = try await FNOSTMDBClient.trending(apiKey: tmdbApiKey)
             tmdbItems = items
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyy-MM-dd"
-            tmdbDate = formatter.string(from: Date()) // 仅用于诊断记录
-            print("FNOS✅TMDB 热门推荐: \(items.count) 条")
+            tmdbDate = today
+            tmdbCache = encodeTMDBCache(items)
+            print("FNOS✅TMDB 热门影视: \(items.count) 条")
         } catch {
             print("FNOS⚠️TMDB 获取失败: \(error.localizedDescription)")
+            // 请求失败退回旧缓存（可能过期但可用）
+            if let items = decodeTMDBCache(), !items.isEmpty { tmdbItems = items }
         }
+    }
+
+    private static func dateString() -> String {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: Date())
+    }
+
+    private func decodeTMDBCache() -> [FNOSTMDBItem]? {
+        guard !tmdbCache.isEmpty else { return nil }
+        return try? JSONDecoder().decode([FNOSTMDBItem].self, from: Data(tmdbCache.utf8))
+    }
+
+    private func encodeTMDBCache(_ items: [FNOSTMDBItem]) -> String {
+        (try? JSONEncoder().encode(items)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+    }
+
+    private func decodeBangumiCache() -> [FNOSBangumiItem]? {
+        guard !bangumiCache.isEmpty else { return nil }
+        return try? JSONDecoder().decode([FNOSBangumiItem].self, from: Data(bangumiCache.utf8))
+    }
+
+    private func encodeBangumiCache(_ items: [FNOSBangumiItem]) -> String {
+        (try? JSONEncoder().encode(items)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
     }
 
     /// v111：TMDB 热门推荐海报墙（与媒体库行同款版式，海报走 TMDB CDN 无需鉴权）
@@ -1262,7 +1306,7 @@ struct FNOSMainView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: spacing) {
                     ForEach(tmdbItems) { item in
-                        VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 16) {
                             // v112：只有海报图在 Button 内参与焦点，文字在 Button 外不抢焦点
                             Button {
                                 tmdbDetailItem = item

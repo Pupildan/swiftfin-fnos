@@ -616,13 +616,15 @@ struct FNOSMainView: View {
         } label: {
             ZStack(alignment: .bottomLeading) {
                 // v110：直接用强引用字典的 UIImage 渲染，完全脱离 FNOSAsyncImage 管线
-                if let coverImg = resumeCoverImages[item.Id] {
-                    Image(uiImage: coverImg)
-                        .resizable()
-                        .aspectRatio(contentMode: .fill)
-                } else {
-                    Rectangle().fill(Color.white.opacity(0.06))
-                    ProgressView()
+                Group {
+                    if let coverImg = resumeCoverImages[item.Id] {
+                        Image(uiImage: coverImg)
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                    } else {
+                        Rectangle().fill(Color.white.opacity(0.06))
+                        ProgressView()
+                    }
                 }
                 .frame(width: width, height: width * 9 / 16)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))

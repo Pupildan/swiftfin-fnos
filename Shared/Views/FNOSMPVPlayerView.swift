@@ -685,19 +685,16 @@ struct FNOSMPVPlayerView: View {
         let configuration = MPVPlayerConfiguration(
             additionalOptions: [
                 "http-header-fields": "Authorization: \(authToken)",
-                // v119：DoVi→SDR 转换时别把画面压成灰雾。libplacebo 默认 tonemap
-                // (spline/bt.2390) 对 P5 高光处理偏软；改 hable 并抬高对比度/饱和度
-                // 还原通透感，同时把黑位压下去。纯白字幕/弹幕不再发灰。
-                "vo=gpu-next",
+                // v119：DoVi→SDR 转换别把字幕/弹幕压灰。改 hable tone-mapping 提对比
+                // + 显式纯白字幕色 + 覆盖 ASS 自带灰色样式。
+                //（不能用 "vo=gpu-next" 这种无冒号写法——[String:String] 字典字面量
+                //  必须 key: value，且 vo 已由 videoOutput:.metal 管理）
                 "tone-mapping": "hable",
                 "hdr-compute-peak": "yes",
-                "target-peak": "100",
-                "target-contrast": "auto",
                 "gamut-mapping-mode": "clip",
                 "sub-color": "#FFFFFFFF",
                 "sub-border-color": "#FF000000",
                 "sub-shadow-color": "#B4000000",
-                "sub-ass-color": "#FFFFFFFF",
                 "sub-ass-override": "force",
             ],
             autoPlay: true,

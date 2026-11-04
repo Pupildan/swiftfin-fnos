@@ -148,7 +148,7 @@ final class FNOSImageCache {
 
 // MARK: - 带鉴权的异步图片（替代会 401 的原生 AsyncImage）
 
-struct FNOSAsyncImage: View {
+struct FNOSAsyncImage: View, Equatable {
 
     let url: URL?
     let headers: [String: String]
@@ -159,6 +159,15 @@ struct FNOSAsyncImage: View {
     /// v108：硬常驻（继续播放封面传 true）——加载成功后入 hardPinned 字典，
     /// 不被任何驱逐路径清掉；首帧同步查优先命中硬常驻。
     var hardPin: Bool = false
+
+    /// v109：Equatable —— SwiftUI 在父视图重算时比较新旧结构体，相等则跳过 body。
+    /// 只比影响渲染的字段，忽略 headers 字典（同一 item 恒定，无需比较）。
+    /// 这切断了「焦点移动→父视图重算→续播封面被无谓重评估→闪动」的链路。
+    static func == (lhs: FNOSAsyncImage, rhs: FNOSAsyncImage) -> Bool {
+        lhs.url == rhs.url
+            && lhs.usePosterCache == rhs.usePosterCache
+            && lhs.hardPin == rhs.hardPin
+    }
 
     private enum Phase {
         case loading, loaded, failed

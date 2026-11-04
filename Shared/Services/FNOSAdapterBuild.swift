@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v108"
+    static let version = "v109"
 
     /// 本版主要变更摘要
-    static let changes = "v108:v98基线+古风MV过滤+续播封面硬常驻(hardPin,12张独立字典不被任何驱逐)+详情关闭不再重建续播行(避免动画期间不必要的焦点重注册)。不含磁盘缓存/pinned LRU/warm-up/日志采集器等高风险改动。"
+    static let changes = "v109:FNOSAsyncImage实现Equatable,SwiftUI父视图重算时比较新旧结构体,相等则跳过body重算。切断焦点移动→父视图重算→续播封面被无谓重评估→闪动的链路。仅比url/usePosterCache/hardPin,忽略headers字典。"
 }

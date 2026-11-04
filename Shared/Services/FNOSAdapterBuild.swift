@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v113"
+    static let version = "v114"
 
     /// 本版主要变更摘要
-    static let changes = "v113:新增TMDB详情页。点击热门推荐卡片打开全屏详情页,数据全从TMDB抓取(简介/演员/类型/评分/背景图)。页面风格与媒体库详情页一致。Hero按钮为加入影视库(Phase 3 PT+QBT后续接入)。"
+    static let changes = "v114:修复TMDB热门推荐行消失。根因:fetchTMDBIfNeeded用tmdbDate!=today守卫,但tmdbItems是@State每次启动重置为空,同一天第二次打开App时tmdbDate匹配today直接return不抓取,tmdbItems留空行消失。改为guard tmdbItems.isEmpty,每次启动总会抓取。"
 }

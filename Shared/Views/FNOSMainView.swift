@@ -1123,18 +1123,17 @@ struct FNOSMainView: View {
 
     // MARK: - v111 TMDB 热门推荐
 
-    /// 每日首次进入时从 TMDB 抓取热门推荐，缓存到 @State + AppStorage 日期戳
+    /// v114：每次 App 启动时从 TMDB 抓取热门推荐（tmdbItems 是 @State，启动为空总会抓取）
     private func fetchTMDBIfNeeded() async {
         guard !tmdbApiKey.isEmpty else { return }
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd"
-        let today = formatter.string(from: Date())
-        guard tmdbDate != today else { return } // 今日已刷新
+        guard tmdbItems.isEmpty else { return } // 同一会话内已有数据则跳过
 
         do {
             let items = try await FNOSTMDBClient.trending(apiKey: tmdbApiKey)
             tmdbItems = items
-            tmdbDate = today
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd"
+            tmdbDate = formatter.string(from: Date()) // 仅用于诊断记录
             print("FNOS✅TMDB 热门推荐: \(items.count) 条")
         } catch {
             print("FNOS⚠️TMDB 获取失败: \(error.localizedDescription)")

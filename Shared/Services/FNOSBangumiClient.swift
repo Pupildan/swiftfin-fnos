@@ -56,7 +56,7 @@ enum FNOSBangumiClient {
                 let airDate = dict["air_date"] as? String
 
                 let images = dict["images"] as? [String: Any]
-                let imgPath = (images?["common"] as? String) ?? (images?["large"] as? String) ?? (images?["medium"] as? String)
+                let imgPath = (images?["large"] as? String) ?? (images?["common"] as? String) ?? (images?["medium"] as? String)
                 let imageURL = imgPath.flatMap { URL(string: $0) }
 
                 items.append(FNOSBangumiItem(

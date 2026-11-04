@@ -1139,12 +1139,12 @@ struct FNOSMainView: View {
 
     // MARK: - v115 Bangumi 番剧推荐
 
-    /// 每次启动从 Bangumi 抓取每日放送日历，扁平化为番剧列表
+    /// 每次启动从 Bangumi 抓取每日放送日历，扁平化为番剧列表（限前 30 条）
     private func fetchBangumi() async {
         do {
             let items = try await FNOSBangumiClient.calendar()
-            bangumiItems = items
-            print("FNOS✅Bangumi 番剧推荐: \(items.count) 条")
+            bangumiItems = Array(items.prefix(30))
+            print("FNOS✅Bangumi 热门番剧: \(items.count) 条（取前 30）")
         } catch {
             print("FNOS⚠️Bangumi 获取失败: \(error.localizedDescription)")
         }
@@ -1162,7 +1162,7 @@ struct FNOSMainView: View {
 
         return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
-                Text("番剧推荐")
+                Text("热门番剧")
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundColor(.white.opacity(0.92))
                 Text("Bangumi")
@@ -1249,7 +1249,7 @@ struct FNOSMainView: View {
 
         return VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
-                Text("热门推荐")
+                Text("热门影视")
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundColor(.white.opacity(0.92))
                 Text("TMDB")

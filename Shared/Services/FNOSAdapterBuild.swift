@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v115"
+    static let version = "v116"
 
     /// 本版主要变更摘要
-    static let changes = "v115:新增番剧推荐功能。Bangumi API客户端(公开API无需key)+数据模型+首页番剧推荐海报墙行+每次启动刷新+Bangumi番剧详情页(简介/角色/标签/评分/放送日)。展示方式与TMDB热门推荐一致。"
+    static let changes = "v116:Bangumi封面优先large尺寸(解决模糊)+番剧限前30条+热门推荐改热门影视+番剧推荐改热门番剧。每日刷新一次。"
 }

@@ -72,6 +72,7 @@ struct FNOSMainView: View {
     @State private var resumeCoverImages: [String: UIImage] = [:]
     /// v111：TMDB 热门推荐
     @State private var tmdbItems: [FNOSTMDBItem] = []
+    @State private var tmdbDetailItem: FNOSTMDBItem?
     @AppStorage("fnos.tmdb.apikey") private var tmdbApiKey = ""
     @AppStorage("fnos.tmdb.date") private var tmdbDate = ""
     @State private var isLoading = false
@@ -292,6 +293,14 @@ struct FNOSMainView: View {
                 userID: userID,
                 onEpisodes: { _ in },
                 onMenuClose: { closeDetailWithReverse() }
+            )
+        }
+        // v113：TMDB 详情页 fullScreenCover
+        .fullScreenCover(item: $tmdbDetailItem) { tmdbItem in
+            FNOSTMDBDetailView(
+                item: tmdbItem,
+                apiKey: tmdbApiKey,
+                onDismiss: { tmdbDetailItem = nil }
             )
         }
         .sheet(isPresented: $showSettings) {
@@ -1160,7 +1169,7 @@ struct FNOSMainView: View {
                         VStack(alignment: .leading, spacing: 6) {
                             // v112：只有海报图在 Button 内参与焦点，文字在 Button 外不抢焦点
                             Button {
-                                // Phase 2：点击进 TMDB 详情页（暂未实现）
+                                tmdbDetailItem = item
                             } label: {
                                 FNOSAsyncImage(
                                     url: item.posterURL,

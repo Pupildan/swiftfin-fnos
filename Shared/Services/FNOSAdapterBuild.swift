@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v112"
+    static let version = "v113"
 
     /// 本版主要变更摘要
-    static let changes = "v112:三修。1)TMDB API Key改SecureField密文显示+清晰可编辑样式+已填写确认。2)热门推荐海报文字移出Button不抢焦点。3)FNOSPosterTile加Equatable(比item.Id+width),焦点移动时媒体库海报瓦片不再被无谓重渲染闪动。"
+    static let changes = "v113:新增TMDB详情页。点击热门推荐卡片打开全屏详情页,数据全从TMDB抓取(简介/演员/类型/评分/背景图)。页面风格与媒体库详情页一致。Hero按钮为加入影视库(Phase 3 PT+QBT后续接入)。"
 }

@@ -1157,10 +1157,11 @@ struct FNOSMainView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: spacing) {
                     ForEach(tmdbItems) { item in
-                        Button {
-                            // Phase 2：点击进 TMDB 详情页（暂未实现）
-                        } label: {
-                            VStack(alignment: .leading, spacing: 6) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            // v112：只有海报图在 Button 内参与焦点，文字在 Button 外不抢焦点
+                            Button {
+                                // Phase 2：点击进 TMDB 详情页（暂未实现）
+                            } label: {
                                 FNOSAsyncImage(
                                     url: item.posterURL,
                                     headers: [:],
@@ -1168,20 +1169,20 @@ struct FNOSMainView: View {
                                 )
                                 .frame(width: tileWidth, height: tileWidth * 3 / 2)
                                 .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            }
+                            .buttonStyle(.card)
 
-                                Text(item.title)
-                                    .font(.system(size: 15, weight: .medium))
-                                    .foregroundColor(.white.opacity(0.85))
-                                    .lineLimit(1)
+                            Text(item.title)
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundColor(.white.opacity(0.85))
+                                .lineLimit(1)
 
-                                if let year = item.year {
-                                    Text(year)
-                                        .font(.system(size: 13))
-                                        .foregroundColor(.white.opacity(0.45))
-                                }
+                            if let year = item.year {
+                                Text(year)
+                                    .font(.system(size: 13))
+                                    .foregroundColor(.white.opacity(0.45))
                             }
                         }
-                        .buttonStyle(.card)
                     }
                 }
                 .padding(.horizontal, hPadding)
@@ -1447,15 +1448,24 @@ struct FNOSHomeSettingsView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             Text("TMDB API Key")
                                 .font(.system(size: 20, weight: .medium))
-                            TextField("粘贴 API Key", text: $tmdbApiKeySetting)
+                            SecureField("粘贴 API Key（密文显示）", text: $tmdbApiKeySetting)
                                 .font(.system(size: 18, design: .monospaced))
-                                .foregroundColor(.primary)
+                                .foregroundColor(.white)
                                 .padding(.horizontal, 16)
-                                .padding(.vertical, 12)
+                                .padding(.vertical, 14)
                                 .background(
                                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                        .fill(Color.white.opacity(0.08))
+                                        .fill(Color.white.opacity(0.12))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                                .stroke(Color.white.opacity(0.25), lineWidth: 1)
+                                        )
                                 )
+                            if !tmdbApiKeySetting.isEmpty {
+                                Text("已填写 ✓ (\(tmdbApiKeySetting.prefix(4))…)")
+                                    .font(.system(size: 15))
+                                    .foregroundColor(.green.opacity(0.8))
+                            }
                         }
                         .padding(.horizontal, 26)
                         .padding(.vertical, 16)
@@ -1679,7 +1689,7 @@ struct FNOSBareButtonStyle: ButtonStyle {
 /// 纯海报瓦片：不显示标题/年份。v85 起焦点视觉（液态玻璃 + 抬升）
 /// 全权交给 Button 的系统 .card 样式（与 Demo 同款，用户点名），
 /// 自绘的描边/阴影/放大在此版拆除——叠在系统玻璃上会双重高亮。
-fileprivate struct FNOSPosterTile: View {
+fileprivate struct FNOSPosterTile: View, Equatable {
 
     let item: FNOSItem
     let client: FNOSDirectClient?
@@ -1689,6 +1699,15 @@ fileprivate struct FNOSPosterTile: View {
     /// v95 原生条目直通海报（TV直播/古风MV；nil = 走 compat posterURL）
     var nativePosterURL: String? = nil
     var nativeHeaders: [String: String]? = nil
+
+    /// v112：Equatable —— 父视图重算时比较新旧结构体，相等则跳过 body。
+    /// 只比 item.Id + width + nativePosterURL（影响渲染的字段），
+    /// 切断「焦点移动→父视图重算→海报瓦片被无谓重渲染→闪动」的链路。
+    static func == (lhs: FNOSPosterTile, rhs: FNOSPosterTile) -> Bool {
+        lhs.item.Id == rhs.item.Id
+            && lhs.width == rhs.width
+            && lhs.nativePosterURL == rhs.nativePosterURL
+    }
 
     private var height: CGFloat { width * 3 / 2 }
     private var cornerRadius: CGFloat { 14 }

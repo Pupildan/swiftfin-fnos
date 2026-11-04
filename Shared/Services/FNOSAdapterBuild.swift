@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v111"
+    static let version = "v112"
 
     /// 本版主要变更摘要
-    static let changes = "v111:新增热门推荐功能(Phase 1)。TMDB API客户端+数据模型+首页热门推荐海报墙行+每日自动刷新+设置面板TMDB API Key输入框。API Key由用户在设置里自行填写(开源友好)。"
+    static let changes = "v112:三修。1)TMDB API Key改SecureField密文显示+清晰可编辑样式+已填写确认。2)热门推荐海报文字移出Button不抢焦点。3)FNOSPosterTile加Equatable(比item.Id+width),焦点移动时媒体库海报瓦片不再被无谓重渲染闪动。"
 }

@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v107"
+    static let version = "v108"
 
     /// 本版主要变更摘要
-    static let changes = "v107:回滚到v98基线后仅加古风MV兼容层过滤(兼容层loadItems对该库返回数据导致行上墙,v98只断了原生行漏了这条路)。无其他改动,动画/缓存/预取等全部保持v98原样。"
+    static let changes = "v108:v98基线+古风MV过滤+续播封面硬常驻(hardPin,12张独立字典不被任何驱逐)+详情关闭不再重建续播行(避免动画期间不必要的焦点重注册)。不含磁盘缓存/pinned LRU/warm-up/日志采集器等高风险改动。"
 }

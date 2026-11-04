@@ -123,6 +123,24 @@ final class FNOSImageCache {
         posters = posterCache
     }
 
+    // ---- v108 硬常驻层（继续播放封面专用）----
+    // 独立于 NSCache 之外的最小字典（≤12 张），不参与任何驱逐。
+    // 续播封面一旦加载，任何缓存 churn 都无法把它挤掉 → 进出详情不再连带重载。
+    private var hardPinned: [NSString: UIImage] = [:]
+    private let hardPinLimit = 12
+
+    func hardPin(_ image: UIImage, forKey key: NSString) {
+        guard hardPinned[key] == nil else { return }
+        if hardPinned.count >= hardPinLimit, let oldest = hardPinned.keys.first {
+            hardPinned.removeValue(forKey: oldest)
+        }
+        hardPinned[key] = image
+    }
+
+    func hardPinnedObject(forKey key: NSString) -> UIImage? {
+        hardPinned[key]
+    }
+
     func cache(forPoster: Bool) -> NSCache<NSString, UIImage> {
         forPoster ? posters : memory
     }
@@ -138,6 +156,9 @@ struct FNOSAsyncImage: View {
     /// v84：海报类小图走独立 posters 缓存（海报墙/行副本/选集卡传 true），
     /// 与 1920 横图通用缓存隔离，杜绝互相挤兑。
     var usePosterCache: Bool = false
+    /// v108：硬常驻（继续播放封面传 true）——加载成功后入 hardPinned 字典，
+    /// 不被任何驱逐路径清掉；首帧同步查优先命中硬常驻。
+    var hardPin: Bool = false
 
     private enum Phase {
         case loading, loaded, failed
@@ -152,8 +173,13 @@ struct FNOSAsyncImage: View {
         // body 内同步查一次：命中则第一帧直接出图，转圈彻底消失。
         let syncCached: UIImage? = (phase != .loaded)
             ? url.flatMap {
-                FNOSImageCache.shared.cache(forPoster: usePosterCache)
-                    .object(forKey: $0.absoluteString as NSString)
+                let key = $0.absoluteString as NSString
+                // v108：继续播放封面优先命中硬常驻（永不被驱逐）
+                if hardPin, let img = FNOSImageCache.shared.hardPinnedObject(forKey: key) {
+                    return img
+                }
+                return FNOSImageCache.shared.cache(forPoster: usePosterCache)
+                    .object(forKey: key)
             }
             : nil
         let resolvedImage = image ?? syncCached
@@ -198,6 +224,8 @@ struct FNOSAsyncImage: View {
         let cache = FNOSImageCache.shared.cache(forPoster: usePosterCache)
         if let cached = cache.object(forKey: key) {
             guard !Task.isCancelled else { return }
+            // v108：命中入硬常驻（继续播放封面用），之后不再怕缓存被清
+            if hardPin { FNOSImageCache.shared.hardPin(cached, forKey: key) }
             image = cached
             phase = .loaded
             return
@@ -239,6 +267,8 @@ struct FNOSAsyncImage: View {
             // v84：cost = 压缩字节数。通用缓存按成本驱逐（1920 横图远重于海报），
             // 防止详情页轮播大图把缓存挤爆；海报缓存按张数管理（cost 被忽略）
             cache.setObject(decoded, forKey: key, cost: data.count)
+            // v108：入硬常驻（继续播放封面用），之后不再怕缓存被清
+            if hardPin { FNOSImageCache.shared.hardPin(decoded, forKey: key) }
             // 过期结果丢弃：url 已变（.task 被取消）时不要覆盖当前视图
             guard !Task.isCancelled else { return }
             image = decoded

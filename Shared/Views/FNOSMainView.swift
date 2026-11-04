@@ -269,9 +269,10 @@ struct FNOSMainView: View {
         // 详情页走 fullScreenCover（系统原生处理 Menu，可靠关闭，v77 嵌入已回滚）。
         // v82：Menu 改由 cover 内容内 onExitCommand 拦截 → closeDetailWithReverse()
         // （有卡片来源时反向缩回）；onDismiss 兜底系统路径并负责还焦点 + v89 刷新继续播放。
+        // v108：详情 onDismiss 不再重建继续播放——浏览详情不改变播放进度，
+        // 重建会触发 resumeEntries 重赋值 + 焦点引擎重注册 = 动画期间不必要的扰动
         .fullScreenCover(item: $detailItem, onDismiss: {
             closeDetail()
-            rebuildResumeEntries()
         }) { item in
             FNOSItemDetailView(
                 item: item,
@@ -613,7 +614,8 @@ struct FNOSMainView: View {
                 FNOSAsyncImage(
                     url: client?.resumeStillURL(item: item),
                     headers: client?.mediaHeaders ?? [:],
-                    usePosterCache: true
+                    usePosterCache: true,
+                    hardPin: true
                 )
                 .frame(width: width, height: width * 9 / 16)
                 .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))

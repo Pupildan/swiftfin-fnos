@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v119"
+    static let version = "v120"
 
     /// 本版主要变更摘要
-    static let changes = "v119:播放三修。1)播放时不进系统屏保(两个引擎onAppear设isIdleTimerDisabled,onDisappear恢复)。2)mpv引擎剧集播完自动连播下一集(ticker位置逼近时长检测+onFinished回调接容器换集链路,暂停态不误判)。3)mpv字幕/弹幕颜色发灰修复(tone-mapping改hable+target-peak100+黑位压深+sub-color强制纯白,sub-ass-override=force)。"
+    static let changes = "v120:加入影视库功能上线。热门影视详情页按钮接 MoviePilot 订阅：点击即发起订阅(自动搜种/推下载/入库)，按钮三态(加入影视库/已订阅下载中/已在库中)，已在库中=飞牛库内标题探测+MP订阅态双查。设置面板新增 MoviePilot 服务地址+API 密钥。API 契约全部实测(X-API-KEY 头)。番剧入库需 ID 映射二期接入。"
 }

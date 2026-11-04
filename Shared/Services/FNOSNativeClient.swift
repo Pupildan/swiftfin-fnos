@@ -150,6 +150,13 @@ final class FNOSNativeClient {
         return result
     }
 
+    /// v120：按标题探测飞牛库内是否已有该条目（「已在库中」判定用）。
+    /// 标题模糊匹配（TMDB 中文标题与飞牛刮削标题通常一致），无年份过滤。
+    func existsInLibrary(title: String, isSeries: Bool) async -> Bool {
+        let log = DebugLog()
+        return await searchItem(title: title, isSeries: isSeries, log: log) != nil
+    }
+
     /// 演员头像 URL（走 sys/img，需要 Authx 头）
     func personImageURL(profilePath: String, width: Int = 300) -> URL? {
         guard !profilePath.isEmpty else { return nil }

@@ -28,11 +28,27 @@ struct FNOSTMDBDetail: Identifiable {
 struct FNOSTMDBDetailView: View {
     let item: FNOSTMDBItem
     let apiKey: String
+    /// v120：MoviePilot 入库（未配置则隐藏按钮）
+    var mpBase: String = ""
+    var mpKey: String = ""
+    /// v120：飞牛库内探测闭包（主视图注入，返回 true = 已在库）
+    var inLibraryCheck: ((FNOSTMDBItem) async -> Bool)? = nil
     let onDismiss: () -> Void
 
     @State private var detail: FNOSTMDBDetail?
     @State private var isLoading = true
     @Environment(\.dismiss) private var dismiss
+
+    /// v120：入库按钮状态机
+    private enum LibState {
+        case idle, checking, subscribed, inLibrary, adding
+    }
+    @State private var libState: LibState = .idle
+    @State private var mpMessage: String = ""
+
+    private var mpConfigured: Bool {
+        FNOSMoviePilotClient.configured(base: mpBase, apiKey: mpKey)
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -76,6 +92,44 @@ struct FNOSTMDBDetailView: View {
         }
         .ignoresSafeArea()
         .task { await loadDetail() }
+        .task { await refreshLibState() }
+    }
+
+    // MARK: - v120 入库状态机
+
+    private func refreshLibState() async {
+        guard mpConfigured else { return }
+        libState = .checking
+        // 1) MoviePilot 订阅态
+        let subId = await FNOSMoviePilotClient.lookupSubscribe(
+            base: mpBase, apiKey: mpKey, tmdbid: item.id
+        )
+        // 2) 飞牛库内探测（标题模糊匹配）
+        var inLib = false
+        if let check = inLibraryCheck {
+            inLib = await check(item)
+        }
+        libState = inLib ? .inLibrary : (subId != nil ? .subscribed : .idle)
+    }
+
+    private func addToLibrary() async {
+        guard libState == .idle else { return }
+        libState = .adding
+        let (ok, message) = await FNOSMoviePilotClient.addSubscribe(
+            base: mpBase,
+            apiKey: mpKey,
+            tmdbid: item.id,
+            type: item.mediaType,
+            name: item.title,
+            year: item.year
+        )
+        if ok {
+            mpMessage = ""
+            libState = .subscribed
+        } else {
+            mpMessage = message.isEmpty ? "添加失败" : message
+            libState = .idle
+        }
     }
 
     // MARK: - Hero
@@ -127,29 +181,52 @@ struct FNOSTMDBDetailView: View {
                     }
                 }
 
-                // 加入影视库按钮
-                Button {
-                    // Phase 3：PT 搜种 + QBT 推送（暂未实现）
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 18, weight: .bold))
-                        Text("加入影视库")
-                            .font(.system(size: 20, weight: .semibold))
+                // v120：加入影视库按钮（状态机）
+                if mpConfigured {
+                    Button {
+                        Task { await addToLibrary() }
+                    } label: {
+                        HStack(spacing: 8) {
+                            switch libState {
+                            case .checking:
+                                ProgressView().tint(.white)
+                                Text("检查中…")
+                            case .inLibrary:
+                                Image(systemName: "checkmark.circle.fill")
+                                Text("已在库中")
+                            case .subscribed:
+                                Image(systemName: "arrow.down.circle.fill")
+                                Text("已订阅·下载中")
+                            case .adding:
+                                ProgressView().tint(.white)
+                                Text("提交中…")
+                            case .idle:
+                                Image(systemName: "plus")
+                                Text("加入影视库")
+                            }
+                        }
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 32)
+                        .padding(.vertical, 14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(libState == .inLibrary ? Color.green.opacity(0.35) : Color.white.opacity(0.18))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .stroke(Color.white.opacity(0.4), lineWidth: 1.5)
+                                )
+                        )
                     }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 32)
-                    .padding(.vertical, 14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(Color.white.opacity(0.18))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .stroke(Color.white.opacity(0.4), lineWidth: 1.5)
-                            )
-                    )
+                    .buttonStyle(.card)
+                    .disabled(libState != .idle)
+
+                    if !mpMessage.isEmpty {
+                        Text(mpMessage)
+                            .font(.system(size: 15))
+                            .foregroundColor(.orange.opacity(0.9))
+                    }
                 }
-                .buttonStyle(.card)
             }
             .padding(.horizontal, 60)
             .padding(.bottom, 30)

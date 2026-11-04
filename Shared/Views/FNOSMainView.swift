@@ -74,6 +74,9 @@ struct FNOSMainView: View {
     @State private var tmdbItems: [FNOSTMDBItem] = []
     @State private var tmdbDetailItem: FNOSTMDBItem?
     @AppStorage("fnos.tmdb.apikey") private var tmdbApiKey = ""
+    /// v120：MoviePilot 入库设置
+    @AppStorage("fnos.mp.url") private var mpURLSetting = ""
+    @AppStorage("fnos.mp.apikey") private var mpKeySetting = ""
     @AppStorage("fnos.tmdb.date") private var tmdbDate = ""
     /// v117：每日持久缓存（JSON），跨启动复用——同日重启不再请求
     @AppStorage("fnos.tmdb.cache") private var tmdbCache = ""
@@ -306,11 +309,19 @@ struct FNOSMainView: View {
                 onMenuClose: { closeDetailWithReverse() }
             )
         }
-        // v113：TMDB 详情页 fullScreenCover
+        // v113：TMDB 详情页 fullScreenCover（v120 接入 MoviePilot 入库）
         .fullScreenCover(item: $tmdbDetailItem) { tmdbItem in
             FNOSTMDBDetailView(
                 item: tmdbItem,
                 apiKey: tmdbApiKey,
+                mpBase: mpURLSetting,
+                mpKey: mpKeySetting,
+                inLibraryCheck: { tmdbItem in
+                    guard let creds = FNOSAuthStore.shared.credentials,
+                          let nt = creds.nativeToken, !nt.isEmpty else { return false }
+                    let native = FNOSNativeClient(baseURL: creds.serverURL, token: nt)
+                    return await native.existsInLibrary(title: tmdbItem.title, isSeries: tmdbItem.mediaType == "tv")
+                },
                 onDismiss: { tmdbDetailItem = nil }
             )
         }
@@ -1456,6 +1467,9 @@ struct FNOSHomeSettingsView: View {
     @AppStorage("fnos.danmu.offsetY") private var danmuOffsetY: Double = 0
     /// v111：TMDB API key（用户在设置里填，不硬编码）
     @AppStorage("fnos.tmdb.apikey") private var tmdbApiKeySetting = ""
+    /// v120：MoviePilot 入库设置（与主视图共用同一批键）
+    @AppStorage("fnos.mp.url") private var mpURLSetting = ""
+    @AppStorage("fnos.mp.apikey") private var mpKeySetting = ""
 
     // 过渡动画 Demo（验证 matchedGeometryEffect 在真机上的顺滑度，确认后再决定是否集成到海报墙）
     @State private var showTransitionDemo = false
@@ -1606,6 +1620,57 @@ struct FNOSHomeSettingsView: View {
                                 )
                             if !tmdbApiKeySetting.isEmpty {
                                 Text("已填写 ✓ (\(tmdbApiKeySetting.prefix(4))…)")
+                                    .font(.system(size: 15))
+                                    .foregroundColor(.green.opacity(0.8))
+                            }
+                        }
+                        .padding(.horizontal, 26)
+                        .padding(.vertical, 16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .fill(Color.white.opacity(0.10))
+                        )
+                    }
+
+                    // v120：MoviePilot 入库（地址 + API 密钥）
+                    section(
+                        "MoviePilot 入库",
+                        footer: "填写后，热门影视详情页的「加入影视库」会向 MoviePilot 发起订阅：自动搜索种子 → 推送下载 → 入库。密钥在 MoviePilot 设定页获取。"
+                    ) {
+                        VStack(alignment: .leading, spacing: 12) {
+                            Text("服务地址")
+                                .font(.system(size: 20, weight: .medium))
+                            TextField("如 http://192.168.10.120:30033", text: $mpURLSetting)
+                                .font(.system(size: 18, design: .monospaced))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 14)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .fill(Color.white.opacity(0.12))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                                .stroke(Color.white.opacity(0.25), lineWidth: 1)
+                                        )
+                                )
+                            Text("API 密钥")
+                                .font(.system(size: 20, weight: .medium))
+                            SecureField("粘贴 API 密钥（密文显示）", text: $mpKeySetting)
+                                .font(.system(size: 18, design: .monospaced))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 14)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .fill(Color.white.opacity(0.12))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                                .stroke(Color.white.opacity(0.25), lineWidth: 1)
+                                        )
+                                )
+                            if !mpURLSetting.isEmpty && !mpKeySetting.isEmpty {
+                                Text("已配置 ✓")
                                     .font(.system(size: 15))
                                     .foregroundColor(.green.opacity(0.8))
                             }

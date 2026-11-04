@@ -127,29 +127,7 @@ struct FNOSBangumiDetailView: View {
                     }
                 }
 
-                // 加入影视库按钮
-                Button {
-                    // Phase 3：PT 搜种 + QBT 推送（暂未实现）
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 18, weight: .bold))
-                        Text("加入影视库")
-                            .font(.system(size: 20, weight: .semibold))
-                    }
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 32)
-                    .padding(.vertical, 14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(Color.white.opacity(0.18))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .stroke(Color.white.opacity(0.4), lineWidth: 1.5)
-                            )
-                    )
-                }
-                .buttonStyle(.card)
+                // v120：番剧入库需 Bangumi→TMDB ID 映射，二期接入（按钮暂不显示）
             }
             .padding(.horizontal, 60)
             .padding(.bottom, 30)

@@ -124,9 +124,6 @@ struct FNOSMPVPlayerView: View {
         )
     }
 
-    /// v119：播放结束容差（秒）
-    private static let endTolerance: Double = 1.5
-
     private var resumeKey: String { "fnos.resume.native.\(currentGUID)" }
 
     var body: some View {
@@ -757,6 +754,7 @@ struct FNOSMPVPlayerView: View {
 
     private func startTicker(_ player: MPVPlayer) {
         ticker?.cancel()
+        let finishHandler: () -> Void = { [onFinished] in onFinished?() }
         ticker = Task { @MainActor in
             while !Task.isCancelled {
                 let position = seconds(player.position)
@@ -772,14 +770,13 @@ struct FNOSMPVPlayerView: View {
                 // v119：播放结束检测（MPVUI 无 eof 事件，用位置逼近时长判定）。
                 // 只对剧集单集触发；容差 1.5s 吸收 ticker 250ms 粒度与关键帧抖动。
                 // 防御：暂停状态下位置接近末尾不算「播完」（用户可能在片尾拖拽）
-                let total = seconds(player.duration)
-                if !didFinish,
-                   total > 60,
-                   !player.isPaused,
-                   total - position <= Self.endTolerance {
+                let totalSeconds: Double = seconds(player.duration)
+                let paused: Bool = player.isPaused
+                let nearEnd: Bool = totalSeconds > 60 && (totalSeconds - position) <= 1.5
+                if !didFinish && !paused && nearEnd {
                     didFinish = true
                     danmu.setRate(0)
-                    onFinished?()
+                    finishHandler()
                 }
 
                 // 自动隐藏：播放中、无面板展开、5 秒无操作

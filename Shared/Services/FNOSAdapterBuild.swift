@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v114"
+    static let version = "v115"
 
     /// 本版主要变更摘要
-    static let changes = "v114:修复TMDB热门推荐行消失。根因:fetchTMDBIfNeeded用tmdbDate!=today守卫,但tmdbItems是@State每次启动重置为空,同一天第二次打开App时tmdbDate匹配today直接return不抓取,tmdbItems留空行消失。改为guard tmdbItems.isEmpty,每次启动总会抓取。"
+    static let changes = "v115:新增番剧推荐功能。Bangumi API客户端(公开API无需key)+数据模型+首页番剧推荐海报墙行+每次启动刷新+Bangumi番剧详情页(简介/角色/标签/评分/放送日)。展示方式与TMDB热门推荐一致。"
 }

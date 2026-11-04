@@ -74,6 +74,9 @@ struct FNOSMainView: View {
     @State private var tmdbItems: [FNOSTMDBItem] = []
     @State private var tmdbDetailItem: FNOSTMDBItem?
     @AppStorage("fnos.tmdb.apikey") private var tmdbApiKey = ""
+    /// v115：Bangumi 番剧推荐
+    @State private var bangumiItems: [FNOSBangumiItem] = []
+    @State private var bangumiDetailItem: FNOSBangumiItem?
     @AppStorage("fnos.tmdb.date") private var tmdbDate = ""
     @State private var isLoading = false
     @State private var didBootstrap = false
@@ -183,6 +186,10 @@ struct FNOSMainView: View {
                                     // v111：热门推荐（TMDB），有数据才显示
                                     if !tmdbItems.isEmpty {
                                         tmdbShelf(screenWidth: geo.size.width)
+                                    }
+                                    // v115：番剧推荐（Bangumi），有数据才显示
+                                    if !bangumiItems.isEmpty {
+                                        bangumiShelf(screenWidth: geo.size.width)
                                     }
                                 }
                                 .padding(.vertical, 40)
@@ -301,6 +308,13 @@ struct FNOSMainView: View {
                 item: tmdbItem,
                 apiKey: tmdbApiKey,
                 onDismiss: { tmdbDetailItem = nil }
+            )
+        }
+        // v115：Bangumi 番剧详情页 fullScreenCover
+        .fullScreenCover(item: $bangumiDetailItem) { bgItem in
+            FNOSBangumiDetailView(
+                item: bgItem,
+                onDismiss: { bangumiDetailItem = nil }
             )
         }
         .sheet(isPresented: $showSettings) {
@@ -1115,11 +1129,94 @@ struct FNOSMainView: View {
             rebuildResumeEntries()
             // v111：TMDB 热门推荐（每日首次进入刷新）
             await fetchTMDBIfNeeded()
+            // v115：Bangumi 番剧推荐（每次启动刷新，公开 API 无限流顾虑）
+            await fetchBangumi()
         } catch {
             isLoading = false
             print("FNOS❗️加载媒体库失败: \(error)")
         }
     }
+
+    // MARK: - v115 Bangumi 番剧推荐
+
+    /// 每次启动从 Bangumi 抓取每日放送日历，扁平化为番剧列表
+    private func fetchBangumi() async {
+        do {
+            let items = try await FNOSBangumiClient.calendar()
+            bangumiItems = items
+            print("FNOS✅Bangumi 番剧推荐: \(items.count) 条")
+        } catch {
+            print("FNOS⚠️Bangumi 获取失败: \(error.localizedDescription)")
+        }
+    }
+
+    /// v115：Bangumi 番剧推荐海报墙（与媒体库/TMDB 行同款版式，海报走 Bangumi CDN 无需鉴权）
+    private func bangumiShelf(screenWidth: CGFloat) -> some View {
+        let hPadding: CGFloat = 72
+        let spacing: CGFloat = 28
+        let visibleCount: CGFloat = 6
+        let tileWidth = max(
+            140,
+            (screenWidth - hPadding * 2 - spacing * (visibleCount - 1)) / visibleCount
+        )
+
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Text("番剧推荐")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.92))
+                Text("Bangumi")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.white.opacity(0.45))
+                Spacer()
+            }
+            .padding(.horizontal, hPadding)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: spacing) {
+                    ForEach(bangumiItems) { item in
+                        VStack(alignment: .leading, spacing: 6) {
+                            // 只有海报图在 Button 内参与焦点，文字在 Button 外不抢焦点
+                            Button {
+                                bangumiDetailItem = item
+                            } label: {
+                                FNOSAsyncImage(
+                                    url: item.imageURL,
+                                    headers: [:],
+                                    usePosterCache: true
+                                )
+                                .frame(width: tileWidth, height: tileWidth * 3 / 2)
+                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            }
+                            .buttonStyle(.card)
+
+                            Text(item.displayTitle)
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundColor(.white.opacity(0.85))
+                                .lineLimit(1)
+
+                            HStack(spacing: 6) {
+                                if item.score > 0 {
+                                    Text(String(format: "%.1f", item.score))
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.yellow.opacity(0.8))
+                                }
+                                if let wd = item.weekday {
+                                    Text(wd)
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.white.opacity(0.45))
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, hPadding)
+                .padding(.vertical, 26)
+            }
+        }
+    }
+
+    /// 📴【搁置 · TV直播/古风MV】v95 原生库数据行——v98 起调用点已注释（见 bootstrap
 
     // MARK: - v111 TMDB 热门推荐
 

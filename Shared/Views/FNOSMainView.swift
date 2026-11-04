@@ -1015,6 +1015,13 @@ struct FNOSMainView: View {
             // 每个库一行海报墙；单库失败不拖垮整页（打印真实报错后继续下一库）
             var loaded: [FNOSLibrarySection] = []
             for library in libraries {
+                // 搁置库按名过滤（兼容层口径）——兼容层 /Items 对古风MV 库返回数据，
+                // 不加此过滤则行照常上墙（v98 只注释了原生行，漏了这条路）
+                let libName = library.Name ?? ""
+                if libName.contains("MV") || libName.lowercased().contains("mv") || libName.contains("直播") {
+                    print("FNOSℹ️搁置库「\(libName)」跳过加载")
+                    continue
+                }
                 do {
                     let items = try await loadItems(for: library, client: newClient)
                     loaded.append(FNOSLibrarySection(library: library, items: items))

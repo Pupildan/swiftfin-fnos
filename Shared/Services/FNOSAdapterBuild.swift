@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v110"
+    static let version = "v111"
 
     /// 本版主要变更摘要
-    static let changes = "v110:续播封面完全脱离FNOSAsyncImage管线。用强引用字典[String:UIImage]直接持有图片, resumeCard用Image(uiImage:)渲染, 无async/无缓存/无spinner/无闪动可能。每次rebuildResumeEntries后下载全部封面进字典, 永不驱逐。"
+    static let changes = "v111:新增热门推荐功能(Phase 1)。TMDB API客户端+数据模型+首页热门推荐海报墙行+每日自动刷新+设置面板TMDB API Key输入框。API Key由用户在设置里自行填写(开源友好)。"
 }

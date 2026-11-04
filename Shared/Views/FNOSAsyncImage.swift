@@ -119,7 +119,7 @@ final class FNOSImageCache {
         memory = cache
 
         let posterCache = NSCache<NSString, UIImage>()
-        posterCache.countLimit = 300
+        posterCache.countLimit = 500   // v111：覆盖全部海报（5库×100条），避免进出详情时被驱逐重载
         posters = posterCache
     }
 

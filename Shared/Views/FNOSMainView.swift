@@ -70,6 +70,10 @@ struct FNOSMainView: View {
     /// 用 Image(uiImage:) 直接渲染，无 async、无缓存、无 spinner、无闪动可能。
     /// key = item.Id，value = 解码后的 UIImage
     @State private var resumeCoverImages: [String: UIImage] = [:]
+    /// v111：TMDB 热门推荐
+    @State private var tmdbItems: [FNOSTMDBItem] = []
+    @AppStorage("fnos.tmdb.apikey") private var tmdbApiKey = ""
+    @AppStorage("fnos.tmdb.date") private var tmdbDate = ""
     @State private var isLoading = false
     @State private var didBootstrap = false
 
@@ -174,6 +178,10 @@ struct FNOSMainView: View {
                                     }
                                     ForEach(sections.filter { !$0.items.isEmpty }) { section in
                                         shelf(section, screenWidth: geo.size.width)
+                                    }
+                                    // v111：热门推荐（TMDB），有数据才显示
+                                    if !tmdbItems.isEmpty {
+                                        tmdbShelf(screenWidth: geo.size.width)
                                     }
                                 }
                                 .padding(.vertical, 40)
@@ -1096,9 +1104,89 @@ struct FNOSMainView: View {
             refreshHeroSnapshot()
             // 继续播放（v91：服务端 + 本机记录合并；只展示最近 6 条，ATV 版式）
             rebuildResumeEntries()
+            // v111：TMDB 热门推荐（每日首次进入刷新）
+            await fetchTMDBIfNeeded()
         } catch {
             isLoading = false
             print("FNOS❗️加载媒体库失败: \(error)")
+        }
+    }
+
+    // MARK: - v111 TMDB 热门推荐
+
+    /// 每日首次进入时从 TMDB 抓取热门推荐，缓存到 @State + AppStorage 日期戳
+    private func fetchTMDBIfNeeded() async {
+        guard !tmdbApiKey.isEmpty else { return }
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        let today = formatter.string(from: Date())
+        guard tmdbDate != today else { return } // 今日已刷新
+
+        do {
+            let items = try await FNOSTMDBClient.trending(apiKey: tmdbApiKey)
+            tmdbItems = items
+            tmdbDate = today
+            print("FNOS✅TMDB 热门推荐: \(items.count) 条")
+        } catch {
+            print("FNOS⚠️TMDB 获取失败: \(error.localizedDescription)")
+        }
+    }
+
+    /// v111：TMDB 热门推荐海报墙（与媒体库行同款版式，海报走 TMDB CDN 无需鉴权）
+    private func tmdbShelf(screenWidth: CGFloat) -> some View {
+        let hPadding: CGFloat = 72
+        let spacing: CGFloat = 28
+        let visibleCount: CGFloat = 6
+        let tileWidth = max(
+            140,
+            (screenWidth - hPadding * 2 - spacing * (visibleCount - 1)) / visibleCount
+        )
+
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Text("热门推荐")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.92))
+                Text("TMDB")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.white.opacity(0.45))
+                Spacer()
+            }
+            .padding(.horizontal, hPadding)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: spacing) {
+                    ForEach(tmdbItems) { item in
+                        Button {
+                            // Phase 2：点击进 TMDB 详情页（暂未实现）
+                        } label: {
+                            VStack(alignment: .leading, spacing: 6) {
+                                FNOSAsyncImage(
+                                    url: item.posterURL,
+                                    headers: [:],
+                                    usePosterCache: true
+                                )
+                                .frame(width: tileWidth, height: tileWidth * 3 / 2)
+                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+
+                                Text(item.title)
+                                    .font(.system(size: 15, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.85))
+                                    .lineLimit(1)
+
+                                if let year = item.year {
+                                    Text(year)
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.white.opacity(0.45))
+                                }
+                            }
+                        }
+                        .buttonStyle(.card)
+                    }
+                }
+                .padding(.horizontal, hPadding)
+                .padding(.vertical, 26)
+            }
         }
     }
 
@@ -1222,6 +1310,8 @@ struct FNOSHomeSettingsView: View {
     @AppStorage("fnos.danmu.speed") private var danmuSpeed: Double = 1
     @AppStorage("fnos.danmu.opacity") private var danmuOpacity: Double = 1
     @AppStorage("fnos.danmu.offsetY") private var danmuOffsetY: Double = 0
+    /// v111：TMDB API key（用户在设置里填，不硬编码）
+    @AppStorage("fnos.tmdb.apikey") private var tmdbApiKeySetting = ""
 
     // 过渡动画 Demo（验证 matchedGeometryEffect 在真机上的顺滑度，确认后再决定是否集成到海报墙）
     @State private var showTransitionDemo = false
@@ -1347,6 +1437,33 @@ struct FNOSHomeSettingsView: View {
                         ) { step in
                             danmuOffsetY = min(max(danmuOffsetY + Double(step) * 20, -80), 420)
                         }
+                    }
+
+                    // v111：TMDB API key 设置（开源项目，key 由用户自行填写）
+                    section(
+                        "TMDB 热门推荐",
+                        footer: "填写 TMDB API Key 后，首页底部会出现「热门推荐」行，每日自动刷新。API Key 在 themoviedb.org 免费注册获取。"
+                    ) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("TMDB API Key")
+                                .font(.system(size: 20, weight: .medium))
+                            TextField("粘贴 API Key", text: $tmdbApiKeySetting)
+                                .font(.system(size: 18, design: .monospaced))
+                                .foregroundColor(.primary)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 12)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .fill(Color.white.opacity(0.08))
+                                )
+                        }
+                        .padding(.horizontal, 26)
+                        .padding(.vertical, 16)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(
+                            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                .fill(Color.white.opacity(0.10))
+                        )
                     }
 
                     section("关于") {

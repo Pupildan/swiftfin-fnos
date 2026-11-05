@@ -105,10 +105,9 @@ enum FNOSDoubanClient {
 
     /// 复刻 MoviePilot apiv2.py 的 __sign：base64(HMAC-SHA1(secret, "GET&{quote(path,safe='')}&{ts}"))
     private static func frodoSign(path: String, ts: Int, method: String = "GET") -> String {
-        var allowed = CharacterSet.alphanumerics
-        allowed.insert(contentsOf: "_.-~")
-        let quoted = path.addingPercentEncoding(withAllowedCharacters: allowed) ?? path
-        let raw = "\(method.upper())&\(quoted)&\(ts)"
+        // Python parse.quote(path, safe='')：把 / 编码成 %2F，其余（字母数字/_.-~）不动
+        let quoted = path.replacingOccurrences(of: "/", with: "%2F")
+        let raw = "\(method.uppercased())&\(quoted)&\(ts)"
         let key = SymmetricKey(data: Data(frodoSecret.utf8))
         let sig = HMAC<SHA1>.authenticationCode(for: Data(raw.utf8), using: key)
         return Data(sig).base64EncodedString()

@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v139"
+    static let version = "v140"
 
     /// 本版主要变更摘要
-    static let changes = "v139:Apple TV+标准架构重构(外层骨架)。1)ZStack叠层——底层Hero视觉原样保留(全屏背景+轮播+智能预告+按钮组内部零改动),顶层透明垂直ScrollView(顶部65%屏幕高度占位露出Hero,其后依次排列继续播放+媒体库各行)。2)Hero按钮组容器加.focusSection(),继续播放横向列表加.focusSection()。3)删除UIFocusGuideBand,删除onMoveCommand的.down分支与onDownToShelf回调,完全依赖UIKit焦点引擎物理几何计算——Hero按上键原生滚动让页面自动上移。4)不折叠不拦截不动态改高度。"
+    static let changes = "v140:修Hero死背景。1)拆除ZStack叠层——Hero整体(全屏背景+渐变遮罩+Logo+简介+按钮组)作为ScrollView第一项,按下键时随ScrollView一起平滑滑出屏幕,卡片自然推上(ATV+内容跟随)。2)Hero高度100%屏高+ignoresSafeArea铺满,无占位无重叠。3)Hero信息区整体上移(bottom 72→190)对齐ATV+参考图。4)焦点路由与.focusSection()零改动。"
 }

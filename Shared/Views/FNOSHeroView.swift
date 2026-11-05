@@ -210,10 +210,11 @@ struct FNOSHeroBanner: View {
                 .allowsHitTesting(false)
 
                 // ---- 左下角：大标题 + 分类 + 简介 + 按钮组 ----
+                // v140：整体上移（bottom 72→190，对齐 ATV+ 参考图——按钮组位于屏幕约 85% 处，底部留出内容行 peek 空间）
                 if let item = current {
                     infoStack(item: item)
                         .padding(.leading, 72)
-                        .padding(.bottom, 72)
+                        .padding(.bottom, 190)
                 }
 
                 // ---- 底部正中：轮播指示圆点 ----

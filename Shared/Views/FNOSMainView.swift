@@ -153,63 +153,57 @@ struct FNOSMainView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    // v139：Apple TV+ 标准架构——ZStack 叠层，完全依赖焦点引擎物理几何路由
-                    ZStack(alignment: .top) {
-                        // 底层：Hero 视觉（v133 原样：全屏背景+轮播+智能预告+按钮组，内部零改动）
-                        if !heroSnapshot.isEmpty, let heroClient = client {
-                            FNOSHeroBanner(
-                                items: heroSnapshot,
-                                client: heroClient,
-                                userID: userID,
-                                onPlay: { item in
-                                    // Hero 播放 = 立即播放，不跳详情页
-                                    playDirectly(item: item)
-                                },
-                                onDetail: { item in
-                                    // Hero 无卡片可起跳：直接出详情页
-                                    openDetailDirect(item: item)
-                                }
-                            )
-                            .frame(width: geo.size.width, height: geo.size.height)
-                        }
-
-                        // 顶层：透明垂直 ScrollView（顶部占位露出底层 Hero，内容从占位下方开始）
-                        ScrollView(.vertical, showsIndicators: false) {
-                            VStack(spacing: 0) {
-                                // 顶部占位：高度=屏幕 65%，露出底层 Hero
-                                Spacer().frame(height: geo.size.height * 0.65)
-
-                                // 媒体库横向海报墙（非懒容器：保证屏外行存在，焦点引擎才有落点）
-                                VStack(alignment: .leading, spacing: 44) {
-                                    // 继续播放（服务端 + 本机记录合并）：有记录才显示
-                                    if !resumeEntries.isEmpty {
-                                        resumeShelf(screenWidth: geo.size.width)
-                                            #if os(tvOS)
-                                            .focusSection()
-                                            #endif
+                    // v140：Hero 作为 ScrollView 第一项——背景/Logo/简介/按钮组随滚动一起平滑滑出（ATV+ 内容跟随）
+                    ScrollView(.vertical, showsIndicators: false) {
+                        VStack(spacing: 0) {
+                            // Hero 整体（全屏背景+渐变遮罩+Logo+简介+按钮组）= ScrollView 第一项
+                            if !heroSnapshot.isEmpty, let heroClient = client {
+                                FNOSHeroBanner(
+                                    items: heroSnapshot,
+                                    client: heroClient,
+                                    userID: userID,
+                                    onPlay: { item in
+                                        // Hero 播放 = 立即播放，不跳详情页
+                                        playDirectly(item: item)
+                                    },
+                                    onDetail: { item in
+                                        // Hero 无卡片可起跳：直接出详情页
+                                        openDetailDirect(item: item)
                                     }
-                                    ForEach(sections.filter { !$0.items.isEmpty }) { section in
-                                        shelf(section, screenWidth: geo.size.width)
-                                    }
-                                    // v126：豆瓣热门（电影/电视剧/综艺 各20=60条），排在热门影视前面
-                                    if !doubanItems.isEmpty {
-                                        doubanShelf(screenWidth: geo.size.width)
-                                    }
-                                    // v111：热门推荐（TMDB），有数据才显示
-                                    if !tmdbItems.isEmpty {
-                                        tmdbShelf(screenWidth: geo.size.width)
-                                    }
-                                    // v115：番剧推荐（Bangumi），有数据才显示
-                                    if !bangumiItems.isEmpty {
-                                        bangumiShelf(screenWidth: geo.size.width)
-                                    }
-                                }
-                                .padding(.vertical, 40)
+                                )
+                                .frame(width: geo.size.width, height: geo.size.height)
+                                .ignoresSafeArea()
                             }
+
+                            // 媒体库横向海报墙（非懒容器：保证屏外行存在，焦点引擎才有落点）
+                            VStack(alignment: .leading, spacing: 44) {
+                                // 继续播放（服务端 + 本机记录合并）：有记录才显示
+                                if !resumeEntries.isEmpty {
+                                    resumeShelf(screenWidth: geo.size.width)
+                                        #if os(tvOS)
+                                        .focusSection()
+                                        #endif
+                                }
+                                ForEach(sections.filter { !$0.items.isEmpty }) { section in
+                                    shelf(section, screenWidth: geo.size.width)
+                                }
+                                // v126：豆瓣热门（电影/电视剧/综艺 各20=60条），排在热门影视前面
+                                if !doubanItems.isEmpty {
+                                    doubanShelf(screenWidth: geo.size.width)
+                                }
+                                // v111：热门推荐（TMDB），有数据才显示
+                                if !tmdbItems.isEmpty {
+                                    tmdbShelf(screenWidth: geo.size.width)
+                                }
+                                // v115：番剧推荐（Bangumi），有数据才显示
+                                if !bangumiItems.isEmpty {
+                                    bangumiShelf(screenWidth: geo.size.width)
+                                }
+                            }
+                            .padding(.vertical, 40)
                         }
-                        .background(Color.clear)
-                        .ignoresSafeArea()
                     }
+                    .ignoresSafeArea()
                     // 仅飞行期（cover 呈现前 0~0.74s）禁用主页：此时飞行层盖住底层，
                     // 焦点会漏到被盖住的可聚焦元素上 → Menu 失灵（v76 根因）。
                     // 注意：主页保持可见（不 opacity 0），由飞行层半透明压暗盖住。

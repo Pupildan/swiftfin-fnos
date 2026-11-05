@@ -2103,7 +2103,7 @@ struct UIFocusGuideBand: UIViewRepresentable {
             var env: UIView = host
             var shelf: UIScrollView?
             while let sup = env.superview {
-                if sup is UIScrollView { shelf = sup; break }
+                if let sv = sup as? UIScrollView { shelf = sv; break }
                 env = sup
             }
             if let shelf {

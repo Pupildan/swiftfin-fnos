@@ -18,7 +18,7 @@ struct FNOSDoubanDetailView: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
-                // 背景：海报取色 → 渐变 → 高斯模糊
+                // 背景：海报取色 → 渐变 → 高斯模糊（同热门影视/番剧详情页）
                 ZStack {
                     Color.black
                     if let theme = themeColor {
@@ -46,142 +46,167 @@ struct FNOSDoubanDetailView: View {
                 .animation(.easeInOut(duration: 0.8), value: themeColor)
 
                 ScrollView(.vertical, showsIndicators: false) {
-                    VStack(alignment: .leading, spacing: 24) {
-                        // 海报 + 基本信息
-                        HStack(alignment: .top, spacing: 32) {
-                            if let cover = item.coverURL {
-                                FNOSAsyncImage(url: cover, headers: ["Referer": "https://movie.douban.com/"], usePosterCache: true)
-                                    .frame(width: 280, height: 420)
-                                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                                    .shadow(color: .black.opacity(0.5), radius: 16, y: 8)
-                            }
-
-                            VStack(alignment: .leading, spacing: 16) {
-                                Text(item.title)
-                                    .font(.system(size: 38, weight: .bold))
-                                    .foregroundColor(.white)
-                                    .lineLimit(3)
-
-                                // 类型徽章
-                                Text(item.category)
-                                    .font(.system(size: 16, weight: .semibold))
-                                    .foregroundColor(.white)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 5)
-                                    .background(
-                                        Capsule().fill(Color.white.opacity(0.18))
-                                            .overlay(Capsule().stroke(Color.white.opacity(0.45), lineWidth: 1))
-                                    )
-
-                                // 评分
-                                if let rating = item.displayRating {
-                                    HStack(spacing: 6) {
-                                        Image(systemName: "star.fill").foregroundColor(.yellow)
-                                        Text(String(format: "%.1f", rating))
-                                            .foregroundColor(.white.opacity(0.9))
-                                        Text("豆瓣评分")
-                                            .foregroundColor(.white.opacity(0.5))
-                                    }
-                                    .font(.system(size: 18))
-                                }
-
-                                // 集数信息
-                                if !item.episodesInfo.isEmpty {
-                                    Text(item.episodesInfo)
-                                        .font(.system(size: 17))
-                                        .foregroundColor(.white.opacity(0.7))
-                                }
-                            }
-                        }
-                        .padding(.horizontal, 60)
-                        .padding(.top, 40)
-
-                        // v129：frodo 完整数据（简介/类型/主演/导演）
-                        if let f = frodo {
-                            // 类型 badges
-                            if !f.genres.isEmpty {
-                                HStack(spacing: 10) {
-                                    ForEach(f.genres.prefix(5), id: \.self) { g in
-                                        Text(g)
-                                            .font(.system(size: 15))
-                                            .foregroundColor(.white.opacity(0.75))
-                                            .padding(.horizontal, 12)
-                                            .padding(.vertical, 6)
-                                            .background(Capsule().fill(Color.white.opacity(0.12)))
-                                    }
-                                }
-                            }
-
-                            // 主演
-                            if !f.castNames.isEmpty {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text("主演")
-                                        .font(.system(size: 22, weight: .semibold))
-                                        .foregroundColor(.white.opacity(0.92))
-                                    Text(f.castNames.joined(separator: " / "))
-                                        .font(.system(size: 16))
-                                        .foregroundColor(.white.opacity(0.8))
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-
-                            // 导演
-                            if !f.directors.isEmpty {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text("导演")
-                                        .font(.system(size: 22, weight: .semibold))
-                                        .foregroundColor(.white.opacity(0.92))
-                                    Text(f.directors.joined(separator: " / "))
-                                        .font(.system(size: 16))
-                                        .foregroundColor(.white.opacity(0.8))
-                                }
-                            }
-
-                            // 简介
-                            if !f.summary.isEmpty {
-                                VStack(alignment: .leading, spacing: 10) {
-                                    Text("简介")
-                                        .font(.system(size: 22, weight: .semibold))
-                                        .foregroundColor(.white.opacity(0.92))
-                                    Text(f.summary)
-                                        .font(.system(size: 17))
-                                        .foregroundColor(.white.opacity(0.8))
-                                        .lineSpacing(6)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-                        }
-
-                        // 来源说明（frodo 拿不到时降级显示）
-                        if frodo == nil {
-                            VStack(alignment: .leading, spacing: 10) {
-                                Text("数据来源")
-                                    .font(.system(size: 22, weight: .semibold))
-                                    .foregroundColor(.white.opacity(0.92))
-                                Text("本条目信息来自豆瓣（movie.douban.com）。豆瓣未提供公开 API，故此处展示列表可获取的标题、评分、类型与集数信息。")
-                                    .font(.system(size: 16))
-                                    .foregroundColor(.white.opacity(0.7))
-                                    .lineSpacing(5)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
+                    VStack(spacing: 0) {
+                        // Hero 区（海报 backdrop + 左下文字 + 右下主演导演，同热门影视/番剧）
+                        heroSection(size: geo.size)
+                        // 内容行（简介/类型/主演/导演，frodo 数据）
+                        contentSection
                             .padding(.horizontal, 60)
-                            .padding(.vertical, 24)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.white.opacity(0.07)))
-                            .padding(.horizontal, 60)
+                            .padding(.top, 20)
+                            .padding(.bottom, 60)
                             .focusable()
-                        }
                     }
-                    .padding(.bottom, 60)
                 }
             }
         }
         .ignoresSafeArea()
         .onExitCommand { onDismiss() }
         .task {
-            themeColor = await FNOSDominantColor.color(for: item.coverURL, headers: [:])
+            themeColor = await FNOSDominantColor.color(for: item.coverURL, headers: ["Referer": "https://movie.douban.com/"])
             // v129：frodo 完整详情（简介/类型/主演/导演）
             frodo = await FNOSDoubanClient.frodoDetail(id: item.id, category: item.category)
+        }
+    }
+
+    // MARK: - Hero（海报 backdrop + 左下文字 + 右下主演导演，同热门影视/番剧详情页）
+
+    @ViewBuilder
+    private func heroSection(size: CGSize) -> some View {
+        ZStack(alignment: .bottomLeading) {
+            // 海报作 backdrop（全宽铺满）
+            if let cover = item.coverURL {
+                FNOSAsyncImage(url: cover, headers: ["Referer": "https://movie.douban.com/"], usePosterCache: true)
+                    .frame(width: size.width, height: size.width * 9 / 16)
+                    .clipped()
+            }
+
+            // 渐变压暗：左黑右透 + 下黑上透
+            LinearGradient(
+                stops: [
+                    .init(color: .black.opacity(0.75), location: 0),
+                    .init(color: .black.opacity(0.3), location: 0.5),
+                    .init(color: .clear, location: 1),
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0.35),
+                    .init(color: .black.opacity(0.85), location: 1.0),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+
+            // 左下信息区
+            VStack(alignment: .leading, spacing: 14) {
+                // 类型徽章
+                Text(item.category)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule().fill(Color.white.opacity(0.18))
+                            .overlay(Capsule().stroke(Color.white.opacity(0.45), lineWidth: 1))
+                    )
+
+                Text(item.title)
+                    .font(.system(size: 40, weight: .bold))
+                    .lineLimit(2)
+                    .foregroundColor(.white)
+
+                // 评分 + 集数
+                HStack(spacing: 12) {
+                    if let rating = item.displayRating {
+                        HStack(spacing: 4) {
+                            Image(systemName: "star.fill").foregroundColor(.yellow)
+                            Text(String(format: "%.1f", rating))
+                        }
+                    }
+                    if !item.episodesInfo.isEmpty {
+                        Text(item.episodesInfo)
+                    }
+                    if let f = frodo, !f.year.isEmpty {
+                        Text(f.year + " 年")
+                    }
+                }
+                .font(.system(size: 17))
+                .foregroundColor(.white.opacity(0.85))
+
+                // 类型 badges（frodo）
+                if let f = frodo, !f.genres.isEmpty {
+                    HStack(spacing: 10) {
+                        ForEach(f.genres.prefix(5), id: \.self) { g in
+                            Text(g)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 6)
+                                .background(Capsule().fill(Color.white.opacity(0.12)))
+                        }
+                    }
+                    .font(.system(size: 15))
+                    .foregroundColor(.white.opacity(0.75))
+                }
+            }
+            .padding(.horizontal, 60)
+            .padding(.bottom, 30)
+
+            // 右下：主演 / 导演（同热门影视/番剧）
+            if let f = frodo, !f.castNames.isEmpty || !f.directors.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    if !f.castNames.isEmpty {
+                        Text("主演 \(f.castNames.joined(separator: ", "))")
+                    }
+                    if !f.directors.isEmpty {
+                        Text("导演 \(f.directors.joined(separator: " / "))")
+                    }
+                }
+                .font(.system(size: 17))
+                .foregroundColor(.white.opacity(0.8))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .padding(.trailing, 60)
+                .padding(.bottom, 40)
+                .allowsHitTesting(false)
+            }
+        }
+        .frame(width: size.width, height: size.width * 9 / 16)
+    }
+
+    // MARK: - 内容行（简介，frodo 数据）
+
+    @ViewBuilder
+    private var contentSection: some View {
+        VStack(alignment: .leading, spacing: 24) {
+            if let f = frodo, !f.summary.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("简介")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.92))
+                    Text(f.summary)
+                        .font(.system(size: 17))
+                        .foregroundColor(.white.opacity(0.8))
+                        .lineSpacing(6)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            // 来源说明（frodo 拿不到时降级显示）
+            if frodo == nil {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("数据来源")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.92))
+                    Text("本条目信息来自豆瓣（movie.douban.com）。豆瓣未提供公开 API，故此处展示列表可获取的标题、评分、类型与集数信息。")
+                        .font(.system(size: 16))
+                        .foregroundColor(.white.opacity(0.7))
+                        .lineSpacing(5)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(28)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.white.opacity(0.07)))
+            }
         }
     }
 }

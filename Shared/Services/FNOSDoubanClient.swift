@@ -65,7 +65,9 @@ enum FNOSDoubanClient {
             let cover = dict["cover"] as? String
             let subjectURL = dict["url"] as? String ?? ""
             let eps = dict["episodes_info"] as? String ?? ""
-            let coverURL = cover.flatMap { URL(string: $0) }
+            // v130：s_ratio_poster（小图）放大糊 → 升级 m_ratio_poster（中图）
+            let coverURL = cover?.replacingOccurrences(of: "s_ratio_poster", with: "m_ratio_poster")
+                .flatMap { URL(string: $0) }
             return FNOSDoubanItem(
                 id: id, title: title, rate: rate, coverURL: coverURL,
                 subjectURL: subjectURL, episodesInfo: eps, category: category

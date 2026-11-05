@@ -298,18 +298,23 @@ final class FNOSDanmuEngine: ObservableObject {
     func sync(mediaTime: Double) {
         let wallNow = Date().timeIntervalSinceReferenceDate
         let extrapolated = anchorMediaTime + (wallNow - anchorWallTime) * anchorRate
+        let drift = mediaTime - extrapolated
 
-        if abs(extrapolated - mediaTime) > 1.0 {
+        if abs(drift) > 1.0 {
             // 拖动进度条：硬跳变 → 清屏并把指针对齐到新时间
             print("FNOSℹ️弹幕: 进度跳变 \(String(format: "%.1f", extrapolated)) → \(String(format: "%.1f", mediaTime))，清屏重对齐")
             reset()
             while nextIndex < comments.count, comments[nextIndex].time < mediaTime - 0.05 {
                 nextIndex += 1
             }
+            anchorMediaTime = mediaTime
+            anchorWallTime = wallNow
+        } else {
+            // v130：小漂移 → 渐进校正（每次只纠 15% 漂移），避免 anchor 硬重置导致的左右抖动
+            // 外推在 wallNow 处连续（只跳 drift*0.15），弹幕位置平滑跟随播放器不抖
+            anchorMediaTime = extrapolated + drift * 0.15
+            anchorWallTime = wallNow
         }
-
-        anchorMediaTime = mediaTime
-        anchorWallTime = wallNow
 
         // 激活到达时间的弹幕
         while nextIndex < comments.count, comments[nextIndex].time <= mediaTime {

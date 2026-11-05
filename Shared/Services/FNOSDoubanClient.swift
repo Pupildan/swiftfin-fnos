@@ -109,7 +109,7 @@ enum FNOSDoubanClient {
         let quoted = path.replacingOccurrences(of: "/", with: "%2F")
         let raw = "\(method.uppercased())&\(quoted)&\(ts)"
         let key = SymmetricKey(data: Data(frodoSecret.utf8))
-        let sig = HMAC<SHA1>.authenticationCode(for: Data(raw.utf8), using: key)
+        let sig = HMAC<Insecure.SHA1>.authenticationCode(for: Data(raw.utf8), using: key)
         return Data(sig).base64EncodedString()
     }
 

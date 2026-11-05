@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v136"
+    static let version = "v133"
 
     /// 本版主要变更摘要
-    static let changes = "v136:极简版——删除折叠逻辑(方案A)。Hero固定高度不折叠,海报墙独立ScrollView+.focusSection(),原生Focus Engine自然路由下键焦点。移除heroCollapsed/shelfFocusBypass/heroFocusResetToken/focusResetToken全部复杂状态。guard逻辑也不再需要(物理隔离已根除焦点逃逸)。"
+    static let changes = "v133:1)修首页焦点——移除Hero按钮.focusEffectDisabled()(根因:该修饰符导致UIKit Focus Engine不认按钮为选中目标,select按下不触发action反而被当成焦点移动推到海报墙)。2)豆瓣详情contentSection加.focusSection()——修下键无法从hero移到内容区。3)TMDB详情新增castAvatarSection(演员头像行)放到hero下方——infoSection里的cast部分从未加入body导致永远不渲染。4)TMDB详情各区块补.focusSection()。"
 }

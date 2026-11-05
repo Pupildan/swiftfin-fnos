@@ -65,7 +65,6 @@ struct FNOSDoubanDetailView: View {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 0) {
                         heroSection(size: geo.size)
-                            .focusable()
                         contentSection
                             .padding(.horizontal, 60)
                             .padding(.top, 20)

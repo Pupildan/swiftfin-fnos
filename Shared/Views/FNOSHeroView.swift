@@ -69,6 +69,8 @@ struct FNOSHeroBanner: View {
     let onPlay: (FNOSItem) -> Void
     let onDetail: (FNOSItem) -> Void
     let onDownToShelf: () -> Void
+    /// v132：外部强制焦点回 Hero（海报墙 guard 弹回时递增此 token）
+    var focusResetToken: Int = 0
 
     /// 轮播目标索引（驱动 HStack 横向偏移 + 动画）
     @State private var currentIndex = 0
@@ -417,6 +419,10 @@ struct FNOSHeroBanner: View {
             .defaultFocus($focusedButton, .play)
         #endif
         }
+        // v132：海报墙 guard 弹回——外部递增 focusResetToken 时强制焦点回 play 按钮
+        .onChange(of: focusResetToken) { _, _ in
+            focusedButton = .play
+        }
     }
 
     // MARK: Hero 按钮外观（独立实现，与详情页解耦）
@@ -440,10 +446,8 @@ struct FNOSHeroBanner: View {
                 Capsule()
                     .fill(isFocused ? Color.white : Color.black.opacity(0.35))
             )
-            // v135：触控降敏——加长动画时长 + contentShape 严格限制点击边界
             .scaleEffect(isFocused ? 1.06 : 1.0)
-            .animation(.easeInOut(duration: 0.2), value: isFocused)
-            .contentShape(Rectangle())
+            .animation(.easeOut(duration: 0.16), value: isFocused)
     }
 
     // MARK: 焦点驱动的海报翻页（翻页后焦点强制留在原按钮上）

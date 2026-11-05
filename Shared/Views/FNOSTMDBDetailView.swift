@@ -102,7 +102,6 @@ struct FNOSTMDBDetailView: View {
                     VStack(spacing: 0) {
                         // Hero 区（参考图排版：徽章/标题/logo/类型·分级/简介/年份·时长/按钮 + 右下主演导演）
                         heroSection(size: geo.size)
-                            .focusable()
                         // v132: 演员头像行（infoSection 里的 cast 部分提取到 hero 下方）
                         if let cast = detail?.cast, !cast.isEmpty {
                             castAvatarSection

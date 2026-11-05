@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v126"
+    static let version = "v127"
 
     /// 本版主要变更摘要
-    static let changes = "v126:首页「热门影视」前新增「豆瓣热门」行(布局同热门影视/番剧)。豆瓣无公开API,走网页JSON端点抓取60条=热门电影20+电视剧20+综艺20,每日缓存。点海报进轻量详情页(大海报+评分+类型+集数;豆瓣条目页反爬302抓不了,故用列表数据)。已实现功能未改动。"
+    static let changes = "v127:入库按钮(已在库中/加入影视库)背景改用苹果液态玻璃半透明(.glassEffect),替换原先 inLibrary 的绿底。适用于热门影视+热门番剧详情页。豆瓣热门行/其它功能未动。"
 }

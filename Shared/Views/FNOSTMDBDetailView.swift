@@ -320,14 +320,8 @@ struct FNOSTMDBDetailView: View {
                         .foregroundColor(.white)
                         .padding(.horizontal, 32)
                         .padding(.vertical, 14)
-                        .background(
-                            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                .fill(libState == .inLibrary ? Color.green.opacity(0.35) : Color.white.opacity(0.18))
-                                .overlay(
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .stroke(Color.white.opacity(0.4), lineWidth: 1.5)
-                                )
-                        )
+                        // v127：苹果液态玻璃半透明（替换原先 inLibrary 的绿底）
+                        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .buttonStyle(.card)
                     .disabled(libState != .idle)

@@ -126,20 +126,12 @@ struct FNOSMainView: View {
     // Hero 快照：只在 bootstrap / 刷新时赋值一次，绝不在 body 渲染中重新洗牌（洗牌会图文错位）
     @State private var heroSnapshot: [FNOSItem] = []
 
-    // MARK: v123 Hero 取色高斯模糊背景（下键内容区已回滚，内容承载在详情页）
-    @State private var currentHeroIndex = 0
-    @State private var heroThemeColor: Color?
-
     // MARK: - Body
 
     var body: some View {
         GeometryReader { geo in
             ZStack {
                 Color.black.ignoresSafeArea()
-                // v123：Hero 海报取色 → 渐变 → 高斯模糊背景（跟随当前 Hero 条目主色）
-                heroThemeBackground
-                    .ignoresSafeArea()
-                    .allowsHitTesting(false)
 
                 if isLoading {
                     VStack {
@@ -190,9 +182,6 @@ struct FNOSMainView: View {
                                         fetchCredits: { heroItem in
                                             // v123：跨源 TMDB 主演/导演匹配（未配 key 返回 nil 降级）
                                             return await matchTMDBCredits(for: heroItem)
-                                        },
-                                        onHeroIndexChange: { newIndex in
-                                            currentHeroIndex = newIndex
                                         }
                                     )
                                     .frame(width: geo.size.width, height: geo.size.height)
@@ -295,10 +284,6 @@ struct FNOSMainView: View {
         }
         .task {
             await bootstrapIfNeeded()
-        }
-        // v123：当前 Hero 条目变化 → 取色背景（内容区已回滚，背景保留）
-        .task(id: "hero-theme-\(currentHeroIndex)-\(heroSnapshot.count)") {
-            await loadHeroThemeColor()
         }
         .fullScreenCover(item: $playbackTarget, onDismiss: {
             rebuildResumeEntries()
@@ -467,36 +452,7 @@ struct FNOSMainView: View {
         return sections.flatMap(\.items).filter { seen.insert($0.Id).inserted }
     }
 
-    // MARK: - v123 Hero 取色背景 + 下键内容区（TMDB 智能匹配）
-
-    /// Hero 海报取色 → 线性渐变 → 高斯模糊 → 压暗（跟随当前 Hero 条目主色，平滑过渡）
-    private var heroThemeBackground: some View {
-        ZStack {
-            Color.black
-            if let theme = heroThemeColor {
-                LinearGradient(
-                    stops: [
-                        .init(color: theme.opacity(0.5), location: 0),
-                        .init(color: theme.opacity(0.28), location: 0.5),
-                        .init(color: theme.opacity(0.12), location: 1),
-                    ],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-                .blur(radius: 60)
-            }
-            // 压暗保证白字可读
-            LinearGradient(
-                stops: [
-                    .init(color: .black.opacity(0.3), location: 0),
-                    .init(color: .black.opacity(0.5), location: 1),
-                ],
-                startPoint: .top,
-                endPoint: .bottom
-            )
-        }
-        .animation(.easeInOut(duration: 0.8), value: heroThemeColor)
-    }
+    // MARK: - v123 Hero 跨源主演/导演匹配
 
     /// v123：Hero 条目 → TMDB 主演/导演（标题+年份匹配，失败返回 nil 降级）
     private func matchTMDBCredits(for item: FNOSItem) async -> (cast: String, director: String)? {
@@ -510,15 +466,6 @@ struct FNOSMainView: View {
         let director = ((credits?["crew"] as? [[String: Any]])?.filter { ($0["job"] as? String) == "Director" }.compactMap { $0["name"] as? String }.joined(separator: " / ")) ?? ""
         if cast.isEmpty && director.isEmpty { return nil }
         return (cast: cast, director: director)
-    }
-
-    /// v123：取当前 Hero 条目主色作背景
-    @MainActor
-    private func loadHeroThemeColor() async {
-        guard let client, heroSnapshot.indices.contains(currentHeroIndex) else { return }
-        let item = heroSnapshot[currentHeroIndex]
-        guard let url = client.heroImageURL(item: item) else { return }
-        heroThemeColor = await FNOSDominantColor.color(for: url, headers: client.mediaHeaders)
     }
 
     // MARK: - Hero Banner 数据：只抓电影（排除剧集），快照只在加载/刷新时生成一次

@@ -71,11 +71,12 @@ struct FNOSHeroBanner: View {
     let onDownToShelf: () -> Void
     /// v123：跨源 TMDB 主演/导演匹配（FNOSMainView 注入，返回 (cast, director)，匹配失败返回 nil）
     var fetchCredits: ((FNOSItem) async -> (cast: String, director: String)?)? = nil
-    /// v123：当前条目索引回调（主页用它做内容区 TMDB 智能匹配 + 取色背景）
-    var onHeroIndexChange: ((Int) -> Void)? = nil
 
     /// 轮播目标索引（驱动 HStack 横向偏移 + 动画）
     @State private var currentIndex = 0
+    /// v125：翻页节流——Siri 遥控滑动一次会连续触发多次 onMoveCommand，
+    /// 无节流则轻滑就连跳好几页/误判方向窜到海报墙。0.45s 内的后续翻页请求一律忽略。
+    @State private var lastPageTime = Date.distantPast
     /// 文案索引（延迟到翻页动画结束才跟随 currentIndex）
     /// 根因：动画 0.35s 期间旧海报仍在屏幕中央，若文案瞬时切换就会「图文不匹配」。
     @State private var displayedIndex = 0
@@ -270,10 +271,6 @@ struct FNOSHeroBanner: View {
                 if currentIndex >= newCount { currentIndex = newCount - 1 }
                 if displayedIndex >= newCount { displayedIndex = newCount - 1 }
             }
-        }
-        .onChange(of: displayedIndex) { _, newIndex in
-            // v123：通知主页当前条目变化（驱动内容区匹配 + 取色背景）
-            onHeroIndexChange?(newIndex)
         }
         }
         .task(id: previewTriggerKey) {
@@ -495,7 +492,10 @@ struct FNOSHeroBanner: View {
     // MARK: 焦点驱动的海报翻页（翻页后焦点强制留在原按钮上）
 
     private func pagePrevious() {
+        // v125：滑动节流——轻滑一次只翻一页，过滤连续触发的多余命令
+        guard Date().timeIntervalSince(lastPageTime) > 0.45 else { return }
         guard currentIndex > 0 else { return }
+        lastPageTime = Date()
         let target = currentIndex - 1
         withAnimation(.easeInOut(duration: 0.35)) {
             currentIndex = target
@@ -507,7 +507,10 @@ struct FNOSHeroBanner: View {
     }
 
     private func pageNext() {
+        // v125：滑动节流——轻滑一次只翻一页，过滤连续触发的多余命令
+        guard Date().timeIntervalSince(lastPageTime) > 0.45 else { return }
         guard currentIndex < items.count - 1 else { return }
+        lastPageTime = Date()
         let target = currentIndex + 1
         withAnimation(.easeInOut(duration: 0.35)) {
             currentIndex = target

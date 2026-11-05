@@ -54,6 +54,8 @@ struct FNOSTMDBDetailView: View {
     @State private var productionRows: [(String, String)] = []
     @State private var trailer: FNOSTMDBClient.TMDBVideo?   // 全屏播放的预告（Identifiable）
     @State private var similarDetailItem: FNOSTMDBItem?  // 相似推荐点击进详情
+    /// v125：Hero 海报取色（详情页背景高斯模糊用）
+    @State private var themeColor: Color?
 
     /// v120：入库按钮状态机
     private enum LibState {
@@ -69,46 +71,37 @@ struct FNOSTMDBDetailView: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
-                // 背景：backdrop 图 + 渐变压暗
+                // 背景：Hero 海报取色 → 渐变 → 高斯模糊（v125），压暗保证白字可读
                 ZStack {
                     Color.black
-                    if let backdrop = detail?.backdropURL {
-                        FNOSAsyncImage(url: backdrop, headers: [:])
-                            .ignoresSafeArea()
-                            .overlay(
-                                LinearGradient(
-                                    stops: [
-                                        .init(color: .clear, location: 0.3),
-                                        .init(color: .black.opacity(0.7), location: 0.7),
-                                        .init(color: .black, location: 1.0),
-                                    ],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                            )
+                    if let theme = themeColor {
+                        LinearGradient(
+                            stops: [
+                                .init(color: theme.opacity(0.5), location: 0),
+                                .init(color: theme.opacity(0.28), location: 0.5),
+                                .init(color: theme.opacity(0.12), location: 1),
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .blur(radius: 60)
                     }
+                    LinearGradient(
+                        stops: [
+                            .init(color: .black.opacity(0.3), location: 0),
+                            .init(color: .black.opacity(0.55), location: 1),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
                 }
                 .ignoresSafeArea()
+                .animation(.easeInOut(duration: 0.8), value: themeColor)
 
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 0) {
-                        // Hero 区
+                        // Hero 区（参考图排版：徽章/标题/logo/类型·分级/简介/年份·时长/按钮 + 右下主演导演）
                         heroSection(size: geo.size)
-                        // v123: 居中 logo（无则由 Hero 标题承担）
-                        if let logo = logoURL {
-                            FNOSAsyncImage(url: logo, headers: [:], contentMode: .fit)
-                                .frame(height: 130)
-                                .frame(maxWidth: .infinity)
-                                .padding(.horizontal, 60)
-                                .padding(.top, 24)
-                        }
-                        // 信息区
-                        infoSection
-                            .padding(.horizontal, 60)
-                            .padding(.top, 20)
-                            .padding(.bottom, 40)
-                            // v117: 信息区可聚焦，否则下键无可落点、ScrollView 不滚动
-                            .focusable()
                         // v123: 预告片行
                         if !videos.filter({ $0.isTrailer }).isEmpty {
                             trailerSection
@@ -203,7 +196,7 @@ struct FNOSTMDBDetailView: View {
         }
     }
 
-    // MARK: - Hero
+    // MARK: - Hero（严格按参考图排版：左下徽章→标题→类型·分级→简介→年份·时长→按钮；右下主演/导演）
 
     @ViewBuilder
     private func heroSection(size: CGSize) -> some View {
@@ -215,44 +208,91 @@ struct FNOSTMDBDetailView: View {
                     .clipped()
             }
 
-            // 渐变压暗底部
+            // 渐变压暗：左黑右透（护左下文案）+ 下黑上透
             LinearGradient(
                 stops: [
-                    .init(color: .clear, location: 0.4),
-                    .init(color: .black.opacity(0.9), location: 1.0),
+                    .init(color: .black.opacity(0.75), location: 0),
+                    .init(color: .black.opacity(0.3), location: 0.5),
+                    .init(color: .clear, location: 1),
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0.35),
+                    .init(color: .black.opacity(0.85), location: 1.0),
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
 
-            VStack(alignment: .leading, spacing: 12) {
-                Text(detail?.title ?? item.title)
-                    .font(.system(size: 36, weight: .bold))
-                    .foregroundColor(.white)
+            // 左下信息区
+            VStack(alignment: .leading, spacing: 14) {
+                // 荣誉/分级徽章胶囊
+                if !contentRating.isEmpty {
+                    Text(contentRating)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 5)
+                        .background(
+                            Capsule().fill(Color.white.opacity(0.18))
+                                .overlay(Capsule().stroke(Color.white.opacity(0.45), lineWidth: 1))
+                        )
+                }
 
+                // 标题：有 logo 用品牌 logo 图（参考图即 logo），无则文字标题
+                if let logo = logoURL {
+                    FNOSAsyncImage(url: logo, headers: [:], contentMode: .fit)
+                        .frame(height: 120)
+                        .frame(maxWidth: 560, alignment: .leading)
+                } else {
+                    Text(detail?.title ?? item.title)
+                        .font(.system(size: 40, weight: .bold))
+                        .lineLimit(2)
+                        .foregroundColor(.white)
+                }
+
+                // 类型 · 分级 + 评分
                 HStack(spacing: 12) {
-                    if let year = detailYear {
-                        Text(year)
-                            .font(.system(size: 18))
-                            .foregroundColor(.white.opacity(0.7))
+                    Text(detail?.mediaType == "tv" ? "剧集" : "电影")
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 3)
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(.white.opacity(0.55), lineWidth: 1))
+                    if let genres = detail?.genres, !genres.isEmpty {
+                        Text(genres.prefix(3).joined(separator: " · "))
                     }
                     if let rating = detail?.voteAverage, rating > 0 {
                         HStack(spacing: 4) {
-                            Image(systemName: "star.fill")
-                                .foregroundColor(.yellow)
+                            Image(systemName: "star.fill").foregroundColor(.yellow)
                             Text(String(format: "%.1f", rating))
-                                .foregroundColor(.white.opacity(0.85))
                         }
-                        .font(.system(size: 17))
-                    }
-                    if let type = detail?.mediaType {
-                        Text(type == "tv" ? "剧集" : "电影")
-                            .font(.system(size: 15))
-                            .foregroundColor(.white.opacity(0.5))
                     }
                 }
+                .font(.system(size: 17))
+                .foregroundColor(.white.opacity(0.85))
 
-                // v120：加入影视库按钮（状态机）
+                // 简介（两行）
+                if let overview = detail?.overview, !overview.isEmpty {
+                    Text(overview)
+                        .font(.system(size: 17))
+                        .foregroundColor(.white.opacity(0.75))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: 760, alignment: .leading)
+                }
+
+                // 格式徽章行：年份 · 片长
+                HStack(spacing: 12) {
+                    if let year = detailYear { Text(year) }
+                    if !runtimeText.isEmpty { Text(runtimeText) }
+                    if voteCount > 0 { Text("\(voteCount) 人评价") }
+                }
+                .font(.system(size: 17))
+                .foregroundColor(.white.opacity(0.7))
+
+                // v120：加入影视库按钮（状态机——逻辑未改）
                 if mpConfigured {
                     Button {
                         Task { await addToLibrary() }
@@ -301,8 +341,31 @@ struct FNOSTMDBDetailView: View {
             }
             .padding(.horizontal, 60)
             .padding(.bottom, 30)
+
+            // 右下：主演 / 导演（严格按参考图）
+            if !heroCastNames.isEmpty || !director.isEmpty {
+                VStack(alignment: .leading, spacing: 10) {
+                    if !heroCastNames.isEmpty {
+                        Text("主演 \(heroCastNames)")
+                    }
+                    if !director.isEmpty {
+                        Text("导演 \(director)")
+                    }
+                }
+                .font(.system(size: 17))
+                .foregroundColor(.white.opacity(0.8))
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .padding(.trailing, 60)
+                .padding(.bottom, 40)
+                .allowsHitTesting(false)
+            }
         }
         .frame(width: size.width, height: size.width * 9 / 16)
+    }
+
+    /// 主演前 3 名（右下展示用）
+    private var heroCastNames: String {
+        (detail?.cast.prefix(3).compactMap { $0.name }.joined(separator: ", ")) ?? ""
     }
 
     private var detailYear: String? {
@@ -469,6 +532,9 @@ struct FNOSTMDBDetailView: View {
                 genres: genreList
             )
             isLoading = false
+
+            // v125：Hero 海报取色（详情页背景高斯模糊）
+            themeColor = await FNOSDominantColor.color(for: backdropURL, headers: [:])
         } catch {
             print("FNOS⚠️TMDB 详情加载失败: \(error.localizedDescription)")
             isLoading = false

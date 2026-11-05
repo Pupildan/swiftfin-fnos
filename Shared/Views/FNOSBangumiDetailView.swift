@@ -47,6 +47,8 @@ struct FNOSBangumiDetailView: View {
     @State private var ratingCount: Int = 0
     @State private var collectionText: String = ""
     @State private var relatedDetailItem: FNOSBangumiItem?  // 相关条目进详情
+    /// v125：Hero 海报取色（详情页背景高斯模糊用）
+    @State private var themeColor: Color?
 
     /// v121：入库按钮状态机（与 TMDB 详情页同构）
     private enum LibState {
@@ -68,26 +70,32 @@ struct FNOSBangumiDetailView: View {
     var body: some View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
-                // 背景
+                // 背景：Hero 海报取色 → 渐变 → 高斯模糊（v125），压暗保证白字可读
                 ZStack {
                     Color.black
-                    if let backdrop = detail?.backdropURL ?? item.imageURL {
-                        FNOSAsyncImage(url: backdrop, headers: [:])
-                            .ignoresSafeArea()
-                            .overlay(
-                                LinearGradient(
-                                    stops: [
-                                        .init(color: .clear, location: 0.3),
-                                        .init(color: .black.opacity(0.7), location: 0.7),
-                                        .init(color: .black, location: 1.0),
-                                    ],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                            )
+                    if let theme = themeColor {
+                        LinearGradient(
+                            stops: [
+                                .init(color: theme.opacity(0.5), location: 0),
+                                .init(color: theme.opacity(0.28), location: 0.5),
+                                .init(color: theme.opacity(0.12), location: 1),
+                            ],
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .blur(radius: 60)
                     }
+                    LinearGradient(
+                        stops: [
+                            .init(color: .black.opacity(0.3), location: 0),
+                            .init(color: .black.opacity(0.55), location: 1),
+                        ],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    )
                 }
                 .ignoresSafeArea()
+                .animation(.easeInOut(duration: 0.8), value: themeColor)
 
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 0) {
@@ -174,7 +182,7 @@ struct FNOSBangumiDetailView: View {
         }
     }
 
-    // MARK: - Hero
+    // MARK: - Hero（严格按参考图排版：左下徽章→标题→类型·平台+评分→简介→日期·集数→按钮；右下主要角色）
 
     @ViewBuilder
     private func heroSection(size: CGSize) -> some View {
@@ -185,48 +193,86 @@ struct FNOSBangumiDetailView: View {
                     .clipped()
             }
 
+            // 渐变压暗：左黑右透 + 下黑上透
             LinearGradient(
                 stops: [
-                    .init(color: .clear, location: 0.4),
-                    .init(color: .black.opacity(0.9), location: 1.0),
+                    .init(color: .black.opacity(0.75), location: 0),
+                    .init(color: .black.opacity(0.3), location: 0.5),
+                    .init(color: .clear, location: 1),
+                ],
+                startPoint: .leading,
+                endPoint: .trailing
+            )
+            LinearGradient(
+                stops: [
+                    .init(color: .clear, location: 0.35),
+                    .init(color: .black.opacity(0.85), location: 1.0),
                 ],
                 startPoint: .top,
                 endPoint: .bottom
             )
 
-            VStack(alignment: .leading, spacing: 12) {
+            // 左下信息区
+            VStack(alignment: .leading, spacing: 14) {
+                // 徽章胶囊（放送平台 / 番剧）
+                Text(platformText.isEmpty ? "番剧" : platformText)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule().fill(Color.white.opacity(0.18))
+                            .overlay(Capsule().stroke(Color.white.opacity(0.45), lineWidth: 1))
+                    )
+
                 Text(detail?.nameCN.isEmpty == false ? detail!.nameCN : item.displayTitle)
-                    .font(.system(size: 36, weight: .bold))
+                    .font(.system(size: 40, weight: .bold))
+                    .lineLimit(2)
                     .foregroundColor(.white)
 
+                // 类型 · 平台 + 评分
                 HStack(spacing: 12) {
+                    Text("番剧")
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 3)
+                        .overlay(RoundedRectangle(cornerRadius: 4).stroke(.white.opacity(0.55), lineWidth: 1))
                     if let score = detail?.score, score > 0 {
                         HStack(spacing: 4) {
-                            Image(systemName: "star.fill")
-                                .foregroundColor(.yellow)
+                            Image(systemName: "star.fill").foregroundColor(.yellow)
                             Text(String(format: "%.1f", score))
-                                .foregroundColor(.white.opacity(0.85))
                         }
-                        .font(.system(size: 17))
                     }
+                    if !airWeekdayText.isEmpty {
+                        Text(airWeekdayText)
+                    }
+                }
+                .font(.system(size: 17))
+                .foregroundColor(.white.opacity(0.85))
+
+                // 简介（两行）
+                if let summary = detail?.summary, !summary.isEmpty {
+                    Text(summary)
+                        .font(.system(size: 17))
+                        .foregroundColor(.white.opacity(0.75))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: 760, alignment: .leading)
+                }
+
+                // 格式徽章行：日期 · 集数
+                HStack(spacing: 12) {
                     if let airDate = detail?.airDate ?? item.airDate, airDate.count >= 4 {
-                        Text(String(airDate.prefix(4)))
-                            .font(.system(size: 18))
-                            .foregroundColor(.white.opacity(0.7))
+                        Text(String(airDate.prefix(4)) + " 年")
                     }
                     if let eps = detail?.epsCount, eps > 0 {
                         Text("\(eps) 话")
-                            .font(.system(size: 16))
-                            .foregroundColor(.white.opacity(0.5))
                     }
-                    if let wd = item.weekday {
-                        Text(wd)
-                            .font(.system(size: 15))
-                            .foregroundColor(.white.opacity(0.5))
-                    }
+                    if ratingCount > 0 { Text("\(ratingCount) 人评分") }
                 }
+                .font(.system(size: 17))
+                .foregroundColor(.white.opacity(0.7))
 
-                // v121：加入影视库按钮（状态机，POST 带 bangumiid，MP 经 Bangumi 源识别）
+                // v121：加入影视库按钮（状态机，POST 带 bangumiid，MP 经 Bangumi 源识别——逻辑未改）
                 if mpConfigured {
                     Button {
                         Task { await addToLibrary() }
@@ -275,8 +321,24 @@ struct FNOSBangumiDetailView: View {
             }
             .padding(.horizontal, 60)
             .padding(.bottom, 30)
+
+            // 右下：主要角色（参考图的 主演 位置）
+            if !heroCharNames.isEmpty {
+                Text("主要角色 \(heroCharNames)")
+                    .font(.system(size: 17))
+                    .foregroundColor(.white.opacity(0.8))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .padding(.trailing, 60)
+                    .padding(.bottom, 40)
+                    .allowsHitTesting(false)
+            }
         }
         .frame(width: size.width, height: size.width * 9 / 16)
+    }
+
+    /// 主要角色前 3 名（右下展示用）
+    private var heroCharNames: String {
+        (detail?.characters.prefix(3).compactMap { $0.name }.joined(separator: ", ")) ?? ""
     }
 
     // MARK: - Info
@@ -284,12 +346,7 @@ struct FNOSBangumiDetailView: View {
     @ViewBuilder
     private var infoSection: some View {
         VStack(alignment: .leading, spacing: 24) {
-            if let summary = detail?.summary, !summary.isEmpty {
-                Text(summary)
-                    .font(.system(size: 19))
-                    .foregroundColor(.white.opacity(0.85))
-                    .lineSpacing(6)
-            }
+            // v125：简介已移入 Hero，此处不再重复
 
             if let tags = detail?.tags, !tags.isEmpty {
                 HStack(spacing: 10) {
@@ -426,6 +483,9 @@ struct FNOSBangumiDetailView: View {
                 characters: chars
             )
             isLoading = false
+
+            // v125：Hero 海报取色（详情页背景高斯模糊）
+            themeColor = await FNOSDominantColor.color(for: backdropURL, headers: [:])
         } catch {
             print("FNOS⚠️Bangumi 详情加载失败: \(error.localizedDescription)")
             isLoading = false

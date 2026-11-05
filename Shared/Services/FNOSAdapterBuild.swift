@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v130"
+    static let version = "v131"
 
     /// 本版主要变更摘要
-    static let changes = "v130:1)修弹幕左右抖动——sync()小漂移改渐进校正(每次纠15%漂移,不再硬重置anchor),KS轻微抖+mpv原地抖后重载均改善。2)豆瓣海报高清(s_ratio→m_ratio_poster)。3)豆瓣详情页重构成热门影视/番剧同款hero风格(海报backdrop+左下文字+右下主演导演+下方简介)。字幕选择功能待后续(需摸清KSPlayer/mpv字幕轨API)。"
+    static let changes = "v131:1)修首页Hero焦点跳页(右键/滑动从播放移到+或详情时焦点窜到继续播放)——三个Hero按钮补全右左导航(用focusedButton在按钮间移动,不逃到海报墙)。2)豆瓣详情页照搬热门影视详情页布局:hero(高清横屏海报backdrop+左下徽章标题评分集数类型+右下主演导演)+下方简介/主演头像行/评论(frodo Reviews)+按标题入库按钮(MoviePilot lookupSubscribeByName)。豆瓣海报高清m_ratio。"
 }

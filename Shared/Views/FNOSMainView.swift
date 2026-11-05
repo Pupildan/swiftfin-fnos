@@ -355,7 +355,15 @@ struct FNOSMainView: View {
         .fullScreenCover(item: $doubanDetailItem) { dbItem in
             FNOSDoubanDetailView(
                 item: dbItem,
-                onDismiss: { doubanDetailItem = nil }
+                onDismiss: { doubanDetailItem = nil },
+                mpBase: mpURLSetting,
+                mpKey: mpKeySetting,
+                inLibraryCheck: { dbItem in
+                    guard let creds = FNOSAuthStore.shared.credentials,
+                          let nt = creds.nativeToken, !nt.isEmpty else { return false }
+                    let native = FNOSNativeClient(baseURL: creds.serverURL, token: nt)
+                    return await native.existsInLibrary(title: dbItem.title, isSeries: dbItem.category == "电视剧")
+                }
             )
         }
         .sheet(isPresented: $showSettings) {

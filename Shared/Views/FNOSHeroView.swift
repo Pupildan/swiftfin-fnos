@@ -354,6 +354,9 @@ struct FNOSHeroBanner: View {
                     switch direction {
                     case .left:
                         pagePrevious()
+                    case .right:
+                        // v131：右键在 Hero 按钮间移动（play→plus），不再逃到海报墙
+                        focusedButton = .plus
                     case .down:
                         onDownToShelf()
                     default:
@@ -374,8 +377,15 @@ struct FNOSHeroBanner: View {
                 .focusEffectDisabled()
                 .focused($focusedButton, equals: .plus)
                 .onMoveCommand { direction in
-                    if direction == .down {
+                    switch direction {
+                    case .left:
+                        focusedButton = .play
+                    case .right:
+                        focusedButton = .detail
+                    case .down:
                         onDownToShelf()
+                    default:
+                        break
                     }
                 }
 
@@ -393,6 +403,9 @@ struct FNOSHeroBanner: View {
                 .focused($focusedButton, equals: .detail)
                 .onMoveCommand { direction in
                     switch direction {
+                    case .left:
+                        // v131：左键回到 plus 按钮（不逃到海报墙）
+                        focusedButton = .plus
                     case .right:
                         pageNext()
                     case .down:

@@ -175,4 +175,88 @@ enum FNOSDoubanClient {
             return nil
         }
     }
+
+    /// frodo 通用 GET（签名 + 请求，返回 JSON dict）
+    private static func frodoGet(path: String) async -> [String: Any]? {
+        let ts = Int(Date().timeIntervalSince1970)
+        let sig = frodoSign(path: path, ts: ts)
+        var comps = URLComponents(string: frodoBase + path)
+        comps?.queryItems = [
+            URLQueryItem(name: "apiKey", value: frodoAPIKey),
+            URLQueryItem(name: "os_rom", value: "android"),
+            URLQueryItem(name: "_ts", value: String(ts)),
+            URLQueryItem(name: "_sig", value: sig),
+        ]
+        guard let url = comps?.url else { return nil }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 15
+        req.setValue(frodoUA, forHTTPHeaderField: "User-Agent")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        do {
+            let (data, response) = try await URLSession.shared.data(for: req)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                print("FNOS⚠️豆瓣 frodo GET 失败 \(path) HTTP=\((response as? HTTPURLResponse)?.statusCode ?? -1)")
+                return nil
+            }
+            return json
+        } catch {
+            print("FNOS⚠️豆瓣 frodo GET 异常: \(error.localizedDescription)")
+            return nil
+        }
+    }
+
+    /// 豆瓣演员/导演（带头像，圆形头像行用）
+    struct FNOSDoubanCelebrity: Identifiable {
+        let id: String
+        let name: String
+        let character: String
+        let avatarURL: URL?
+    }
+
+    /// frodo 演员 + 导演（/movie/{id}/celebrities 或 /tv/{id}/celebrities）
+    static func frodoCelebrities(id: String, category: String) async -> [FNOSDoubanCelebrity] {
+        let sub = category == "电影" ? "/movie/\(id)" : "/tv/\(id)"
+        guard let json = await frodoGet(path: "/api/v2\(sub)/celebrities") else { return [] }
+        var result: [FNOSDoubanCelebrity] = []
+        for group in ["actors", "directors"] {
+            guard let arr = json[group] as? [[String: Any]] else { continue }
+            for c in arr.prefix(15) {
+                guard let cid = c["id"] as? String ?? (c["id"] as? Int).map(String.init) else { continue }
+                let name = c["name"] as? String ?? ""
+                guard !name.isEmpty else { continue }
+                let character = c["character"] as? String ?? ""
+                let avatar = c["avatar"] as? [String: Any]
+                let avatarPath = (avatar?["normal"] as? String) ?? (avatar?["large"] as? String)
+                let avatarURL = avatarPath.flatMap { URL(string: $0) }
+                result.append(FNOSDoubanCelebrity(id: cid, name: name, character: character, avatarURL: avatarURL))
+            }
+        }
+        return result
+    }
+
+    /// 豆瓣评论（短评）
+    struct FNOSDoubanReview: Identifiable {
+        let id: String
+        let author: String
+        let rating: Double?
+        let content: String
+        let title: String
+    }
+
+    /// frodo 评论（/movie/{id}/reviews 或 /tv/{id}/reviews）
+    static func frodoReviews(id: String, category: String) async -> [FNOSDoubanReview] {
+        let sub = category == "电影" ? "/movie/\(id)" : "/tv/\(id)"
+        guard let json = await frodoGet(path: "/api/v2\(sub)/reviews") else { return [] }
+        guard let reviews = json["reviews"] as? [[String: Any]] else { return [] }
+        return reviews.prefix(20).compactMap { r in
+            guard let rid = r["id"] as? String ?? (r["id"] as? Int).map(String.init) else { return nil }
+            let content = r["abstract"] as? String ?? ""
+            guard !content.isEmpty else { return nil }
+            let author = (r["user"] as? [String: Any])?["name"] as? String ?? "匿名"
+            let rating = (r["rating"] as? [String: Any])?["value"] as? Double
+            let title = r["title"] as? String ?? ""
+            return FNOSDoubanReview(id: rid, author: author, rating: rating, content: content, title: title)
+        }
+    }
 }

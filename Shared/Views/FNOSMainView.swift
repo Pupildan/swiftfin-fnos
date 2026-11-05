@@ -686,8 +686,8 @@ struct FNOSMainView: View {
         ) else { return nil }
         guard let json = try? await FNOSTMDBClient.richDetail(id: match.id, mediaType: match.mediaType, apiKey: tmdbApiKey) else { return nil }
         let credits = json["credits"] as? [String: Any]
-        let cast = (credits?["cast"] as? [[String: Any]])?.prefix(3).compactMap { $0["name"] as? String }.joined(separator: ", ")
-        let director = (credits?["crew"] as? [[String: Any]])?.filter { ($0["job"] as? String) == "Director" }.compactMap { $0["name"] as? String }.joined(separator: " / ")
+        let cast = ((credits?["cast"] as? [[String: Any]])?.prefix(3).compactMap { $0["name"] as? String }.joined(separator: ", ")) ?? ""
+        let director = ((credits?["crew"] as? [[String: Any]])?.filter { ($0["job"] as? String) == "Director" }.compactMap { $0["name"] as? String }.joined(separator: " / ")) ?? ""
         if cast.isEmpty && director.isEmpty { return nil }
         return (cast: cast, director: director)
     }

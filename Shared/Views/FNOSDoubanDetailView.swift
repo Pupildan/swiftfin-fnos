@@ -48,7 +48,7 @@ struct FNOSDoubanDetailView: View {
                         // 海报 + 基本信息
                         HStack(alignment: .top, spacing: 32) {
                             if let cover = item.coverURL {
-                                FNOSAsyncImage(url: cover, headers: [:], usePosterCache: true)
+                                FNOSAsyncImage(url: cover, headers: ["Referer": "https://movie.douban.com/"], usePosterCache: true)
                                     .frame(width: 280, height: 420)
                                     .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
                                     .shadow(color: .black.opacity(0.5), radius: 16, y: 8)

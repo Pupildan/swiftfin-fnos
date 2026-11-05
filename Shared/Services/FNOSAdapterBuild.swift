@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v127"
+    static let version = "v128"
 
     /// 本版主要变更摘要
-    static let changes = "v127:入库按钮(已在库中/加入影视库)背景改用苹果液态玻璃半透明(.glassEffect),替换原先 inLibrary 的绿底。适用于热门影视+热门番剧详情页。豆瓣热门行/其它功能未动。"
+    static let changes = "v128:修豆瓣海报不显示——豆瓣CDN防盗链(无Referer返回418空图),海报加载加Referer:movie.douban.com,海报墙+详情页大海报均修复。豆瓣热门行/其它功能未动。"
 }

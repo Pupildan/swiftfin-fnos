@@ -1426,7 +1426,8 @@ struct FNOSMainView: View {
                             } label: {
                                 FNOSAsyncImage(
                                     url: item.coverURL,
-                                    headers: [:],
+                                    // v126：豆瓣 CDN 防盗链——必须带 Referer 才返回图片（否则 418）
+                                    headers: ["Referer": "https://movie.douban.com/"],
                                     usePosterCache: true
                                 )
                                 .frame(width: tileWidth, height: tileWidth * 3 / 2)

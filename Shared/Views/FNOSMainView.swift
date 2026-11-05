@@ -127,6 +127,8 @@ struct FNOSMainView: View {
     // v132：海报墙焦点 guard——非 onDownToShelf 路径进入海报墙时弹回 Hero
     @State private var shelfFocusBypass = false
     @State private var heroFocusResetToken = 0
+    // v135：Hero 折叠状态——物理隔离 ScrollView（方案 B），下键折叠 Hero 让 Shelf 填满屏幕
+    @State private var heroCollapsed = false
 
     // Hero 每日随机抽选（每天首次进入重新抽 6 部电影）
     @AppStorage("fnos.hero.date") private var heroDate = ""
@@ -156,75 +158,66 @@ struct FNOSMainView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ScrollViewReader { proxy in
-                        ScrollView(.vertical, showsIndicators: false) {
-                            VStack(spacing: 0) {
-                                // Apple TV+ 式全屏 Hero Banner（当日抽选的 6 部电影快照）
-                                if !heroSnapshot.isEmpty, let heroClient = client {
-                                    FNOSHeroBanner(
-                                        items: heroSnapshot,
-                                        client: heroClient,
-                                        userID: userID,
-                                        onPlay: { item in
-                                            // Hero 播放 = 立即播放，不跳详情页
-                                            playDirectly(item: item)
-                                        },
-                                        onDetail: { item in
-                                            // Hero 无卡片可起跳：直接出详情页
-                                            openDetailDirect(item: item)
-                                        },
-                                        onDownToShelf: {
-                                            // v132：标记合法入口，onChange 不拦截
-                                            shelfFocusBypass = true
-                                            // 下键从 Hero 跳入海报墙：先滚动让媒体库行出现，再把焦点落到第一张卡
-                                            withAnimation(.easeInOut(duration: 0.4)) {
-                                                proxy.scrollTo("fnos-shelf-top", anchor: .top)
-                                            }
-                                            Task { @MainActor in
-                                                try? await Task.sleep(for: .milliseconds(450))
-                                                // 有继续播放记录时优先落「继续播放」首卡，其次媒体库首卡
-                                                if let lead = resumeEntries.first?.item.Id
-                                                    ?? sections.first(where: { !$0.items.isEmpty })?.items.first?.Id {
-                                                    shelfCardFocused = lead
-                                                }
-                                            }
-                                        },
-                                        focusResetToken: heroFocusResetToken
-                                    )
-                                    .frame(width: geo.size.width, height: geo.size.height)
-                                    #if os(tvOS)
-                                    .focusSection()
-                                    #endif
-                                }
+                    // v135：物理隔离 ScrollView（方案 B）——Hero 不再和海报墙共用 ScrollView
+                    // 根因：共用 ScrollView 时触控板微小滑动被 ScrollView 吃掉，焦点跳到海报墙
+                    VStack(spacing: 0) {
+                        // Hero 区——固定在顶部，独立于下方 ScrollView
+                        if !heroSnapshot.isEmpty, let heroClient = client {
+                            FNOSHeroBanner(
+                                items: heroSnapshot,
+                                client: heroClient,
+                                userID: userID,
+                                onPlay: { item in
+                                    playDirectly(item: item)
+                                },
+                                onDetail: { item in
+                                    openDetailDirect(item: item)
+                                },
+                                onDownToShelf: {
+                                    // v135：折叠 Hero 让 Shelf 填满屏幕（不再用 scrollTo）
+                                    shelfFocusBypass = true
+                                    withAnimation(.easeInOut(duration: 0.3)) {
+                                        heroCollapsed = true
+                                    }
+                                    Task { @MainActor in
+                                        try? await Task.sleep(for: .milliseconds(350))
+                                        if let lead = resumeEntries.first?.item.Id
+                                            ?? sections.first(where: { !$0.items.isEmpty })?.items.first?.Id {
+                                            shelfCardFocused = lead
+                                        }
+                                    }
+                                },
+                                focusResetToken: heroFocusResetToken
+                            )
+                            .frame(width: geo.size.width, height: heroCollapsed ? 0 : geo.size.height)
+                            .clipped()
+                            .animation(.easeInOut(duration: 0.3), value: heroCollapsed)
+                        }
 
-                                // 媒体库横向海报墙（非懒容器：保证屏外行存在，焦点引擎才有落点）
-                                VStack(alignment: .leading, spacing: 44) {
-                                    // 继续播放（服务端 + 本机记录合并）：有记录才显示
-                                    if !resumeEntries.isEmpty {
-                                        resumeShelf(screenWidth: geo.size.width)
-                                    }
-                                    ForEach(sections.filter { !$0.items.isEmpty }) { section in
-                                        shelf(section, screenWidth: geo.size.width)
-                                    }
-                                    // v126：豆瓣热门（电影/电视剧/综艺 各20=60条），排在热门影视前面
-                                    if !doubanItems.isEmpty {
-                                        doubanShelf(screenWidth: geo.size.width)
-                                    }
-                                    // v111：热门推荐（TMDB），有数据才显示
-                                    if !tmdbItems.isEmpty {
-                                        tmdbShelf(screenWidth: geo.size.width)
-                                    }
-                                    // v115：番剧推荐（Bangumi），有数据才显示
-                                    if !bangumiItems.isEmpty {
-                                        bangumiShelf(screenWidth: geo.size.width)
-                                    }
+                        // 海报墙——独立 ScrollView，只在 Hero 折叠后可见
+                        ScrollView(.vertical, showsIndicators: false) {
+                            VStack(alignment: .leading, spacing: 44) {
+                                if !resumeEntries.isEmpty {
+                                    resumeShelf(screenWidth: geo.size.width)
                                 }
-                                .padding(.vertical, 40)
-                                .id("fnos-shelf-top")
-                                #if os(tvOS)
-                                    .focusSection()
-                                #endif
+                                ForEach(sections.filter { !$0.items.isEmpty }) { section in
+                                    shelf(section, screenWidth: geo.size.width)
+                                }
+                                if !doubanItems.isEmpty {
+                                    doubanShelf(screenWidth: geo.size.width)
+                                }
+                                if !tmdbItems.isEmpty {
+                                    tmdbShelf(screenWidth: geo.size.width)
+                                }
+                                if !bangumiItems.isEmpty {
+                                    bangumiShelf(screenWidth: geo.size.width)
+                                }
                             }
+                            .padding(.vertical, 40)
+                            .id("fnos-shelf-top")
+                            #if os(tvOS)
+                            .focusSection()
+                            #endif
                         }
                         .ignoresSafeArea()
                     }
@@ -398,13 +391,20 @@ struct FNOSMainView: View {
                 }
             )
         }
-        // v132：焦点落到卡片即预取 1920 横图进内存缓存：点按起跳必高清（不预取=起跳灰底转圈）
-        // v132：guard——非 onDownToShelf 路径进入海报墙时弹回 Hero（右键/滑动焦点逃逸硬拦截）
+        // v135：焦点落到卡片即预取 1920 横图 + Hero 折叠/展开控制
         .onChange(of: shelfCardFocused) { oldValue, focused in
+            // v135：焦点离开海报墙时展开 Hero + 强制焦点回 play 按钮
+            if focused == nil {
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    heroCollapsed = false
+                }
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(350))
+                    heroFocusResetToken += 1
+                }
+            }
             guard let focused else { return }
             if !shelfFocusBypass {
-                // 非法进入：nil→非nil 且无 bypass 标记 = 焦点从 Hero 逃逸到海报墙
-                // 只有从一张卡到另一张卡（oldValue != nil）才是合法的墙内移动
                 if oldValue == nil {
                     shelfFocusBypass = false
                     shelfCardFocused = nil
@@ -412,7 +412,6 @@ struct FNOSMainView: View {
                     return
                 }
             }
-            // 合法路径：消费 bypass 标记
             if shelfFocusBypass { shelfFocusBypass = false }
             guard let client else { return }
             prefetchDetailBackdrop(itemID: focused, client: client)

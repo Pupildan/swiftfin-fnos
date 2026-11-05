@@ -446,8 +446,10 @@ struct FNOSHeroBanner: View {
                 Capsule()
                     .fill(isFocused ? Color.white : Color.black.opacity(0.35))
             )
+            // v135：触控降敏——加长动画时长 + contentShape 严格限制点击边界
             .scaleEffect(isFocused ? 1.06 : 1.0)
-            .animation(.easeOut(duration: 0.16), value: isFocused)
+            .animation(.easeInOut(duration: 0.2), value: isFocused)
+            .contentShape(Rectangle())
     }
 
     // MARK: 焦点驱动的海报翻页（翻页后焦点强制留在原按钮上）

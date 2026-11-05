@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v134"
+    static let version = "v135"
 
     /// 本版主要变更摘要
-    static let changes = "v134:1)修首页焦点跳页——hero banner加.focusSection()建立焦点边界,防止clickpad触摸被Focus Engine当成swipe推到海报墙。2)豆瓣详情hero加.focusable()——修下键无法从hero移到内容区(根因:hero无focusable元素,Focus Engine找不到起点)。3)TMDB详情hero加.focusable()——同上,修下方cast/trailer/similar区块无法通过焦点到达。"
+    static let changes = "v135:1)物理隔离ScrollView(方案B)——Hero不再和海报墙共用ScrollView,Hero固定在顶部独立于下方ScrollView,彻底消除触控板微小滑动被ScrollView吃掉的问题。2)Hero折叠/展开机制——按下键时Hero折叠(height→0),海报墙填满屏幕;按上键时Hero展开恢复。3)触控降敏(方案C)——heroButtonLabel加.contentShape(Rectangle())严格限制点击边界+动画时长0.16s→0.2s easeInOut。"
 }

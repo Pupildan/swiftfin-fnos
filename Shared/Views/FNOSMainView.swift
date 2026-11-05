@@ -192,6 +192,9 @@ struct FNOSMainView: View {
                                         focusResetToken: heroFocusResetToken
                                     )
                                     .frame(width: geo.size.width, height: geo.size.height)
+                                    #if os(tvOS)
+                                    .focusSection()
+                                    #endif
                                 }
 
                                 // 媒体库横向海报墙（非懒容器：保证屏外行存在，焦点引擎才有落点）

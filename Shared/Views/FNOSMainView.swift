@@ -153,51 +153,40 @@ struct FNOSMainView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    ScrollViewReader { proxy in
+                    // v139：Apple TV+ 标准架构——ZStack 叠层，完全依赖焦点引擎物理几何路由
+                    ZStack(alignment: .top) {
+                        // 底层：Hero 视觉（v133 原样：全屏背景+轮播+智能预告+按钮组，内部零改动）
+                        if !heroSnapshot.isEmpty, let heroClient = client {
+                            FNOSHeroBanner(
+                                items: heroSnapshot,
+                                client: heroClient,
+                                userID: userID,
+                                onPlay: { item in
+                                    // Hero 播放 = 立即播放，不跳详情页
+                                    playDirectly(item: item)
+                                },
+                                onDetail: { item in
+                                    // Hero 无卡片可起跳：直接出详情页
+                                    openDetailDirect(item: item)
+                                }
+                            )
+                            .frame(width: geo.size.width, height: geo.size.height)
+                        }
+
+                        // 顶层：透明垂直 ScrollView（顶部占位露出底层 Hero，内容从占位下方开始）
                         ScrollView(.vertical, showsIndicators: false) {
                             VStack(spacing: 0) {
-                                // Apple TV+ 式全屏 Hero Banner（当日抽选的 6 部电影快照）
-                                if !heroSnapshot.isEmpty, let heroClient = client {
-                                    FNOSHeroBanner(
-                                        items: heroSnapshot,
-                                        client: heroClient,
-                                        userID: userID,
-                                        onPlay: { item in
-                                            // Hero 播放 = 立即播放，不跳详情页
-                                            playDirectly(item: item)
-                                        },
-                                        onDetail: { item in
-                                            // Hero 无卡片可起跳：直接出详情页
-                                            openDetailDirect(item: item)
-                                        },
-                                        onDownToShelf: {
-                                            // 下键从 Hero 跳入海报墙：先滚动让媒体库行出现，再把焦点落到第一张卡
-                                            withAnimation(.easeInOut(duration: 0.4)) {
-                                                proxy.scrollTo("fnos-shelf-top", anchor: .top)
-                                            }
-                                            Task { @MainActor in
-                                                try? await Task.sleep(for: .milliseconds(450))
-                                                // 有继续播放记录时优先落「继续播放」首卡，其次媒体库首卡
-                                                if let lead = resumeEntries.first?.item.Id
-                                                    ?? sections.first(where: { !$0.items.isEmpty })?.items.first?.Id {
-                                                    shelfCardFocused = lead
-                                                }
-                                            }
-                                        }
-                                    )
-                                    .frame(width: geo.size.width, height: geo.size.height)
-                                }
-
-                                // v138：UIFocusGuide 隔离带（官方推荐机制）——20pt 不可聚焦区域，
-                                // 拦截 Hero 区向下的焦点搜索，转交给海报墙（首行首卡=继续播放）
-                                UIFocusGuideBand()
-                                    .frame(height: 20)
+                                // 顶部占位：高度=屏幕 65%，露出底层 Hero
+                                Spacer().frame(height: geo.size.height * 0.65)
 
                                 // 媒体库横向海报墙（非懒容器：保证屏外行存在，焦点引擎才有落点）
                                 VStack(alignment: .leading, spacing: 44) {
                                     // 继续播放（服务端 + 本机记录合并）：有记录才显示
                                     if !resumeEntries.isEmpty {
                                         resumeShelf(screenWidth: geo.size.width)
+                                            #if os(tvOS)
+                                            .focusSection()
+                                            #endif
                                     }
                                     ForEach(sections.filter { !$0.items.isEmpty }) { section in
                                         shelf(section, screenWidth: geo.size.width)
@@ -216,12 +205,9 @@ struct FNOSMainView: View {
                                     }
                                 }
                                 .padding(.vertical, 40)
-                                .id("fnos-shelf-top")
-                                #if os(tvOS)
-                                    .focusSection()
-                                #endif
                             }
                         }
+                        .background(Color.clear)
                         .ignoresSafeArea()
                     }
                     // 仅飞行期（cover 呈现前 0~0.74s）禁用主页：此时飞行层盖住底层，
@@ -2057,60 +2043,6 @@ struct FNOSBareButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-    }
-}
-
-// MARK: - v138 UIFocusGuide 隔离带（官方推荐机制，替代 v132 guard 弹回）
-
-/// 在 Hero 与海报墙之间布置一条 20pt 高的 UIFocusGuide：
-/// - UIFocusGuide 是 UILayoutGuide（非视图），自身永不可聚焦、不参与触摸命中；
-/// - 焦点引擎的向下搜索进入该区域时被拦截，转交给 preferredFocusEnvironments；
-/// - 转交目标 = 本带所在 ScrollView（主层级唯一的 UIScrollView），
-///   引擎在其子树内按空间就近选中首行首卡 = 「继续播放」首卡。
-struct UIFocusGuideBand: UIViewRepresentable {
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    final class Coordinator {
-        var guide: UIFocusGuide?
-        var resolved = false
-    }
-
-    func makeUIView(context: Context) -> UIView {
-        let host = UIView()
-        host.backgroundColor = .clear
-        // 纯焦点层：绝不参与触摸（isFocusable 语义由 FocusGuide 天然满足——非视图不可聚焦）
-        host.isUserInteractionEnabled = false
-        let guide = UIFocusGuide()
-        guide.identifier = "fnos.hero.shelf.guard"
-        host.addLayoutGuide(guide)
-        NSLayoutConstraint.activate([
-            guide.topAnchor.constraint(equalTo: host.topAnchor),
-            guide.bottomAnchor.constraint(equalTo: host.bottomAnchor),
-            guide.leadingAnchor.constraint(equalTo: host.leadingAnchor),
-            guide.trailingAnchor.constraint(equalTo: host.trailingAnchor),
-        ])
-        context.coordinator.guide = guide
-        return host
-    }
-
-    func updateUIView(_ host: UIView, context: Context) {
-        guard let guide = context.coordinator.guide,
-              !context.coordinator.resolved else { return }
-        // 布局挂载后异步解析一次转交目标（makeUIView 时层级未就绪）
-        DispatchQueue.main.async { [weak host] in
-            guard let host, host.window != nil else { return }
-            var env: UIView = host
-            var shelf: UIScrollView?
-            while let sup = env.superview {
-                if let sv = sup as? UIScrollView { shelf = sv; break }
-                env = sup
-            }
-            if let shelf {
-                guide.preferredFocusEnvironments = [shelf]
-                context.coordinator.resolved = true
-            }
-        }
     }
 }
 

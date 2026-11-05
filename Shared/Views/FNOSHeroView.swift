@@ -68,7 +68,6 @@ struct FNOSHeroBanner: View {
     let userID: String
     let onPlay: (FNOSItem) -> Void
     let onDetail: (FNOSItem) -> Void
-    let onDownToShelf: () -> Void
 
     /// 轮播目标索引（驱动 HStack 横向偏移 + 动画）
     @State private var currentIndex = 0
@@ -356,8 +355,6 @@ struct FNOSHeroBanner: View {
                     case .right:
                         // v131：右键在 Hero 按钮间移动（play→plus），不再逃到海报墙
                         focusedButton = .plus
-                    case .down:
-                        onDownToShelf()
                     default:
                         break
                     }
@@ -380,8 +377,6 @@ struct FNOSHeroBanner: View {
                         focusedButton = .play
                     case .right:
                         focusedButton = .detail
-                    case .down:
-                        onDownToShelf()
                     default:
                         break
                     }
@@ -405,8 +400,6 @@ struct FNOSHeroBanner: View {
                         focusedButton = .plus
                     case .right:
                         pageNext()
-                    case .down:
-                        onDownToShelf()
                     default:
                         break
                     }
@@ -414,6 +407,8 @@ struct FNOSHeroBanner: View {
         }
         .padding(.top, 8)
         #if os(tvOS)
+            // v139：按钮组焦点域（Apple TV+ 标准架构——原生几何路由的锚点）
+            .focusSection()
             .defaultFocus($focusedButton, .play)
         #endif
         }

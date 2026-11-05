@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v138"
+    static let version = "v139"
 
     /// 本版主要变更摘要
-    static let changes = "v138:官方推荐UIFocusGuide隔离带。在Hero与海报墙之间插入20pt高的UIFocusGuide(UIViewRepresentable包装,自身永不可聚焦不参与触摸),拦截Hero区向下焦点搜索并转交给海报墙(空间就近=继续播放首卡)。视图高度与结构零改动。同时移除v132 guard弹回逻辑(与Guide转交互抢焦点,Guide为原生替代)。不加折叠不加onMoveCommand拦截。"
+    static let changes = "v139:Apple TV+标准架构重构(外层骨架)。1)ZStack叠层——底层Hero视觉原样保留(全屏背景+轮播+智能预告+按钮组内部零改动),顶层透明垂直ScrollView(顶部65%屏幕高度占位露出Hero,其后依次排列继续播放+媒体库各行)。2)Hero按钮组容器加.focusSection(),继续播放横向列表加.focusSection()。3)删除UIFocusGuideBand,删除onMoveCommand的.down分支与onDownToShelf回调,完全依赖UIKit焦点引擎物理几何计算——Hero按上键原生滚动让页面自动上移。4)不折叠不拦截不动态改高度。"
 }

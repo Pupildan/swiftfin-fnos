@@ -215,9 +215,10 @@ enum FNOSDoubanClient {
     }
 
     /// frodo 演员 + 导演（/movie/{id}/celebrities 或 /tv/{id}/celebrities）
+    /// 注意：frodoBase 已含 /api/v2，frodoGet 的 path 参数不要再拼 /api/v2
     static func frodoCelebrities(id: String, category: String) async -> [FNOSDoubanCelebrity] {
         let sub = category == "电影" ? "/movie/\(id)" : "/tv/\(id)"
-        guard let json = await frodoGet(path: "/api/v2\(sub)/celebrities") else { return [] }
+        guard let json = await frodoGet(path: "\(sub)/celebrities") else { return [] }
         var result: [FNOSDoubanCelebrity] = []
         for group in ["actors", "directors"] {
             guard let arr = json[group] as? [[String: Any]] else { continue }
@@ -245,9 +246,10 @@ enum FNOSDoubanClient {
     }
 
     /// frodo 评论（/movie/{id}/reviews 或 /tv/{id}/reviews）
+    /// 注意：frodoBase 已含 /api/v2，frodoGet 的 path 参数不要再拼 /api/v2
     static func frodoReviews(id: String, category: String) async -> [FNOSDoubanReview] {
         let sub = category == "电影" ? "/movie/\(id)" : "/tv/\(id)"
-        guard let json = await frodoGet(path: "/api/v2\(sub)/reviews") else { return [] }
+        guard let json = await frodoGet(path: "\(sub)/reviews") else { return [] }
         guard let reviews = json["reviews"] as? [[String: Any]] else { return [] }
         return reviews.prefix(20).compactMap { r in
             guard let rid = r["id"] as? String ?? (r["id"] as? Int).map(String.init) else { return nil }

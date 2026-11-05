@@ -2,8 +2,32 @@
 
 > 仓库：`Pupildan/swiftfin-fnos`（GitHub 私有仓，CI 构建 unsigned ipa）
 > 本地工作区：`C:\Users\Admin\WorkBuddy\fndanmu-tvos\build-package\swiftfin-fnos`
-> 当前版本：**v32**（commit 9beed3d），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
-> 交付物命名规则：`output/Swiftfin-FNOS-tvos-unsigned-vXX.ipa`（16.8MB 左右）
+> 当前版本：**v131**（commit 2580b49），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
+> 交付物命名规则：`output/Swiftfin-FNOS-tvos-unsigned-vXX.ipa`（32MB 左右）
+
+---
+
+## ⚠️🚨 弹幕 sync anchor 逻辑——严禁改动（v130 严重回归教训）
+
+**`FNOSDanmuView.swift` 的 `FNOSDanmuEngine.sync(mediaTime:)` 中 `anchorMediaTime = mediaTime`（精确等于播放器时间）是经过真机验证的唯一正确做法，绝对不要改。**
+
+v130 我为了修「KS 轻微左右抖 + mpv 原地抖后重载」，把小漂移改成渐进校正（`anchorMediaTime = extrapolated + drift*0.15`，每次只纠 15%）。**结果灾难性变差**：KSPlayer 从轻微抖变**严重抖动+崩溃**，mpv **完全无法显示弹幕**。用户真机暴怒。
+
+**根因**：渐进校正让 anchor 不再精确等于播放器 mediaTime，外推基点漂移→弹幕位置计算错乱→KS 抖动加剧甚至崩溃；mpv 侧 anchor 错乱导致弹幕完全不渲染。
+
+**已在 v131（2580b49）回滚到原始 `sync()`**（硬重置 if drift>1.0 + `anchorMediaTime = mediaTime`）。**任何「渐进/平滑校正」都会破坏弹幕，严禁再动 sync 的 anchor 逻辑。**
+
+---
+
+## 📋 近期版本演进（v123-v131）
+
+- **v123**：豆瓣详情页 frodo 私有 API（简介/类型/主演/导演）+ 入库按钮。**引入回归**：把详情页内容（简介等）错加到首页 Hero，破坏 Hero 焦点逻辑（右滑/右键焦点窜到继续播放）。
+- **v124-v126**：首页 Hero 回滚 v122（删错加的内容区），只保留海报标题换行；新增「豆瓣热门」行（60 条=电影/电视剧/综艺 各 20，网页 JSON 端点）。
+- **v127**：入库按钮背景改苹果液态玻璃 `.glassEffect`（替换 inLibrary 绿底）。
+- **v128**：修豆瓣海报不显示——豆瓣 CDN 防盗链（无 Referer→418 空图），海报加载加 `Referer: movie.douban.com`。
+- **v129**：豆瓣详情页接 frodo 私有 API（`/movie/{id}` id 在路径，`_api_key=0dad551...`，简介字段=intro，Swift 用 `Insecure.SHA1`）。**但 frodo 签名初版有编译错误（SHA1/upper/CharacterSet），两次修复**。
+- **v130**：弹幕「渐进校正」——**严重回归**（见上方警告），已回滚。
+- **v131**：修首页 Hero 焦点跳页（三按钮补全右左导航）+ 豆瓣详情页照搬 TMDB 布局（hero+简介+主演头像+评论+按标题入库）+ 豆瓣海报高清 m_ratio + 弹幕回滚。
 
 ---
 

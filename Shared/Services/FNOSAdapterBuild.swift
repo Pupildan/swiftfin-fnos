@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v131"
+    static let version = "v132"
 
     /// 本版主要变更摘要
-    static let changes = "v131:1)修首页Hero焦点跳页(右键/滑动从播放移到+或详情时焦点窜到继续播放)——三个Hero按钮补全右左导航(用focusedButton在按钮间移动,不逃到海报墙)。2)豆瓣详情页照搬热门影视详情页布局:hero(高清横屏海报backdrop+左下徽章标题评分集数类型+右下主演导演)+下方简介/主演头像行/评论(frodo Reviews)+按标题入库按钮(MoviePilot lookupSubscribeByName)。豆瓣海报高清m_ratio。"
+    static let changes = "v132:1)修豆瓣演员/评论不显示——frodoCelebrities/frodoReviews路径双重/api/v2前缀导致404,已修正。2)豆瓣详情简介搬进hero(与TMDB对齐),contentSection不再重复。3)celebrities接口失败时用frodoDetail.castNames文字降级。4)修首页焦点跳页——新增shelf-side guard:非onDownToShelf路径进入海报墙时硬弹回Hero按钮(focusResetToken机制),右键/滑动焦点逃逸彻底拦截。"
 }

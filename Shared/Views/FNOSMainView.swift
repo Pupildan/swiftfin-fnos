@@ -124,6 +124,9 @@ struct FNOSMainView: View {
     @FocusState private var settingsButtonFocused: Bool
     // 媒体库卡片焦点（下键从 Hero 跳入海报墙的落点）
     @FocusState private var shelfCardFocused: String?
+    // v132：海报墙焦点 guard——非 onDownToShelf 路径进入海报墙时弹回 Hero
+    @State private var shelfFocusBypass = false
+    @State private var heroFocusResetToken = 0
 
     // Hero 每日随机抽选（每天首次进入重新抽 6 部电影）
     @AppStorage("fnos.hero.date") private var heroDate = ""
@@ -171,6 +174,8 @@ struct FNOSMainView: View {
                                             openDetailDirect(item: item)
                                         },
                                         onDownToShelf: {
+                                            // v132：标记合法入口，onChange 不拦截
+                                            shelfFocusBypass = true
                                             // 下键从 Hero 跳入海报墙：先滚动让媒体库行出现，再把焦点落到第一张卡
                                             withAnimation(.easeInOut(duration: 0.4)) {
                                                 proxy.scrollTo("fnos-shelf-top", anchor: .top)
@@ -183,7 +188,8 @@ struct FNOSMainView: View {
                                                     shelfCardFocused = lead
                                                 }
                                             }
-                                        }
+                                        },
+                                        focusResetToken: heroFocusResetToken
                                     )
                                     .frame(width: geo.size.width, height: geo.size.height)
                                 }
@@ -389,9 +395,23 @@ struct FNOSMainView: View {
                 }
             )
         }
-        // 焦点落到卡片即预取 1920 横图进内存缓存：点按起跳必高清（不预取=起跳灰底转圈）
-        .onChange(of: shelfCardFocused) { _, focused in
-            guard let focused, let client else { return }
+        // v132：焦点落到卡片即预取 1920 横图进内存缓存：点按起跳必高清（不预取=起跳灰底转圈）
+        // v132：guard——非 onDownToShelf 路径进入海报墙时弹回 Hero（右键/滑动焦点逃逸硬拦截）
+        .onChange(of: shelfCardFocused) { oldValue, focused in
+            guard let focused else { return }
+            if !shelfFocusBypass {
+                // 非法进入：nil→非nil 且无 bypass 标记 = 焦点从 Hero 逃逸到海报墙
+                // 只有从一张卡到另一张卡（oldValue != nil）才是合法的墙内移动
+                if oldValue == nil {
+                    shelfFocusBypass = false
+                    shelfCardFocused = nil
+                    heroFocusResetToken += 1
+                    return
+                }
+            }
+            // 合法路径：消费 bypass 标记
+            if shelfFocusBypass { shelfFocusBypass = false }
+            guard let client else { return }
             prefetchDetailBackdrop(itemID: focused, client: client)
         }
         // v122：首页连按两次播放/暂停键 → 从飞牛刷新媒体库（单按给提示）
@@ -1023,6 +1043,8 @@ struct FNOSMainView: View {
         for delay in [0.1, 0.3, 0.6, 1.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 guard flight == nil, detailItem == nil, lastOpenedCardID == returning else { return }
+                // v132：程序化焦点归还属合法路径，设 bypass 标记避免被 guard 拦截
+                shelfFocusBypass = true
                 if shelfCardFocused != returning { shelfCardFocused = returning }
             }
         }
@@ -1069,6 +1091,8 @@ struct FNOSMainView: View {
         withAnimation(.easeOut(duration: 0.2)) { flight = nil }
         if let returning = lastOpenedCardID {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                // v132：程序化焦点归还属合法路径，设 bypass 标记避免被 guard 拦截
+                shelfFocusBypass = true
                 shelfCardFocused = returning
             }
         }

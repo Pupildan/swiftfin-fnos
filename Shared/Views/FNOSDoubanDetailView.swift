@@ -166,6 +166,16 @@ struct FNOSDoubanDetailView: View {
                     .foregroundColor(.white.opacity(0.75))
                 }
 
+                // v132：简介（两行，与 TMDB 详情页 hero 对齐）
+                if let f = frodo, !f.summary.isEmpty {
+                    Text(f.summary)
+                        .font(.system(size: 17))
+                        .foregroundColor(.white.opacity(0.75))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: 760, alignment: .leading)
+                }
+
                 // 入库按钮（按标题，状态机）
                 if mpConfigured {
                     libraryButton
@@ -240,19 +250,8 @@ struct FNOSDoubanDetailView: View {
     @ViewBuilder
     private var contentSection: some View {
         VStack(alignment: .leading, spacing: 32) {
-            // 简介
-            if let f = frodo, !f.summary.isEmpty {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("简介")
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.92))
-                    Text(f.summary)
-                        .font(.system(size: 17))
-                        .foregroundColor(.white.opacity(0.8))
-                        .lineSpacing(6)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
+            // 简介（contentSection 不再重复——已搬进 hero）
+            // v132：简介已在 hero 里显示，此处只保留主演头像行和评论
 
             // 主演（圆形头像 + 角色，来自 frodo celebrities）
             if !celebrities.isEmpty {
@@ -287,6 +286,18 @@ struct FNOSDoubanDetailView: View {
                             }
                         }
                     }
+                }
+            } else if let f = frodo, !f.castNames.isEmpty {
+                // v132：celebrities 接口失败时用 frodoDetail.castNames 文字降级
+                VStack(alignment: .leading, spacing: 16) {
+                    Text("主演")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.92))
+                    Text(f.castNames.joined(separator: " / "))
+                        .font(.system(size: 17))
+                        .foregroundColor(.white.opacity(0.8))
+                        .lineSpacing(6)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 

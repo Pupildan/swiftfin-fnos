@@ -348,6 +348,10 @@ struct FNOSHeroBanner: View {
                     }
                 }
                 .buttonStyle(FNOSBareButtonStyle())
+                // v142：恢复 .focusEffectDisabled()（v122 验证过的配置）——
+                // v133 误删后焦点引擎接管方向输入、onMoveCommand 不再投递，轮播翻页失效。
+                // 该修饰符只屏蔽系统焦点视觉效果（自绘视觉由 focusedButton 驱动，不受影响）。
+                .focusEffectDisabled()
                 .focused($focusedButton, equals: .play)
                 .onMoveCommand { direction in
                     switch direction {
@@ -371,6 +375,7 @@ struct FNOSHeroBanner: View {
                     }
                 }
                 .buttonStyle(FNOSBareButtonStyle())
+                .focusEffectDisabled()
                 .focused($focusedButton, equals: .plus)
                 .onMoveCommand { direction in
                     switch direction {
@@ -393,6 +398,7 @@ struct FNOSHeroBanner: View {
                     }
                 }
                 .buttonStyle(FNOSBareButtonStyle())
+                .focusEffectDisabled()
                 .focused($focusedButton, equals: .detail)
                 .onMoveCommand { direction in
                     switch direction {

@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v141"
+    static let version = "v142"
 
     /// 本版主要变更摘要
-    static let changes = "v141:修Hero轮播切换失效。根因=v139给按钮组HStack加的.focusSection()——焦点在focusSection内时引擎接管组内导航,不再向按钮投递onMoveCommand,play左翻/detail右翻失效。摘除该修饰符恢复v133语境(翻页正常),下键入墙由ScrollView原生几何处理不受影响。其余零改动。"
+    static let changes = "v142:修Hero轮播切换(真根因)。diff证明v141按钮代码≡v133,而v122翻页正常——唯一差异=v133误删的.focusEffectDisabled()。该修饰符在场时方向输入回落到按钮onMoveCommand(左滑翻页),删除后引擎自行处理方向输入、onMoveCommand不再投递。三个按钮恢复此修饰符(v122验证配置,仅屏蔽系统焦点视觉,自绘视觉与焦点移动不受影响)。v141的focusSection摘除保留(无意义但无害)。"
 }

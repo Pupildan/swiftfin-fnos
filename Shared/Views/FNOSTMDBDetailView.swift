@@ -102,12 +102,25 @@ struct FNOSTMDBDetailView: View {
                     VStack(spacing: 0) {
                         // Hero 区（参考图排版：徽章/标题/logo/类型·分级/简介/年份·时长/按钮 + 右下主演导演）
                         heroSection(size: geo.size)
+                        // v132: 演员头像行（infoSection 里的 cast 部分提取到 hero 下方）
+                        if let cast = detail?.cast, !cast.isEmpty {
+                            castAvatarSection
+                                .padding(.horizontal, 60)
+                                .padding(.bottom, 40)
+                                .focusable()
+                                #if os(tvOS)
+                                .focusSection()
+                                #endif
+                        }
                         // v123: 预告片行
                         if !videos.filter({ $0.isTrailer }).isEmpty {
                             trailerSection
                                 .padding(.horizontal, 60)
                                 .padding(.bottom, 40)
                                 .focusable()
+                                #if os(tvOS)
+                                .focusSection()
+                                #endif
                         }
                         // v123: 花絮·幕后行
                         if !videos.filter({ $0.isBonus }).isEmpty {
@@ -115,6 +128,9 @@ struct FNOSTMDBDetailView: View {
                                 .padding(.horizontal, 60)
                                 .padding(.bottom, 40)
                                 .focusable()
+                                #if os(tvOS)
+                                .focusSection()
+                                #endif
                         }
                         // v123: 相关内容行
                         if !similar.isEmpty {
@@ -122,6 +138,9 @@ struct FNOSTMDBDetailView: View {
                                 .padding(.horizontal, 60)
                                 .padding(.bottom, 40)
                                 .focusable()
+                                #if os(tvOS)
+                                .focusSection()
+                                #endif
                         }
                         // v123: 制作信息卡 + 底部三列
                         if !productionRows.isEmpty {
@@ -360,6 +379,44 @@ struct FNOSTMDBDetailView: View {
     /// 主演前 3 名（右下展示用）
     private var heroCastNames: String {
         (detail?.cast.prefix(3).compactMap { $0.name }.joined(separator: ", ")) ?? ""
+    }
+
+    /// v132: 演员头像行（从 infoSection 提取到 hero 下方）
+    @ViewBuilder
+    private var castAvatarSection: some View {
+        if let cast = detail?.cast, !cast.isEmpty {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("主要演员")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.9))
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 20) {
+                        ForEach(cast) { member in
+                            VStack(spacing: 8) {
+                                if let profile = member.profileURL {
+                                    FNOSAsyncImage(url: profile, headers: [:])
+                                        .frame(width: 80, height: 80)
+                                        .clipShape(Circle())
+                                } else {
+                                    Circle()
+                                        .fill(Color.white.opacity(0.1))
+                                        .frame(width: 80, height: 80)
+                                }
+                                Text(member.name)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.85))
+                                    .lineLimit(1)
+                                Text(member.character)
+                                    .font(.system(size: 13))
+                                    .foregroundColor(.white.opacity(0.5))
+                                    .lineLimit(1)
+                            }
+                            .frame(width: 80)
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private var detailYear: String? {

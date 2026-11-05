@@ -70,6 +70,9 @@ struct FNOSDoubanDetailView: View {
                             .padding(.top, 20)
                             .padding(.bottom, 60)
                             .focusable()
+                            #if os(tvOS)
+                            .focusSection()
+                            #endif
                     }
                 }
             }

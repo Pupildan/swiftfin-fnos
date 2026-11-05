@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v132"
+    static let version = "v133"
 
     /// 本版主要变更摘要
-    static let changes = "v132:1)修豆瓣演员/评论不显示——frodoCelebrities/frodoReviews路径双重/api/v2前缀导致404,已修正。2)豆瓣详情简介搬进hero(与TMDB对齐),contentSection不再重复。3)celebrities接口失败时用frodoDetail.castNames文字降级。4)修首页焦点跳页——新增shelf-side guard:非onDownToShelf路径进入海报墙时硬弹回Hero按钮(focusResetToken机制),右键/滑动焦点逃逸彻底拦截。"
+    static let changes = "v133:1)修首页焦点——移除Hero按钮.focusEffectDisabled()(根因:该修饰符导致UIKit Focus Engine不认按钮为选中目标,select按下不触发action反而被当成焦点移动推到海报墙)。2)豆瓣详情contentSection加.focusSection()——修下键无法从hero移到内容区。3)TMDB详情新增castAvatarSection(演员头像行)放到hero下方——infoSection里的cast部分从未加入body导致永远不渲染。4)TMDB详情各区块补.focusSection()。"
 }

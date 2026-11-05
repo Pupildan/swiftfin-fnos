@@ -350,7 +350,6 @@ struct FNOSHeroBanner: View {
                     }
                 }
                 .buttonStyle(FNOSBareButtonStyle())
-                .focusEffectDisabled()
                 .focused($focusedButton, equals: .play)
                 .onMoveCommand { direction in
                     switch direction {
@@ -376,7 +375,6 @@ struct FNOSHeroBanner: View {
                     }
                 }
                 .buttonStyle(FNOSBareButtonStyle())
-                .focusEffectDisabled()
                 .focused($focusedButton, equals: .plus)
                 .onMoveCommand { direction in
                     switch direction {
@@ -401,7 +399,6 @@ struct FNOSHeroBanner: View {
                     }
                 }
                 .buttonStyle(FNOSBareButtonStyle())
-                .focusEffectDisabled()
                 .focused($focusedButton, equals: .detail)
                 .onMoveCommand { direction in
                     switch direction {

@@ -183,10 +183,6 @@ struct FNOSMainView: View {
                                                     shelfCardFocused = lead
                                                 }
                                             }
-                                        },
-                                        fetchCredits: { heroItem in
-                                            // v123：跨源 TMDB 主演/导演匹配（未配 key 返回 nil 降级）
-                                            return await matchTMDBCredits(for: heroItem)
                                         }
                                     )
                                     .frame(width: geo.size.width, height: geo.size.height)
@@ -466,22 +462,6 @@ struct FNOSMainView: View {
     private var allItems: [FNOSItem] {
         var seen = Set<String>()
         return sections.flatMap(\.items).filter { seen.insert($0.Id).inserted }
-    }
-
-    // MARK: - v123 Hero 跨源主演/导演匹配
-
-    /// v123：Hero 条目 → TMDB 主演/导演（标题+年份匹配，失败返回 nil 降级）
-    private func matchTMDBCredits(for item: FNOSItem) async -> (cast: String, director: String)? {
-        guard !tmdbApiKey.isEmpty else { return nil }
-        guard let match = await FNOSTMDBClient.searchMatch(
-            title: item.Name ?? "", year: item.ProductionYear.map(String.init), apiKey: tmdbApiKey
-        ) else { return nil }
-        guard let json = try? await FNOSTMDBClient.richDetail(id: match.id, mediaType: match.mediaType, apiKey: tmdbApiKey) else { return nil }
-        let credits = json["credits"] as? [String: Any]
-        let cast = ((credits?["cast"] as? [[String: Any]])?.prefix(3).compactMap { $0["name"] as? String }.joined(separator: ", ")) ?? ""
-        let director = ((credits?["crew"] as? [[String: Any]])?.filter { ($0["job"] as? String) == "Director" }.compactMap { $0["name"] as? String }.joined(separator: " / ")) ?? ""
-        if cast.isEmpty && director.isEmpty { return nil }
-        return (cast: cast, director: director)
     }
 
     // MARK: - Hero Banner 数据：只抓电影（排除剧集），快照只在加载/刷新时生成一次

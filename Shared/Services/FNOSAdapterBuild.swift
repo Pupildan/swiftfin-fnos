@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v128"
+    static let version = "v129"
 
     /// 本版主要变更摘要
-    static let changes = "v128:修豆瓣海报不显示——豆瓣CDN防盗链(无Referer返回418空图),海报加载加Referer:movie.douban.com,海报墙+详情页大海报均修复。豆瓣热门行/其它功能未动。"
+    static let changes = "v129:1)修首页Hero焦点跳页回归(v123引入的右下主演导演覆盖层+徽章+时长破坏焦点逻辑,往右滑/按右键焦点窜到继续播放)——首页Hero彻底回滚v122,Hero增强全部移到详情页。2)豆瓣详情页用MoviePilot同款frodo私有API(HMAC-SHA1签名,_api_key=0dad551...,端点/movie/{id} id在路径)拿完整数据:简介intro/类型/主演/导演。"
 }

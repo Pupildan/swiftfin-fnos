@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import CryptoKit
 
 // MARK: - 豆瓣条目模型
 
@@ -93,5 +94,81 @@ enum FNOSDoubanClient {
             throw FNOSDirectError("豆瓣三个分类全部抓取失败")
         }
         return all
+    }
+
+    // MARK: - v129 frodo 私有 API（参考 MoviePilot apiv2.py，拿完整详情：简介/类型/年份/主演）
+
+    private static let frodoSecret = "bf7dddc7c9cfe6f7"
+    private static let frodoAPIKey = "0dad551ec0f84ed02907ff5c42e8ec70"   // _api_key（GET 请求用这个，非 _api_key2）
+    private static let frodoBase = "https://frodo.douban.com/api/v2"
+    private static let frodoUA = "api-client/1 com.douban.frodo/7.22.0.beta9(231) Android/23 product/Mate 40 vendor/HUAWEI model/Mate 40 brand/HUAWEI  rom/android  network/wifi  platform/AndroidPad"
+
+    /// 复刻 MoviePilot apiv2.py 的 __sign：base64(HMAC-SHA1(secret, "GET&{quote(path,safe='')}&{ts}"))
+    private static func frodoSign(path: String, ts: Int, method: String = "GET") -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(contentsOf: "_.-~")
+        let quoted = path.addingPercentEncoding(withAllowedCharacters: allowed) ?? path
+        let raw = "\(method.upper())&\(quoted)&\(ts)"
+        let key = SymmetricKey(data: Data(frodoSecret.utf8))
+        let sig = HMAC<SHA1>.authenticationCode(for: Data(raw.utf8), using: key)
+        return Data(sig).base64EncodedString()
+    }
+
+    /// frodo 完整详情（简介/类型/年份/主演/导演）
+    struct FNOSDoubanFrodoDetail {
+        var summary: String = ""
+        var genres: [String] = []
+        var year: String = ""
+        var castNames: [String] = []
+        var directors: [String] = []
+    }
+
+    /// 抓 frodo 完整详情（movie_detail / tv_detail），失败返回 nil 降级
+    static func frodoDetail(id: String, category: String) async -> FNOSDoubanFrodoDetail? {
+        // v129：id 在路径里（MoviePilot apiv2.py：__invoke(self._urls["movie_detail"] + subject_id)）
+        // 电影走 /movie/{id}；电视剧、综艺走 /tv/{id}
+        let subPath = category == "电影" ? "/movie/\(id)" : "/tv/\(id)"
+        let path = "/api/v2\(subPath)"
+        let ts = Int(Date().timeIntervalSince1970)
+        let sig = frodoSign(path: path, ts: ts)
+
+        var comps = URLComponents(string: frodoBase + subPath)
+        comps?.queryItems = [
+            URLQueryItem(name: "apiKey", value: frodoAPIKey),
+            URLQueryItem(name: "os_rom", value: "android"),
+            URLQueryItem(name: "_ts", value: String(ts)),
+            URLQueryItem(name: "_sig", value: sig),
+        ]
+        guard let url = comps?.url else { return nil }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 15
+        req.setValue(frodoUA, forHTTPHeaderField: "User-Agent")
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        do {
+            let (data, response) = try await URLSession.shared.data(for: req)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
+                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+                print("FNOS⚠️豆瓣 frodo 详情失败 id=\(id) HTTP=\((response as? HTTPURLResponse)?.statusCode ?? -1)")
+                return nil
+            }
+            var d = FNOSDoubanFrodoDetail()
+            // 简介（frodo 字段名是 intro，不是 summary）
+            d.summary = (json["intro"] as? String) ?? (json["summary"] as? String) ?? ""
+            // 类型
+            d.genres = (json["genres"] as? [String]) ?? []
+            // 年份
+            d.year = (json["year"] as? String) ?? ""
+            // 主演/导演（actors/directors 都是 {name} 对象数组）
+            if let actors = json["actors"] as? [[String: Any]] {
+                d.castNames = actors.prefix(6).compactMap { $0["name"] as? String }
+            }
+            if let directors = json["directors"] as? [[String: Any]] {
+                d.directors = directors.compactMap { $0["name"] as? String }
+            }
+            return d
+        } catch {
+            print("FNOS⚠️豆瓣 frodo 详情异常: \(error.localizedDescription)")
+            return nil
+        }
     }
 }

@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v133"
+    static let version = "v138"
 
     /// 本版主要变更摘要
-    static let changes = "v133:1)修首页焦点——移除Hero按钮.focusEffectDisabled()(根因:该修饰符导致UIKit Focus Engine不认按钮为选中目标,select按下不触发action反而被当成焦点移动推到海报墙)。2)豆瓣详情contentSection加.focusSection()——修下键无法从hero移到内容区。3)TMDB详情新增castAvatarSection(演员头像行)放到hero下方——infoSection里的cast部分从未加入body导致永远不渲染。4)TMDB详情各区块补.focusSection()。"
+    static let changes = "v138:官方推荐UIFocusGuide隔离带。在Hero与海报墙之间插入20pt高的UIFocusGuide(UIViewRepresentable包装,自身永不可聚焦不参与触摸),拦截Hero区向下焦点搜索并转交给海报墙(空间就近=继续播放首卡)。视图高度与结构零改动。同时移除v132 guard弹回逻辑(与Guide转交互抢焦点,Guide为原生替代)。不加折叠不加onMoveCommand拦截。"
 }

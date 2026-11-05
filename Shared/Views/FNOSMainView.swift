@@ -124,9 +124,6 @@ struct FNOSMainView: View {
     @FocusState private var settingsButtonFocused: Bool
     // 媒体库卡片焦点（下键从 Hero 跳入海报墙的落点）
     @FocusState private var shelfCardFocused: String?
-    // v132：海报墙焦点 guard——非 onDownToShelf 路径进入海报墙时弹回 Hero
-    @State private var shelfFocusBypass = false
-    @State private var heroFocusResetToken = 0
 
     // Hero 每日随机抽选（每天首次进入重新抽 6 部电影）
     @AppStorage("fnos.hero.date") private var heroDate = ""
@@ -174,8 +171,6 @@ struct FNOSMainView: View {
                                             openDetailDirect(item: item)
                                         },
                                         onDownToShelf: {
-                                            // v132：标记合法入口，onChange 不拦截
-                                            shelfFocusBypass = true
                                             // 下键从 Hero 跳入海报墙：先滚动让媒体库行出现，再把焦点落到第一张卡
                                             withAnimation(.easeInOut(duration: 0.4)) {
                                                 proxy.scrollTo("fnos-shelf-top", anchor: .top)
@@ -188,11 +183,15 @@ struct FNOSMainView: View {
                                                     shelfCardFocused = lead
                                                 }
                                             }
-                                        },
-                                        focusResetToken: heroFocusResetToken
+                                        }
                                     )
                                     .frame(width: geo.size.width, height: geo.size.height)
                                 }
+
+                                // v138：UIFocusGuide 隔离带（官方推荐机制）——20pt 不可聚焦区域，
+                                // 拦截 Hero 区向下的焦点搜索，转交给海报墙（首行首卡=继续播放）
+                                UIFocusGuideBand()
+                                    .frame(height: 20)
 
                                 // 媒体库横向海报墙（非懒容器：保证屏外行存在，焦点引擎才有落点）
                                 VStack(alignment: .leading, spacing: 44) {
@@ -395,23 +394,10 @@ struct FNOSMainView: View {
                 }
             )
         }
-        // v132：焦点落到卡片即预取 1920 横图进内存缓存：点按起跳必高清（不预取=起跳灰底转圈）
-        // v132：guard——非 onDownToShelf 路径进入海报墙时弹回 Hero（右键/滑动焦点逃逸硬拦截）
-        .onChange(of: shelfCardFocused) { oldValue, focused in
-            guard let focused else { return }
-            if !shelfFocusBypass {
-                // 非法进入：nil→非nil 且无 bypass 标记 = 焦点从 Hero 逃逸到海报墙
-                // 只有从一张卡到另一张卡（oldValue != nil）才是合法的墙内移动
-                if oldValue == nil {
-                    shelfFocusBypass = false
-                    shelfCardFocused = nil
-                    heroFocusResetToken += 1
-                    return
-                }
-            }
-            // 合法路径：消费 bypass 标记
-            if shelfFocusBypass { shelfFocusBypass = false }
-            guard let client else { return }
+        // 焦点落到卡片即预取 1920 横图进内存缓存：点按起跳必高清（不预取=起跳灰底转圈）
+        // v138：guard 已移除——UIFocusGuide 隔离带原生接管焦点路由，不再需要弹回逻辑
+        .onChange(of: shelfCardFocused) { _, focused in
+            guard let focused, let client else { return }
             prefetchDetailBackdrop(itemID: focused, client: client)
         }
         // v122：首页连按两次播放/暂停键 → 从飞牛刷新媒体库（单按给提示）
@@ -1043,8 +1029,6 @@ struct FNOSMainView: View {
         for delay in [0.1, 0.3, 0.6, 1.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 guard flight == nil, detailItem == nil, lastOpenedCardID == returning else { return }
-                // v132：程序化焦点归还属合法路径，设 bypass 标记避免被 guard 拦截
-                shelfFocusBypass = true
                 if shelfCardFocused != returning { shelfCardFocused = returning }
             }
         }
@@ -1091,8 +1075,6 @@ struct FNOSMainView: View {
         withAnimation(.easeOut(duration: 0.2)) { flight = nil }
         if let returning = lastOpenedCardID {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-                // v132：程序化焦点归还属合法路径，设 bypass 标记避免被 guard 拦截
-                shelfFocusBypass = true
                 shelfCardFocused = returning
             }
         }
@@ -2075,6 +2057,60 @@ struct FNOSBareButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+// MARK: - v138 UIFocusGuide 隔离带（官方推荐机制，替代 v132 guard 弹回）
+
+/// 在 Hero 与海报墙之间布置一条 20pt 高的 UIFocusGuide：
+/// - UIFocusGuide 是 UILayoutGuide（非视图），自身永不可聚焦、不参与触摸命中；
+/// - 焦点引擎的向下搜索进入该区域时被拦截，转交给 preferredFocusEnvironments；
+/// - 转交目标 = 本带所在 ScrollView（主层级唯一的 UIScrollView），
+///   引擎在其子树内按空间就近选中首行首卡 = 「继续播放」首卡。
+struct UIFocusGuideBand: UIViewRepresentable {
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    final class Coordinator {
+        var guide: UIFocusGuide?
+        var resolved = false
+    }
+
+    func makeUIView(context: Context) -> UIView {
+        let host = UIView()
+        host.backgroundColor = .clear
+        // 纯焦点层：绝不参与触摸（isFocusable 语义由 FocusGuide 天然满足——非视图不可聚焦）
+        host.isUserInteractionEnabled = false
+        let guide = UIFocusGuide()
+        guide.identifier = "fnos.hero.shelf.guard"
+        host.addLayoutGuide(guide)
+        NSLayoutConstraint.activate([
+            guide.topAnchor.constraint(equalTo: host.topAnchor),
+            guide.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+            guide.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            guide.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+        ])
+        context.coordinator.guide = guide
+        return host
+    }
+
+    func updateUIView(_ host: UIView, context: Context) {
+        guard let guide = context.coordinator.guide,
+              !context.coordinator.resolved else { return }
+        // 布局挂载后异步解析一次转交目标（makeUIView 时层级未就绪）
+        DispatchQueue.main.async { [weak host] in
+            guard let host, host.window != nil else { return }
+            var env: UIView = host
+            var shelf: UIScrollView?
+            while let sup = env.superview {
+                if sup is UIScrollView { shelf = sup; break }
+                env = sup
+            }
+            if let shelf {
+                guide.preferredFocusEnvironments = [shelf]
+                context.coordinator.resolved = true
+            }
+        }
     }
 }
 

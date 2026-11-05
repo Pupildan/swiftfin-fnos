@@ -85,6 +85,11 @@ struct FNOSMainView: View {
     @State private var bangumiDetailItem: FNOSBangumiItem?
     @AppStorage("fnos.bangumi.date") private var bangumiDate = ""
     @AppStorage("fnos.bangumi.cache") private var bangumiCache = ""
+    /// v126：豆瓣热门（电影/电视剧/综艺 各 20 = 60 条）
+    @State private var doubanItems: [FNOSDoubanItem] = []
+    @State private var doubanDetailItem: FNOSDoubanItem?
+    @AppStorage("fnos.douban.date") private var doubanDate = ""
+    @AppStorage("fnos.douban.cache") private var doubanCache = ""
     @State private var isLoading = false
     @State private var didBootstrap = false
 
@@ -195,6 +200,10 @@ struct FNOSMainView: View {
                                     }
                                     ForEach(sections.filter { !$0.items.isEmpty }) { section in
                                         shelf(section, screenWidth: geo.size.width)
+                                    }
+                                    // v126：豆瓣热门（电影/电视剧/综艺 各20=60条），排在热门影视前面
+                                    if !doubanItems.isEmpty {
+                                        doubanShelf(screenWidth: geo.size.width)
                                     }
                                     // v111：热门推荐（TMDB），有数据才显示
                                     if !tmdbItems.isEmpty {
@@ -344,6 +353,13 @@ struct FNOSMainView: View {
                     let native = FNOSNativeClient(baseURL: creds.serverURL, token: nt)
                     return await native.existsInLibrary(title: bgItem.displayTitle, isSeries: true)
                 }
+            )
+        }
+        // v126：豆瓣条目详情页（轻量，列表数据）
+        .fullScreenCover(item: $doubanDetailItem) { dbItem in
+            FNOSDoubanDetailView(
+                item: dbItem,
+                onDismiss: { doubanDetailItem = nil }
             )
         }
         .sheet(isPresented: $showSettings) {
@@ -1195,6 +1211,8 @@ struct FNOSMainView: View {
             await fetchTMDBIfNeeded()
             // v115/v117：Bangumi 热门番剧（近期注目，每日一次）
             await fetchBangumi()
+            // v126：豆瓣热门（电影/电视剧/综艺 各20=60条，每日一次）
+            await fetchDoubanIfNeeded()
         } catch {
             isLoading = false
             print("FNOS❗️加载媒体库失败: \(error)")
@@ -1342,6 +1360,105 @@ struct FNOSMainView: View {
 
     private func encodeBangumiCache(_ items: [FNOSBangumiItem]) -> String {
         (try? JSONEncoder().encode(items)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+    }
+
+    // MARK: - v126 豆瓣热门（电影/电视剧/综艺 各20=60条）
+
+    /// v126：豆瓣热门每日一次——同日命中持久缓存直接解码（豆瓣无公开 API，走网页 JSON 端点）
+    private func fetchDoubanIfNeeded() async {
+        guard doubanItems.isEmpty else { return }
+        let today = Self.dateString()
+
+        if doubanDate == today, let items = decodeDoubanCache(), !items.isEmpty {
+            doubanItems = items
+            return
+        }
+        do {
+            let items = try await FNOSDoubanClient.trending()
+            doubanItems = items
+            doubanDate = today
+            doubanCache = encodeDoubanCache(items)
+            print("FNOS✅豆瓣热门: \(items.count) 条")
+        } catch {
+            print("FNOS⚠️豆瓣获取失败: \(error.localizedDescription)")
+            if let items = decodeDoubanCache(), !items.isEmpty { doubanItems = items }
+        }
+    }
+
+    private func decodeDoubanCache() -> [FNOSDoubanItem]? {
+        guard !doubanCache.isEmpty else { return nil }
+        return try? JSONDecoder().decode([FNOSDoubanItem].self, from: Data(doubanCache.utf8))
+    }
+
+    private func encodeDoubanCache(_ items: [FNOSDoubanItem]) -> String {
+        (try? JSONEncoder().encode(items)).flatMap { String(data: $0, encoding: .utf8) } ?? ""
+    }
+
+    /// v126：豆瓣热门海报墙（与 TMDB/番剧行同款版式，海报走豆瓣 CDN 无需鉴权）
+    private func doubanShelf(screenWidth: CGFloat) -> some View {
+        let hPadding: CGFloat = 72
+        let spacing: CGFloat = 28
+        let visibleCount: CGFloat = 6
+        let tileWidth = max(
+            140,
+            (screenWidth - hPadding * 2 - spacing * (visibleCount - 1)) / visibleCount
+        )
+
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 8) {
+                Text("豆瓣热门")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.92))
+                Text("电影 · 电视剧 · 综艺")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(.white.opacity(0.45))
+                Spacer()
+            }
+            .padding(.horizontal, hPadding)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: spacing) {
+                    ForEach(doubanItems) { item in
+                        VStack(alignment: .leading, spacing: 24) {
+                            // 只有海报图在 Button 内参与焦点，文字在 Button 外不抢焦点
+                            Button {
+                                doubanDetailItem = item
+                            } label: {
+                                FNOSAsyncImage(
+                                    url: item.coverURL,
+                                    headers: [:],
+                                    usePosterCache: true
+                                )
+                                .frame(width: tileWidth, height: tileWidth * 3 / 2)
+                                .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            }
+                            .buttonStyle(.card)
+
+                            // v123：标题自动换行，单行宽度锁死=海报宽
+                            Text(item.title)
+                                .font(.system(size: 15, weight: .medium))
+                                .foregroundColor(.white.opacity(0.85))
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(width: tileWidth, alignment: .leading)
+                                .multilineTextAlignment(.leading)
+
+                            HStack(spacing: 6) {
+                                if let rating = item.displayRating {
+                                    Text(String(format: "%.1f", rating))
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.yellow.opacity(0.8))
+                                }
+                                Text(item.category)
+                                    .font(.system(size: 13))
+                                    .foregroundColor(.white.opacity(0.45))
+                            }
+                        }
+                    }
+                }
+                .padding(.horizontal, hPadding)
+                .padding(.vertical, 26)
+            }
+        }
     }
 
     /// v111：TMDB 热门推荐海报墙（与媒体库行同款版式，海报走 TMDB CDN 无需鉴权）

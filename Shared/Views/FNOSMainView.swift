@@ -124,11 +124,6 @@ struct FNOSMainView: View {
     @FocusState private var settingsButtonFocused: Bool
     // 媒体库卡片焦点（下键从 Hero 跳入海报墙的落点）
     @FocusState private var shelfCardFocused: String?
-    // v132：海报墙焦点 guard——非 onDownToShelf 路径进入海报墙时弹回 Hero
-    @State private var shelfFocusBypass = false
-    @State private var heroFocusResetToken = 0
-    // v135：Hero 折叠状态——物理隔离 ScrollView（方案 B），下键折叠 Hero 让 Shelf 填满屏幕
-    @State private var heroCollapsed = false
 
     // Hero 每日随机抽选（每天首次进入重新抽 6 部电影）
     @AppStorage("fnos.hero.date") private var heroDate = ""
@@ -158,10 +153,10 @@ struct FNOSMainView: View {
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    // v135：物理隔离 ScrollView（方案 B）——Hero 不再和海报墙共用 ScrollView
-                    // 根因：共用 ScrollView 时触控板微小滑动被 ScrollView 吃掉，焦点跳到海报墙
+                    // v136：物理隔离 ScrollView + 极简版——Hero 固定高度，无折叠
+                    // 原生 Focus Engine 通过 .focusSection() 自然路由焦点到下方海报墙
                     VStack(spacing: 0) {
-                        // Hero 区——固定在顶部，独立于下方 ScrollView
+                        // Hero 区——固定高度，独立于下方 ScrollView
                         if !heroSnapshot.isEmpty, let heroClient = client {
                             FNOSHeroBanner(
                                 items: heroSnapshot,
@@ -174,27 +169,13 @@ struct FNOSMainView: View {
                                     openDetailDirect(item: item)
                                 },
                                 onDownToShelf: {
-                                    // v135：折叠 Hero 让 Shelf 填满屏幕（不再用 scrollTo）
-                                    shelfFocusBypass = true
-                                    withAnimation(.easeInOut(duration: 0.3)) {
-                                        heroCollapsed = true
-                                    }
-                                    Task { @MainActor in
-                                        try? await Task.sleep(for: .milliseconds(350))
-                                        if let lead = resumeEntries.first?.item.Id
-                                            ?? sections.first(where: { !$0.items.isEmpty })?.items.first?.Id {
-                                            shelfCardFocused = lead
-                                        }
-                                    }
-                                },
-                                focusResetToken: heroFocusResetToken
+                                    // v136：原生 Focus Engine 处理下键导航，无需手动干预
+                                }
                             )
-                            .frame(width: geo.size.width, height: heroCollapsed ? 0 : geo.size.height)
-                            .clipped()
-                            .animation(.easeInOut(duration: 0.3), value: heroCollapsed)
+                            .frame(width: geo.size.width, height: geo.size.height)
                         }
 
-                        // 海报墙——独立 ScrollView，只在 Hero 折叠后可见
+                        // 海报墙——独立 ScrollView，.focusSection() 让 Focus Engine 自然路由
                         ScrollView(.vertical, showsIndicators: false) {
                             VStack(alignment: .leading, spacing: 44) {
                                 if !resumeEntries.isEmpty {
@@ -214,7 +195,6 @@ struct FNOSMainView: View {
                                 }
                             }
                             .padding(.vertical, 40)
-                            .id("fnos-shelf-top")
                             #if os(tvOS)
                             .focusSection()
                             #endif
@@ -391,29 +371,9 @@ struct FNOSMainView: View {
                 }
             )
         }
-        // v135：焦点落到卡片即预取 1920 横图 + Hero 折叠/展开控制
-        .onChange(of: shelfCardFocused) { oldValue, focused in
-            // v135：焦点离开海报墙时展开 Hero + 强制焦点回 play 按钮
-            if focused == nil {
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    heroCollapsed = false
-                }
-                Task { @MainActor in
-                    try? await Task.sleep(for: .milliseconds(350))
-                    heroFocusResetToken += 1
-                }
-            }
-            guard let focused else { return }
-            if !shelfFocusBypass {
-                if oldValue == nil {
-                    shelfFocusBypass = false
-                    shelfCardFocused = nil
-                    heroFocusResetToken += 1
-                    return
-                }
-            }
-            if shelfFocusBypass { shelfFocusBypass = false }
-            guard let client else { return }
+        // v136：焦点落到卡片即预取 1920 横图（极简版，无 guard）
+        .onChange(of: shelfCardFocused) { _, focused in
+            guard let focused, let client else { return }
             prefetchDetailBackdrop(itemID: focused, client: client)
         }
         // v122：首页连按两次播放/暂停键 → 从飞牛刷新媒体库（单按给提示）
@@ -1045,8 +1005,6 @@ struct FNOSMainView: View {
         for delay in [0.1, 0.3, 0.6, 1.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 guard flight == nil, detailItem == nil, lastOpenedCardID == returning else { return }
-                // v132：程序化焦点归还属合法路径，设 bypass 标记避免被 guard 拦截
-                shelfFocusBypass = true
                 if shelfCardFocused != returning { shelfCardFocused = returning }
             }
         }
@@ -1093,8 +1051,6 @@ struct FNOSMainView: View {
         withAnimation(.easeOut(duration: 0.2)) { flight = nil }
         if let returning = lastOpenedCardID {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-                // v132：程序化焦点归还属合法路径，设 bypass 标记避免被 guard 拦截
-                shelfFocusBypass = true
                 shelfCardFocused = returning
             }
         }

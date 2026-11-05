@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v135"
+    static let version = "v136"
 
     /// 本版主要变更摘要
-    static let changes = "v135:1)物理隔离ScrollView(方案B)——Hero不再和海报墙共用ScrollView,Hero固定在顶部独立于下方ScrollView,彻底消除触控板微小滑动被ScrollView吃掉的问题。2)Hero折叠/展开机制——按下键时Hero折叠(height→0),海报墙填满屏幕;按上键时Hero展开恢复。3)触控降敏(方案C)——heroButtonLabel加.contentShape(Rectangle())严格限制点击边界+动画时长0.16s→0.2s easeInOut。"
+    static let changes = "v136:极简版——删除折叠逻辑(方案A)。Hero固定高度不折叠,海报墙独立ScrollView+.focusSection(),原生Focus Engine自然路由下键焦点。移除heroCollapsed/shelfFocusBypass/heroFocusResetToken/focusResetToken全部复杂状态。guard逻辑也不再需要(物理隔离已根除焦点逃逸)。"
 }

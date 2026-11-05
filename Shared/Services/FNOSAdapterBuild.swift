@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v140"
+    static let version = "v141"
 
     /// 本版主要变更摘要
-    static let changes = "v140:修Hero死背景。1)拆除ZStack叠层——Hero整体(全屏背景+渐变遮罩+Logo+简介+按钮组)作为ScrollView第一项,按下键时随ScrollView一起平滑滑出屏幕,卡片自然推上(ATV+内容跟随)。2)Hero高度100%屏高+ignoresSafeArea铺满,无占位无重叠。3)Hero信息区整体上移(bottom 72→190)对齐ATV+参考图。4)焦点路由与.focusSection()零改动。"
+    static let changes = "v141:修Hero轮播切换失效。根因=v139给按钮组HStack加的.focusSection()——焦点在focusSection内时引擎接管组内导航,不再向按钮投递onMoveCommand,play左翻/detail右翻失效。摘除该修饰符恢复v133语境(翻页正常),下键入墙由ScrollView原生几何处理不受影响。其余零改动。"
 }

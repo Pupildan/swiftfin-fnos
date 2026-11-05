@@ -408,8 +408,9 @@ struct FNOSHeroBanner: View {
         }
         .padding(.top, 8)
         #if os(tvOS)
-            // v139：按钮组焦点域（Apple TV+ 标准架构——原生几何路由的锚点）
-            .focusSection()
+            // v141：摘除按钮组 .focusSection()——它会让焦点引擎接管组内导航、
+            // 不再向按钮投递 onMoveCommand，导致 play/detail 左右方向键的轮播翻页失效。
+            // 恢复 v133 语境（无此修饰符时翻页正常）；下键入墙由 ScrollView 原生几何处理，不依赖它。
             .defaultFocus($focusedButton, .play)
         #endif
         }

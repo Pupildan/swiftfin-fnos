@@ -94,6 +94,14 @@ struct FNOSTMDBDetailView: View {
                     VStack(spacing: 0) {
                         // Hero 区
                         heroSection(size: geo.size)
+                        // v123: 居中 logo（无则由 Hero 标题承担）
+                        if let logo = logoURL {
+                            FNOSAsyncImage(url: logo, headers: [:], contentMode: .fit)
+                                .frame(height: 130)
+                                .frame(maxWidth: .infinity)
+                                .padding(.horizontal, 60)
+                                .padding(.top, 24)
+                        }
                         // 信息区
                         infoSection
                             .padding(.horizontal, 60)
@@ -104,6 +112,13 @@ struct FNOSTMDBDetailView: View {
                         // v123: 预告片行
                         if !videos.filter({ $0.isTrailer }).isEmpty {
                             trailerSection
+                                .padding(.horizontal, 60)
+                                .padding(.bottom, 40)
+                                .focusable()
+                        }
+                        // v123: 花絮·幕后行
+                        if !videos.filter({ $0.isBonus }).isEmpty {
+                            bonusSection
                                 .padding(.horizontal, 60)
                                 .padding(.bottom, 40)
                                 .focusable()
@@ -489,6 +504,47 @@ struct FNOSTMDBDetailView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 20) {
                     ForEach(videos.filter { $0.isTrailer }) { video in
+                        Button {
+                            trailer = video
+                        } label: {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ZStack {
+                                    if let thumb = video.thumbnailURL {
+                                        FNOSAsyncImage(url: thumb, headers: [:])
+                                            .frame(width: 280, height: 158)
+                                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                    } else {
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .fill(Color.white.opacity(0.1))
+                                            .frame(width: 280, height: 158)
+                                    }
+                                    Image(systemName: "play.circle.fill")
+                                        .font(.system(size: 44))
+                                        .foregroundColor(.white.opacity(0.9))
+                                }
+                                Text(video.name)
+                                    .font(.system(size: 15, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.9))
+                                    .lineLimit(2)
+                                    .frame(width: 280, alignment: .leading)
+                            }
+                        }
+                        .buttonStyle(.card)
+                    }
+                }
+            }
+        }
+    }
+
+    /// v123: 花絮·幕后行（复用 trailer 全屏播放 cover）
+    private var bonusSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("花絮·幕后")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundColor(.white.opacity(0.92))
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 20) {
+                    ForEach(videos.filter { $0.isBonus }) { video in
                         Button {
                             trailer = video
                         } label: {

@@ -126,16 +126,9 @@ struct FNOSMainView: View {
     // Hero 快照：只在 bootstrap / 刷新时赋值一次，绝不在 body 渲染中重新洗牌（洗牌会图文错位）
     @State private var heroSnapshot: [FNOSItem] = []
 
-    // MARK: v123 下键内容区（TMDB 智能匹配当前 Hero 条目）+ Hero 取色高斯模糊背景
+    // MARK: v123 Hero 取色高斯模糊背景（下键内容区已回滚，内容承载在详情页）
     @State private var currentHeroIndex = 0
     @State private var heroThemeColor: Color?
-    @State private var contentLogoURL: URL?
-    @State private var contentMatchTitle: String = ""
-    @State private var contentCast: [FNOSTMDBDetail.TMDBCastMember] = []
-    @State private var contentTrailerVideos: [FNOSTMDBClient.TMDBVideo] = []
-    @State private var contentBonusVideos: [FNOSTMDBClient.TMDBVideo] = []
-    @State private var contentSimilar: [FNOSTMDBItem] = []
-    @State private var contentTrailerPlayback: FNOSTMDBClient.TMDBVideo?
 
     // MARK: - Body
 
@@ -187,13 +180,10 @@ struct FNOSMainView: View {
                                             }
                                             Task { @MainActor in
                                                 try? await Task.sleep(for: .milliseconds(450))
-                                                // v123：有内容区（TMDB 匹配成功）→ 焦点交给内容区首个可聚焦元素；
-                                                // 无内容区 → 落「继续播放」首卡，其次媒体库首卡
-                                                if contentMatchTitle.isEmpty {
-                                                    if let lead = resumeEntries.first?.item.Id
-                                                        ?? sections.first(where: { !$0.items.isEmpty })?.items.first?.Id {
-                                                        shelfCardFocused = lead
-                                                    }
+                                                // 有继续播放记录时优先落「继续播放」首卡，其次媒体库首卡
+                                                if let lead = resumeEntries.first?.item.Id
+                                                    ?? sections.first(where: { !$0.items.isEmpty })?.items.first?.Id {
+                                                    shelfCardFocused = lead
                                                 }
                                             }
                                         },
@@ -206,33 +196,6 @@ struct FNOSMainView: View {
                                         }
                                     )
                                     .frame(width: geo.size.width, height: geo.size.height)
-                                }
-
-                                // v123：下键滚动锚点——定位到 Hero 正下方，按下键先露出内容区
-                                Color.clear.frame(height: 1).id("fnos-shelf-top")
-
-                                // v123：下键内容区（当前 Hero 条目的 TMDB 智能匹配数据）
-                                if !contentMatchTitle.isEmpty {
-                                    VStack(alignment: .leading, spacing: 44) {
-                                        // 顶部居中 logo（无则降级为纯文字标题）
-                                        contentLogoHeader
-                                        // 主演行（Hero 下第一条，圆头像 + 角色名）
-                                        if !contentCast.isEmpty {
-                                            contentCastRow
-                                        }
-                                        // 预告片行（Piped 拉流可播）
-                                        if !contentTrailerVideos.isEmpty {
-                                            contentVideoRow(videos: contentTrailerVideos, title: "预告片")
-                                        }
-                                        // 花絮/幕后行（Piped 拉流可播）
-                                        if !contentBonusVideos.isEmpty {
-                                            contentVideoRow(videos: contentBonusVideos, title: "花絮·幕后")
-                                        }
-                                        // 相关内容行（TMDB similar 竖版海报）
-                                        if !contentSimilar.isEmpty {
-                                            contentSimilarRow
-                                        }
-                                    }
                                 }
 
                                 // 媒体库横向海报墙（非懒容器：保证屏外行存在，焦点引擎才有落点）
@@ -254,6 +217,7 @@ struct FNOSMainView: View {
                                     }
                                 }
                                 .padding(.vertical, 40)
+                                .id("fnos-shelf-top")
                                 #if os(tvOS)
                                     .focusSection()
                                 #endif
@@ -332,18 +296,9 @@ struct FNOSMainView: View {
         .task {
             await bootstrapIfNeeded()
         }
-        // v123：当前 Hero 条目变化 → 加载内容区 TMDB 匹配 + 取色背景
-        .task(id: "hero-content-\(currentHeroIndex)-\(heroSnapshot.count)") {
+        // v123：当前 Hero 条目变化 → 取色背景（内容区已回滚，背景保留）
+        .task(id: "hero-theme-\(currentHeroIndex)-\(heroSnapshot.count)") {
             await loadHeroThemeColor()
-            await loadContentMatch()
-        }
-        // v123：内容区预告片全屏拉流播放
-        .fullScreenCover(item: $contentTrailerPlayback) { video in
-            FNOSPipedPlayerView(
-                videoKey: video.key,
-                title: video.name,
-                onDismiss: { contentTrailerPlayback = nil }
-            )
         }
         .fullScreenCover(item: $playbackTarget, onDismiss: {
             rebuildResumeEntries()
@@ -543,141 +498,6 @@ struct FNOSMainView: View {
         .animation(.easeInOut(duration: 0.8), value: heroThemeColor)
     }
 
-    /// 顶部居中 logo（无则降级为纯文字标题）
-    private var contentLogoHeader: some View {
-        VStack(spacing: 12) {
-            if let logo = contentLogoURL {
-                FNOSAsyncImage(url: logo, headers: [:], contentMode: .fit)
-                    .frame(height: 150)
-                    .frame(maxWidth: .infinity)
-            } else {
-                Text(contentMatchTitle)
-                    .font(.system(size: 46, weight: .bold))
-                    .foregroundColor(.white)
-                    .multilineTextAlignment(.center)
-                    .frame(maxWidth: .infinity)
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 72)
-        .padding(.top, 10)
-        .padding(.bottom, 10)
-    }
-
-    /// 主演行（Hero 下第一条：圆头像 + 角色名）
-    private var contentCastRow: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("主演")
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundColor(.white.opacity(0.92))
-                .padding(.horizontal, 72)
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 28) {
-                    ForEach(contentCast) { member in
-                        VStack(spacing: 10) {
-                            if let profile = member.profileURL {
-                                FNOSAsyncImage(url: profile, headers: [:])
-                                    .frame(width: 120, height: 120)
-                                    .clipShape(Circle())
-                            } else {
-                                Circle().fill(Color.white.opacity(0.1)).frame(width: 120, height: 120)
-                            }
-                            Text(member.name)
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(.white)
-                                .lineLimit(1)
-                                .frame(width: 130)
-                            if !member.character.isEmpty {
-                                Text(member.character)
-                                    .font(.system(size: 14))
-                                    .foregroundColor(.white.opacity(0.55))
-                                    .lineLimit(1)
-                                    .frame(width: 130)
-                            }
-                        }
-                    }
-                }
-                .padding(.horizontal, 72)
-                .padding(.vertical, 8)
-            }
-        }
-    }
-
-    /// 预告片 / 花絮行（Piped 拉流可播）
-    private func contentVideoRow(videos: [FNOSTMDBClient.TMDBVideo], title: String) -> some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text(title)
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundColor(.white.opacity(0.92))
-                .padding(.horizontal, 72)
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 20) {
-                    ForEach(videos) { video in
-                        Button {
-                            contentTrailerPlayback = video
-                        } label: {
-                            VStack(alignment: .leading, spacing: 8) {
-                                ZStack {
-                                    if let thumb = video.thumbnailURL {
-                                        FNOSAsyncImage(url: thumb, headers: [:])
-                                            .frame(width: 280, height: 158)
-                                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                                    } else {
-                                        RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.1)).frame(width: 280, height: 158)
-                                    }
-                                    Image(systemName: "play.circle.fill")
-                                        .font(.system(size: 44))
-                                        .foregroundColor(.white.opacity(0.9))
-                                }
-                                Text(video.name)
-                                    .font(.system(size: 15, weight: .medium))
-                                    .foregroundColor(.white.opacity(0.9))
-                                    .lineLimit(2)
-                                    .frame(width: 280, alignment: .leading)
-                            }
-                        }
-                        .buttonStyle(.card)
-                    }
-                }
-                .padding(.horizontal, 72)
-                .padding(.vertical, 8)
-            }
-        }
-    }
-
-    /// 相关内容行（TMDB similar 竖版海报）
-    private var contentSimilarRow: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("相关内容")
-                .font(.system(size: 22, weight: .semibold))
-                .foregroundColor(.white.opacity(0.92))
-                .padding(.horizontal, 72)
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 20) {
-                    ForEach(contentSimilar) { sim in
-                        Button {
-                            tmdbDetailItem = sim
-                        } label: {
-                            VStack(alignment: .leading, spacing: 8) {
-                                FNOSAsyncImage(url: sim.posterURL, headers: [:], usePosterCache: true)
-                                    .frame(width: 160, height: 240)
-                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-                                Text(sim.title)
-                                    .font(.system(size: 15, weight: .medium))
-                                    .foregroundColor(.white.opacity(0.9))
-                                    .lineLimit(2)
-                                    .frame(width: 160, alignment: .leading)
-                            }
-                        }
-                        .buttonStyle(.card)
-                    }
-                }
-                .padding(.horizontal, 72)
-                .padding(.vertical, 8)
-            }
-        }
-    }
-
     /// v123：Hero 条目 → TMDB 主演/导演（标题+年份匹配，失败返回 nil 降级）
     private func matchTMDBCredits(for item: FNOSItem) async -> (cast: String, director: String)? {
         guard !tmdbApiKey.isEmpty else { return nil }
@@ -699,49 +519,6 @@ struct FNOSMainView: View {
         let item = heroSnapshot[currentHeroIndex]
         guard let url = client.heroImageURL(item: item) else { return }
         heroThemeColor = await FNOSDominantColor.color(for: url, headers: client.mediaHeaders)
-    }
-
-    /// v123：下键内容区数据——当前 Hero 条目 → TMDB 搜索 → richDetail → 主演/视频/相关/logo
-    @MainActor
-    private func loadContentMatch() async {
-        guard !tmdbApiKey.isEmpty, heroSnapshot.indices.contains(currentHeroIndex) else {
-            contentMatchTitle = ""
-            contentCast = []
-            contentTrailerVideos = []
-            contentBonusVideos = []
-            contentSimilar = []
-            contentLogoURL = nil
-            return
-        }
-        let item = heroSnapshot[currentHeroIndex]
-        guard let match = await FNOSTMDBClient.searchMatch(
-            title: item.Name ?? "", year: item.ProductionYear.map(String.init), apiKey: tmdbApiKey
-        ) else {
-            // 匹配失败降级：清空内容区（不报错不白屏）
-            contentMatchTitle = ""
-            contentCast = []
-            contentTrailerVideos = []
-            contentBonusVideos = []
-            contentSimilar = []
-            contentLogoURL = nil
-            return
-        }
-        guard let json = try? await FNOSTMDBClient.richDetail(id: match.id, mediaType: match.mediaType, apiKey: tmdbApiKey) else { return }
-        contentMatchTitle = match.title
-        contentLogoURL = FNOSTMDBClient.logoURL(from: json)
-        let credits = json["credits"] as? [String: Any]
-        contentCast = (credits?["cast"] as? [[String: Any]])?.prefix(12).compactMap { c -> FNOSTMDBDetail.TMDBCastMember? in
-            guard let id = c["id"] as? Int else { return nil }
-            let name = c["name"] as? String ?? ""
-            let character = c["character"] as? String ?? ""
-            let profile = c["profile_path"] as? String
-            let profileURL = profile.flatMap { URL(string: "https://image.tmdb.org/t/p/w185\($0)") }
-            return FNOSTMDBDetail.TMDBCastMember(id: id, name: name, character: character, profileURL: profileURL)
-        } ?? []
-        let allVideos = FNOSTMDBClient.videos(from: json)
-        contentTrailerVideos = allVideos.filter { $0.isTrailer }
-        contentBonusVideos = allVideos.filter { $0.isBonus }
-        contentSimilar = FNOSTMDBClient.similarItems(from: json)
     }
 
     // MARK: - Hero Banner 数据：只抓电影（排除剧集），快照只在加载/刷新时生成一次

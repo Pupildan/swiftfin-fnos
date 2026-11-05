@@ -124,4 +124,83 @@ enum FNOSBangumiClient {
         }
         return json
     }
+
+    // MARK: - v123 富数据端点
+
+    /// Bangumi 制作人员（v0 API）
+    struct BangumiPerson: Identifiable {
+        let id: Int
+        let name: String
+        let role: String
+        let imageURL: URL?
+    }
+
+    /// 制作人员（/v0/subjects/{id}/persons）
+    static func persons(id: Int) async -> [BangumiPerson] {
+        guard let url = URL(string: "\(baseURL)/v0/subjects/\(id)/persons") else { return [] }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 12
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+        guard let (data, _) = try? await URLSession.shared.data(for: req),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+        return arr.prefix(20).compactMap { p in
+            guard let pid = p["id"] as? Int else { return nil }
+            let name = p["name"] as? String ?? ""
+            let role = (p["role_name"] as? String) ?? (p["relation"] as? String) ?? ""
+            let imgs = p["images"] as? [String: Any]
+            let imgPath = (imgs?["medium"] as? String) ?? (imgs?["large"] as? String)
+            let imgURL = imgPath.flatMap { URL(string: $0) }
+            guard !name.isEmpty else { return nil }
+            return BangumiPerson(id: pid, name: name, role: role, imageURL: imgURL)
+        }
+    }
+
+    /// 相关条目（/v0/subjects/{id}/subjects）
+    struct BangumiRelated: Identifiable {
+        let id: Int
+        let name: String
+        let relation: String
+        let imageURL: URL?
+        var displayTitle: String { name }
+    }
+
+    static func relatedSubjects(id: Int) async -> [BangumiRelated] {
+        guard let url = URL(string: "\(baseURL)/v0/subjects/\(id)/subjects") else { return [] }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 12
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        req.setValue("Mozilla/5.0", forHTTPHeaderField: "User-Agent")
+        guard let (data, _) = try? await URLSession.shared.data(for: req),
+              let arr = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return [] }
+        return arr.prefix(20).compactMap { r in
+            guard let rid = r["id"] as? Int else { return nil }
+            let name = r["name"] as? String ?? ""
+            let relation = r["relation"] as? String ?? ""
+            guard !name.isEmpty else { return nil }
+            let images = r["images"] as? [String: Any]
+            let imgPath = (images?["common"] as? String) ?? (images?["medium"] as? String)
+            var finalPath = imgPath ?? ""
+            if finalPath.contains("/r/400/") { finalPath = finalPath.replacingOccurrences(of: "/r/400/", with: "/r/800/") }
+            let imgURL = URL(string: finalPath)
+            return BangumiRelated(id: rid, name: name, relation: relation, imageURL: imgURL)
+        }
+    }
+
+    /// infobox 键值对提取（放送日/原名/集数/时长/制作/官网等）
+    static func infobox(from json: [String: Any]) -> [(key: String, value: String)] {
+        guard let info = json["infobox"] as? [[String: Any]] else { return [] }
+        return info.compactMap { item in
+            guard let key = item["key"] as? String else { return nil }
+            var value = ""
+            if let v = item["value"] as? String {
+                value = v
+            } else if let arr = item["value"] as? [[String: Any]] {
+                value = arr.compactMap { $0["v"] as? String }.joined(separator: " / ")
+            }
+            value = decodeHTMLEntities(value)
+            guard !value.isEmpty else { return nil }
+            return (key, value)
+        }
+    }
 }

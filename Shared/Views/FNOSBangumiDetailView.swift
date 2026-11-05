@@ -38,6 +38,16 @@ struct FNOSBangumiDetailView: View {
     @State private var detail: FNOSBangumiDetail?
     @State private var isLoading = true
 
+    // MARK: v123 富数据状态
+    @State private var persons: [FNOSBangumiClient.BangumiPerson] = []
+    @State private var related: [FNOSBangumiClient.BangumiRelated] = []
+    @State private var infoboxRows: [(String, String)] = []
+    @State private var platformText: String = ""
+    @State private var airWeekdayText: String = ""
+    @State private var ratingCount: Int = 0
+    @State private var collectionText: String = ""
+    @State private var relatedDetailItem: FNOSBangumiItem?  // 相关条目进详情
+
     /// v121：入库按钮状态机（与 TMDB 详情页同构）
     private enum LibState {
         case idle, checking, subscribed, inLibrary, adding
@@ -88,6 +98,27 @@ struct FNOSBangumiDetailView: View {
                             .padding(.bottom, 40)
                             // v117: 信息区可聚焦，否则下键无可落点、ScrollView 不滚动
                             .focusable()
+                        // v123: 制作人员行
+                        if !persons.isEmpty {
+                            personsSection
+                                .padding(.horizontal, 60)
+                                .padding(.bottom, 40)
+                                .focusable()
+                        }
+                        // v123: 相关条目行
+                        if !related.isEmpty {
+                            relatedSection
+                                .padding(.horizontal, 60)
+                                .padding(.bottom, 40)
+                                .focusable()
+                        }
+                        // v123: 放送信息卡
+                        if !infoboxRows.isEmpty {
+                            infoboxSection
+                                .padding(.horizontal, 60)
+                                .padding(.bottom, 60)
+                                .focusable()
+                        }
                     }
                 }
                 .ignoresSafeArea()
@@ -96,6 +127,16 @@ struct FNOSBangumiDetailView: View {
         .ignoresSafeArea()
         .task { await loadDetail() }
         .task { await refreshLibState() }
+        // v123: 相关条目进详情
+        .fullScreenCover(item: $relatedDetailItem) { relItem in
+            FNOSBangumiDetailView(
+                item: relItem,
+                onDismiss: { relatedDetailItem = nil },
+                mpBase: mpBase,
+                mpKey: mpKey,
+                inLibraryCheck: inLibraryCheck
+            )
+        }
     }
 
     // MARK: - v121 入库状态机（番剧）
@@ -305,18 +346,50 @@ struct FNOSBangumiDetailView: View {
             let json = try await FNOSBangumiClient.subject(id: item.id)
 
             let summary = json["summary"] as? String ?? item.summary
-            let score = json["score"] as? Double ?? item.score
+            // v123 修复：Bangumi v0 的评分在 rating.score 对象里，顶层无 score 字段
+            var score = item.score
+            if let rating = json["rating"] as? [String: Any], let s = rating["score"] as? Double, s > 0 {
+                score = s
+            } else if let topScore = json["score"] as? Double, topScore > 0 {
+                score = topScore
+            }
+            // v123: 评分人数
+            if let rating = json["rating"] as? [String: Any] {
+                ratingCount = rating["total"] as? Int ?? 0
+            }
             let airDate = json["date"] as? String ?? item.airDate
-            let epsCount = json["eps"] as? Int
+            let epsCount = json["eps"] as? Int ?? (json["total_episodes"] as? Int)
             let nameCN = json["name_cn"] as? String ?? item.nameCN
             let images = json["images"] as? [String: Any]
             let imgPath = (images?["large"] as? String) ?? (images?["common"] as? String)
             let backdropURL = imgPath.flatMap { URL(string: $0) }
 
+            // v123: 平台/放送星期
+            platformText = json["platform"] as? String ?? ""
+            if let wd = json["air_weekday"] as? Int, wd > 0 {
+                let names = ["", "周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+                if wd < names.count { airWeekdayText = names[wd] }
+            }
+
             // 标签
             let tagList = (json["tags"] as? [[String: Any]])?.prefix(8).compactMap { t -> String? in
                 t["name"] as? String
             } ?? []
+
+            // v123: infobox
+            infoboxRows = FNOSBangumiClient.infobox(from: json)
+
+            // v123: 收藏统计
+            if let coll = json["collection"] as? [String: Any] {
+                let doing = coll["doing"] as? Int ?? 0
+                let wish = coll["wish"] as? Int ?? 0
+                let collect = coll["collect"] as? Int ?? 0
+                var parts: [String] = []
+                if collect > 0 { parts.append("看过 \(collect)") }
+                if doing > 0 { parts.append("在看 \(doing)") }
+                if wish > 0 { parts.append("想看 \(wish)") }
+                collectionText = parts.joined(separator: " · ")
+            }
 
             // 角色（Bangumi v0 需单独请求 characters 端点）
             var chars: [FNOSBangumiDetail.BangumiChar] = []
@@ -356,6 +429,137 @@ struct FNOSBangumiDetailView: View {
         } catch {
             print("FNOS⚠️Bangumi 详情加载失败: \(error.localizedDescription)")
             isLoading = false
+        }
+
+        // v123: 制作人员 + 相关条目（独立请求，失败不影响主体）
+        persons = await FNOSBangumiClient.persons(id: item.id)
+        related = await FNOSBangumiClient.relatedSubjects(id: item.id)
+    }
+
+    // MARK: - v123 新区块视图
+
+    /// 制作人员行
+    private var personsSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("制作人员")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundColor(.white.opacity(0.92))
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 20) {
+                    ForEach(persons) { person in
+                        VStack(spacing: 8) {
+                            if let img = person.imageURL {
+                                FNOSAsyncImage(url: img, headers: [:])
+                                    .frame(width: 88, height: 88)
+                                    .clipShape(Circle())
+                            } else {
+                                Circle()
+                                    .fill(Color.white.opacity(0.1))
+                                    .frame(width: 88, height: 88)
+                            }
+                            Text(person.name)
+                                .font(.system(size: 14, weight: .medium))
+                                .foregroundColor(.white.opacity(0.9))
+                                .lineLimit(1)
+                                .frame(width: 100)
+                            if !person.role.isEmpty {
+                                Text(person.role)
+                                    .font(.system(size: 13))
+                                    .foregroundColor(.white.opacity(0.5))
+                                    .lineLimit(1)
+                                    .frame(width: 100)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 相关条目行
+    private var relatedSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("相关条目")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundColor(.white.opacity(0.92))
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 20) {
+                    ForEach(related) { rel in
+                        Button {
+                            relatedDetailItem = FNOSBangumiItem(
+                                id: rel.id, name: rel.name, nameCN: "",
+                                imageURL: rel.imageURL, summary: "", score: 0,
+                                airDate: nil, weekday: nil
+                            )
+                        } label: {
+                            VStack(alignment: .leading, spacing: 8) {
+                                FNOSAsyncImage(url: rel.imageURL, headers: [:], usePosterCache: true)
+                                    .frame(width: 150, height: 150 * 3 / 2)
+                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                Text(rel.name)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.9))
+                                    .lineLimit(2)
+                                    .frame(width: 150, alignment: .leading)
+                                if !rel.relation.isEmpty {
+                                    Text(rel.relation)
+                                        .font(.system(size: 12))
+                                        .foregroundColor(.white.opacity(0.5))
+                                        .lineLimit(1)
+                                        .frame(width: 150, alignment: .leading)
+                                }
+                            }
+                        }
+                        .buttonStyle(.card)
+                    }
+                }
+            }
+        }
+    }
+
+    /// 放送信息卡
+    private var infoboxSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("放送信息")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundColor(.white.opacity(0.92))
+            VStack(alignment: .leading, spacing: 20) {
+                ForEach(Array(infoboxRows.prefix(10).enumerated()), id: \.offset) { _, row in
+                    HStack(alignment: .top, spacing: 20) {
+                        Text(row.0)
+                            .font(.system(size: 16))
+                            .foregroundColor(.white.opacity(0.5))
+                            .frame(width: 100, alignment: .leading)
+                        Text(row.1)
+                            .font(.system(size: 17))
+                            .foregroundColor(.white.opacity(0.92))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer()
+                    }
+                }
+                // 评分人数 + 收藏 + 平台 + 放送日补充
+                if ratingCount > 0 || !collectionText.isEmpty || !platformText.isEmpty {
+                    HStack(alignment: .top, spacing: 20) {
+                        Text("统计")
+                            .font(.system(size: 16))
+                            .foregroundColor(.white.opacity(0.5))
+                            .frame(width: 100, alignment: .leading)
+                        Text([ratingCount > 0 ? "\(ratingCount) 人评分" : "",
+                              collectionText, platformText, airWeekdayText]
+                            .filter { !$0.isEmpty }.joined(separator: " · "))
+                            .font(.system(size: 17))
+                            .foregroundColor(.white.opacity(0.92))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer()
+                    }
+                }
+            }
+            .padding(28)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.white.opacity(0.08))
+            )
         }
     }
 }

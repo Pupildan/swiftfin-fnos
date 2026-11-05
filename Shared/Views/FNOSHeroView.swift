@@ -69,12 +69,19 @@ struct FNOSHeroBanner: View {
     let onPlay: (FNOSItem) -> Void
     let onDetail: (FNOSItem) -> Void
     let onDownToShelf: () -> Void
+    /// v123：跨源 TMDB 主演/导演匹配（FNOSMainView 注入，返回 (cast, director)，匹配失败返回 nil）
+    var fetchCredits: ((FNOSItem) async -> (cast: String, director: String)?)? = nil
+    /// v123：当前条目索引回调（主页用它做内容区 TMDB 智能匹配 + 取色背景）
+    var onHeroIndexChange: ((Int) -> Void)? = nil
 
     /// 轮播目标索引（驱动 HStack 横向偏移 + 动画）
     @State private var currentIndex = 0
     /// 文案索引（延迟到翻页动画结束才跟随 currentIndex）
     /// 根因：动画 0.35s 期间旧海报仍在屏幕中央，若文案瞬时切换就会「图文不匹配」。
     @State private var displayedIndex = 0
+
+    /// v123：右下角主演/导演（当前 displayedIndex 条目的 TMDB credits）
+    @State private var creditsInfo: (cast: String, director: String)?
 
     // 智能预告状态（AVPlayer 播 mp4/m3u8；MKV 等用第二个独立 KSPlayer 实例，与正片完全隔离）
     @State private var previewPlayer: AVPlayer?
@@ -214,6 +221,24 @@ struct FNOSHeroBanner: View {
                         .padding(.bottom, 72)
                 }
 
+                // ---- 右下角：主演/导演（v123 TMDB 跨源匹配，匹配失败隐藏）----
+                if let credits = creditsInfo, !credits.cast.isEmpty || !credits.director.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        if !credits.cast.isEmpty {
+                            Text("主演 \(credits.cast)")
+                        }
+                        if !credits.director.isEmpty {
+                            Text("导演 \(credits.director)")
+                        }
+                    }
+                    .font(.system(size: 17))
+                    .foregroundColor(.white.opacity(0.75))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .padding(.trailing, 72)
+                    .padding(.bottom, 96)
+                    .allowsHitTesting(false)
+                }
+
                 // ---- 底部正中：轮播指示圆点 ----
                 HStack(spacing: 10) {
                     ForEach(items.indices, id: \.self) { index in
@@ -235,17 +260,21 @@ struct FNOSHeroBanner: View {
                     focusedButton = .play
                 }
             }
-            .onChange(of: items.count) { _, newCount in
-                // 刷新媒体库后快照变短：索引越界会让 current 为 nil、HStack 偏移指向不存在页
-                stopPreview()
-                if newCount == 0 {
-                    currentIndex = 0
-                    displayedIndex = 0
-                } else {
-                    if currentIndex >= newCount { currentIndex = newCount - 1 }
-                    if displayedIndex >= newCount { displayedIndex = newCount - 1 }
-                }
+        .onChange(of: items.count) { _, newCount in
+            // 刷新媒体库后快照变短：索引越界会让 current 为 nil、HStack 偏移指向不存在页
+            stopPreview()
+            if newCount == 0 {
+                currentIndex = 0
+                displayedIndex = 0
+            } else {
+                if currentIndex >= newCount { currentIndex = newCount - 1 }
+                if displayedIndex >= newCount { displayedIndex = newCount - 1 }
             }
+        }
+        .onChange(of: displayedIndex) { _, newIndex in
+            // v123：通知主页当前条目变化（驱动内容区匹配 + 取色背景）
+            onHeroIndexChange?(newIndex)
+        }
         }
         .task(id: previewTriggerKey) {
             // 智能预告：Hero 按钮持焦 + 5 秒无操作 → 正片中间 30 秒静音预览。
@@ -259,6 +288,16 @@ struct FNOSHeroBanner: View {
             try? await Task.sleep(for: .seconds(30))
             guard !Task.isCancelled else { return }
             stopPreview()
+        }
+        .task(id: "credits-\(displayedIndex)") {
+            // v123：当前条目跨源 TMDB 主演/导演匹配（懒加载，失败留空）
+            creditsInfo = nil
+            guard let item = current, let fetch = fetchCredits else { return }
+            let result = await fetch(item)
+            // 动画期间可能已翻页，仅当仍是当前条目时才赋值
+            if current?.Id == item.Id {
+                creditsInfo = result
+            }
         }
         .onDisappear {
             stopPreview()
@@ -303,6 +342,19 @@ struct FNOSHeroBanner: View {
 
     private func infoStack(item: FNOSItem) -> some View {
         VStack(alignment: .leading, spacing: 16) {
+            // v123：荣誉徽章胶囊（用 OfficialRating 分级，如 PG-13/12；无则不显示）
+            if let rating = item.OfficialRating, !rating.isEmpty {
+                Text(rating)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(
+                        Capsule().fill(Color.white.opacity(0.18))
+                            .overlay(Capsule().stroke(Color.white.opacity(0.45), lineWidth: 1))
+                    )
+            }
+
             Text(item.Name ?? "未命名")
                 .font(.largeTitle.bold())
                 .lineLimit(2)
@@ -322,6 +374,15 @@ struct FNOSHeroBanner: View {
             }
             .font(.callout)
             .foregroundColor(.white.opacity(0.85))
+
+            // v123：格式徽章行（时长，从 RunTimeTicks；无有效时长不显示）
+            if let duration = item.compactDuration, !duration.isEmpty {
+                HStack(spacing: 10) {
+                    Text(duration)
+                }
+                .font(.system(size: 17))
+                .foregroundColor(.white.opacity(0.7))
+            }
 
             if let overview = item.Overview, !overview.isEmpty {
                 Text(overview)

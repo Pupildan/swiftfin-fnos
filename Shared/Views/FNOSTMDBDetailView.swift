@@ -39,6 +39,22 @@ struct FNOSTMDBDetailView: View {
     @State private var isLoading = true
     @Environment(\.dismiss) private var dismiss
 
+    // MARK: v123 富数据状态
+    @State private var videos: [FNOSTMDBClient.TMDBVideo] = []
+    @State private var similar: [FNOSTMDBItem] = []
+    @State private var logoURL: URL?
+    @State private var tagline: String = ""
+    @State private var runtimeText: String = ""
+    @State private var statusText: String = ""
+    @State private var languageText: String = ""
+    @State private var voteCount: Int = 0
+    @State private var contentRating: String = ""
+    @State private var director: String = ""
+    @State private var companies: [String] = []
+    @State private var productionRows: [(String, String)] = []
+    @State private var trailer: FNOSTMDBClient.TMDBVideo?   // 全屏播放的预告（Identifiable）
+    @State private var similarDetailItem: FNOSTMDBItem?  // 相似推荐点击进详情
+
     /// v120：入库按钮状态机
     private enum LibState {
         case idle, checking, subscribed, inLibrary, adding
@@ -85,6 +101,27 @@ struct FNOSTMDBDetailView: View {
                             .padding(.bottom, 40)
                             // v117: 信息区可聚焦，否则下键无可落点、ScrollView 不滚动
                             .focusable()
+                        // v123: 预告片行
+                        if !videos.filter({ $0.isTrailer }).isEmpty {
+                            trailerSection
+                                .padding(.horizontal, 60)
+                                .padding(.bottom, 40)
+                                .focusable()
+                        }
+                        // v123: 相关内容行
+                        if !similar.isEmpty {
+                            similarSection
+                                .padding(.horizontal, 60)
+                                .padding(.bottom, 40)
+                                .focusable()
+                        }
+                        // v123: 制作信息卡 + 底部三列
+                        if !productionRows.isEmpty {
+                            productionSection
+                                .padding(.horizontal, 60)
+                                .padding(.bottom, 60)
+                                .focusable()
+                        }
                     }
                 }
                 .ignoresSafeArea()
@@ -93,6 +130,25 @@ struct FNOSTMDBDetailView: View {
         .ignoresSafeArea()
         .task { await loadDetail() }
         .task { await refreshLibState() }
+        // v123: 预告片全屏播放
+        .fullScreenCover(item: $trailer) { video in
+            FNOSPipedPlayerView(
+                videoKey: video.key,
+                title: video.name,
+                onDismiss: { trailer = nil }
+            )
+        }
+        // v123: 相似推荐进详情
+        .fullScreenCover(item: $similarDetailItem) { simItem in
+            FNOSTMDBDetailView(
+                item: simItem,
+                apiKey: apiKey,
+                mpBase: mpBase,
+                mpKey: mpKey,
+                inLibraryCheck: inLibraryCheck,
+                onDismiss: { similarDetailItem = nil }
+            )
+        }
     }
 
     // MARK: - v120 入库状态机
@@ -243,6 +299,13 @@ struct FNOSTMDBDetailView: View {
     @ViewBuilder
     private var infoSection: some View {
         VStack(alignment: .leading, spacing: 24) {
+            // v123: 标语
+            if !tagline.isEmpty {
+                Text(tagline)
+                    .font(.system(size: 20, weight: .medium, design: .serif))
+                    .italic()
+                    .foregroundColor(.white.opacity(0.7))
+            }
             // 简介
             if let overview = detail?.overview, !overview.isEmpty {
                 Text(overview)
@@ -307,14 +370,16 @@ struct FNOSTMDBDetailView: View {
 
     private func loadDetail() async {
         do {
-            let json = try await FNOSTMDBClient.detail(
+            let json = try await FNOSTMDBClient.richDetail(
                 id: item.id,
                 mediaType: item.mediaType,
                 apiKey: apiKey
             )
 
             let overview = json["overview"] as? String ?? item.overview
-            let releaseDate = json["release_date"] as? String ?? item.releaseDate
+            let releaseDate = json["release_date"] as? String
+                ?? json["first_air_date"] as? String
+                ?? item.releaseDate
             let voteAverage = json["vote_average"] as? Double ?? item.voteAverage
             let backdropPath = json["backdrop_path"] as? String
             let posterPath = json["poster_path"] as? String
@@ -335,6 +400,44 @@ struct FNOSTMDBDetailView: View {
                 return FNOSTMDBDetail.TMDBCastMember(id: cid, name: name, character: character, profileURL: profileURL)
             } ?? []
 
+            // v123: 导演（credits.crew job=Director）
+            let crew = credits?["crew"] as? [[String: Any]] ?? []
+            let directors = crew.filter { ($0["job"] as? String) == "Director" }.compactMap { $0["name"] as? String }
+            director = directors.joined(separator: " / ")
+
+            // v123: 标语/片长/状态/语言/评分人数
+            tagline = json["tagline"] as? String ?? ""
+            if let rt = json["runtime"] as? Int, rt > 0 {
+                runtimeText = rt >= 60 ? "\(rt / 60) 小时 \(rt % 60) 分钟" : "\(rt) 分钟"
+            } else if let erts = json["episode_run_time"] as? [Int], let first = erts.first, first > 0 {
+                runtimeText = "\(first) 分钟/集"
+            }
+            statusText = json["status"] as? String ?? ""
+            languageText = json["original_language"] as? String ?? ""
+            voteCount = json["vote_count"] as? Int ?? 0
+
+            // v123: 分级（movie=release_dates，tv=content_ratings）
+            contentRating = Self.parseContentRating(json: json, mediaType: item.mediaType)
+
+            // v123: 制作公司
+            companies = (json["production_companies"] as? [[String: Any]])?.compactMap { $0["name"] as? String } ?? []
+
+            // v123: 组装制作信息卡行
+            var rows: [(String, String)] = []
+            if !runtimeText.isEmpty { rows.append(("片长", runtimeText)) }
+            if !statusText.isEmpty { rows.append(("状态", statusText)) }
+            if !contentRating.isEmpty { rows.append(("分级", contentRating)) }
+            if !director.isEmpty { rows.append(("导演", director)) }
+            if !languageText.isEmpty { rows.append(("原始语言", languageText.uppercased())) }
+            if voteCount > 0 { rows.append(("评分人数", "\(voteCount) 人评价")) }
+            if !companies.isEmpty { rows.append(("制作公司", companies.prefix(3).joined(separator: " / "))) }
+            productionRows = rows
+
+            // v123: 视频/相似/logo
+            videos = FNOSTMDBClient.videos(from: json)
+            similar = FNOSTMDBClient.similarItems(from: json)
+            logoURL = FNOSTMDBClient.logoURL(from: json)
+
             let backdropURL = backdropPath.flatMap { URL(string: "https://image.tmdb.org/t/p/w1280\($0)") }
             let posterURL = posterPath.flatMap { URL(string: "https://image.tmdb.org/t/p/w500\($0)") }
 
@@ -354,6 +457,127 @@ struct FNOSTMDBDetailView: View {
         } catch {
             print("FNOS⚠️TMDB 详情加载失败: \(error.localizedDescription)")
             isLoading = false
+        }
+    }
+
+    /// 解析分级：movie 走 release_dates，tv 走 content_ratings
+    private static func parseContentRating(json: [String: Any], mediaType: String) -> String {
+        if mediaType == "tv", let cr = json["content_ratings"] as? [String: Any],
+           let results = cr["results"] as? [[String: Any]] {
+            // 优先 US，退第一个
+            let us = results.first(where: { ($0["iso_3166_1"] as? String) == "US" }) ?? results.first
+            return us?["rating"] as? String ?? ""
+        }
+        if mediaType == "movie", let rd = json["release_dates"] as? [String: Any],
+           let results = rd["results"] as? [[String: Any]] {
+            let us = results.first(where: { ($0["iso_3166_1"] as? String) == "US" }) ?? results.first
+            if let dates = us?["release_dates"] as? [[String: Any]], let first = dates.first {
+                return first["certification"] as? String ?? ""
+            }
+        }
+        return ""
+    }
+
+    // MARK: - v123 新区块视图
+
+    /// 预告片行
+    private var trailerSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("预告片")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundColor(.white.opacity(0.92))
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 20) {
+                    ForEach(videos.filter { $0.isTrailer }) { video in
+                        Button {
+                            trailer = video
+                        } label: {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ZStack {
+                                    if let thumb = video.thumbnailURL {
+                                        FNOSAsyncImage(url: thumb, headers: [:])
+                                            .frame(width: 280, height: 158)
+                                            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                    } else {
+                                        RoundedRectangle(cornerRadius: 12)
+                                            .fill(Color.white.opacity(0.1))
+                                            .frame(width: 280, height: 158)
+                                    }
+                                    Image(systemName: "play.circle.fill")
+                                        .font(.system(size: 44))
+                                        .foregroundColor(.white.opacity(0.9))
+                                }
+                                Text(video.name)
+                                    .font(.system(size: 15, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.9))
+                                    .lineLimit(2)
+                                    .frame(width: 280, alignment: .leading)
+                            }
+                        }
+                        .buttonStyle(.card)
+                    }
+                }
+            }
+        }
+    }
+
+    /// 相关内容行
+    private var similarSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("相关内容")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundColor(.white.opacity(0.92))
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 20) {
+                    ForEach(similar) { sim in
+                        Button {
+                            similarDetailItem = sim
+                        } label: {
+                            VStack(alignment: .leading, spacing: 8) {
+                                FNOSAsyncImage(url: sim.posterURL, headers: [:], usePosterCache: true)
+                                    .frame(width: 160, height: 240)
+                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                Text(sim.title)
+                                    .font(.system(size: 15, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.9))
+                                    .lineLimit(2)
+                                    .frame(width: 160, alignment: .leading)
+                            }
+                        }
+                        .buttonStyle(.card)
+                    }
+                }
+            }
+        }
+    }
+
+    /// 制作信息卡
+    private var productionSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("制作信息")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundColor(.white.opacity(0.92))
+            VStack(alignment: .leading, spacing: 20) {
+                ForEach(Array(productionRows.enumerated()), id: \.offset) { _, row in
+                    HStack(alignment: .top, spacing: 20) {
+                        Text(row.0)
+                            .font(.system(size: 16))
+                            .foregroundColor(.white.opacity(0.5))
+                            .frame(width: 100, alignment: .leading)
+                        Text(row.1)
+                            .font(.system(size: 18))
+                            .foregroundColor(.white.opacity(0.92))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer()
+                    }
+                }
+            }
+            .padding(28)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.white.opacity(0.08))
+            )
         }
     }
 }

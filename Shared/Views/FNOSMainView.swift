@@ -84,29 +84,29 @@ struct FNOSMainView: View {
     // （回到 v116 的 1 个小键 tmdbDate）。
     private var tmdbCache: String {
         get { UserDefaults.standard.string(forKey: "fnos.tmdb.cache") ?? "" }
-        set { UserDefaults.standard.set(newValue, forKey: "fnos.tmdb.cache") }
+        nonmutating set { UserDefaults.standard.set(newValue, forKey: "fnos.tmdb.cache") }
     }
     /// v115：Bangumi 番剧推荐
     @State private var bangumiItems: [FNOSBangumiItem] = []
     @State private var bangumiDetailItem: FNOSBangumiItem?
     private var bangumiDate: String {
         get { UserDefaults.standard.string(forKey: "fnos.bangumi.date") ?? "" }
-        set { UserDefaults.standard.set(newValue, forKey: "fnos.bangumi.date") }
+        nonmutating set { UserDefaults.standard.set(newValue, forKey: "fnos.bangumi.date") }
     }
     private var bangumiCache: String {
         get { UserDefaults.standard.string(forKey: "fnos.bangumi.cache") ?? "" }
-        set { UserDefaults.standard.set(newValue, forKey: "fnos.bangumi.cache") }
+        nonmutating set { UserDefaults.standard.set(newValue, forKey: "fnos.bangumi.cache") }
     }
     /// v126：豆瓣热门（电影/电视剧/综艺 各 20 = 60 条）
     @State private var doubanItems: [FNOSDoubanItem] = []
     @State private var doubanDetailItem: FNOSDoubanItem?
     private var doubanDate: String {
         get { UserDefaults.standard.string(forKey: "fnos.douban.date") ?? "" }
-        set { UserDefaults.standard.set(newValue, forKey: "fnos.douban.date") }
+        nonmutating set { UserDefaults.standard.set(newValue, forKey: "fnos.douban.date") }
     }
     private var doubanCache: String {
         get { UserDefaults.standard.string(forKey: "fnos.douban.cache") ?? "" }
-        set { UserDefaults.standard.set(newValue, forKey: "fnos.douban.cache") }
+        nonmutating set { UserDefaults.standard.set(newValue, forKey: "fnos.douban.cache") }
     }
     @State private var isLoading = false
     @State private var didBootstrap = false

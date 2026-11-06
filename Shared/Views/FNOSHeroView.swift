@@ -231,24 +231,12 @@ struct FNOSHeroBanner: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .animation(.easeInOut(duration: 0.3), value: currentIndex)
-            // v146：DragGesture 翻页——不依赖 onMoveCommand（ScrollView 会把水平滑动
-            // 吃掉分类成 .down），改用 simultaneousGesture 让 DragGesture 与 ScrollView
-            // 共存：水平分量占优时翻页，垂直分量占优时交给 ScrollView 滚动。
-            .simultaneousGesture(
-                DragGesture(minimumDistance: 40)
-                    .onEnded { value in
-                        let w = value.translation.width
-                        let h = value.translation.height
-                        guard abs(w) > abs(h), abs(w) > 40 else { return }
-                        guard focusedButton != nil else { return }
-                        FNOSDiagLog.send("hero drag w=\(Int(w)) h=\(Int(h)) btn=\(focusedButton.map(String.init(describing:)) ?? "nil")")
-                        if w < 0 {
-                            pageNext()
-                        } else {
-                            pagePrevious()
-                        }
-                    }
-            )
+            // v147：UIPanGestureRecognizer 水平滑动翻页（tvOS 可用，替代不可用的 DragGesture）
+            // 水平分量占优时翻页，垂直分量占优时交给 ScrollView 滚动。
+            FNOSPanDetector { isNext in
+                if isNext { pageNext() } else { pagePrevious() }
+            }
+            .frame(width: geo.size.width, height: geo.size.height)
             .onAppear {
                 // 双保险：启动/回前台时把初始焦点强制锁到「播放」按钮，不给设置按钮抢走
                 Task { @MainActor in
@@ -623,6 +611,47 @@ struct FNOSPreviewPlayerView: UIViewRepresentable {
     func updateUIView(_ uiView: UIView, context: Context) {
         if let layer = uiView.layer.sublayers?.compactMap({ $0 as? AVPlayerLayer }).first {
             layer.frame = uiView.bounds
+        }
+    }
+}
+
+// MARK: - v147 UIPanGestureRecognizer 水平滑动检测（tvOS 可用，替代不可用的 DragGesture）
+
+/// 覆盖在 Hero 区域的透明 UIView，通过 UIPanGestureRecognizer 检测水平滑动。
+/// 水平分量占优时回调 onSwipe(true=下一页, false=上一页)；垂直分量占优时不触发。
+/// cancelsTouchesInView=false + shouldRecognizeSimultaneouslyWith=true 与 ScrollView 共存。
+struct FNOSPanDetector: UIViewRepresentable {
+    var onSwipe: (Bool) -> Void
+
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
+        pan.cancelsTouchesInView = false
+        pan.delegate = context.coordinator
+        view.addGestureRecognizer(pan)
+        return view
+    }
+
+    func updateUIView(_ view: UIView, context: Context) {
+        context.coordinator.onSwipe = onSwipe
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        var onSwipe: ((Bool) -> Void)?
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+            true
+        }
+
+        @objc func handlePan(_ gesture: UIPanGestureRecognizer) {
+            guard gesture.state == .ended else { return }
+            let t = gesture.translation(in: gesture.view)
+            guard abs(t.x) > abs(t.y), abs(t.x) > 40 else { return }
+            onSwipe?(t.x < 0)
         }
     }
 }

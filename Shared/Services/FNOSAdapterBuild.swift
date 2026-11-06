@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v146"
+    static let version = "v147"
 
     /// 本版主要变更摘要
-    static let changes = "v146:DragGesture翻页(不依赖onMoveCommand/焦点引擎)。Hero容器挂.simultaneousGesture(DragGesture)——水平分量占优时翻页(w<0=上一页,w>0=下一页),垂直分量占优时交给ScrollView滚动。完全绕开onMoveCommand/焦点引擎分类问题。日志保留(hero drag w= h= btn=)。焦点路由零改动。"
+    static let changes = "v147:UIPanGestureRecognizer水平滑动翻页(tvOS可用,替代tvOS不可用的DragGesture)。Hero区域覆盖透明UIView+UIPanGestureRecognizer,水平分量占优时翻页(左滑=下一页,右滑=上一页),垂直分量占优时交给ScrollView滚动。cancelsTouchesInView=false+shouldRecognizeSimultaneouslyWith=true与ScrollView共存。焦点路由零改动。"
 }

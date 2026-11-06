@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v154"
+    static let version = "v155"
 
     /// 本版主要变更摘要
-    static let changes = "v154:轻触跳焦对照实验。静态排查结论:v98→HEAD的MainView结构/焦点API与v98逐字一致(用户怀疑的focusSection误加/间距缩小均被diff否定),唯一差异=内容层(豆瓣/TMDB/番剧三行+异步拉取+v110卡片渲染/v112 Equatable/v123标题换行/v122排序刷新)。本版加设置开关「经典首页模式v98」:开=隐藏三行+停用其异步拉取(首页动态结构=纯v98),关=现状。真机即时A/B定位根因,不用反复出包。"
+    static let changes = "v155:轻触跳焦根因落位(用户真机二分:v117引入)。v116→v117 diff逐项评估:6项改动中5项与首页焦点面无关,唯一带持续运行时足迹的=新增的@AppStorage缓存键(含几十KB JSON)——其UserDefaults KVO观察者在系统级写入时反复失效MainView,触摸手势期间被视图更新打断→焦点误投递。修复:tmdbCache/bangumiDate/bangumiCache/doubanDate/doubanCache五个键从@AppStorage改为计算属性直读直写UserDefaults(观察者归零,回到v116的1个小键;缓存功能不变)。"
 }

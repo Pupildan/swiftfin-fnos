@@ -78,18 +78,36 @@ struct FNOSMainView: View {
     @AppStorage("fnos.mp.url") private var mpURLSetting = ""
     @AppStorage("fnos.mp.apikey") private var mpKeySetting = ""
     @AppStorage("fnos.tmdb.date") private var tmdbDate = ""
-    /// v117：每日持久缓存（JSON），跨启动复用——同日重启不再请求
-    @AppStorage("fnos.tmdb.cache") private var tmdbCache = ""
+    // v155：v117/v126 的缓存键不再用 @AppStorage——其 UserDefaults KVO 观察者会在
+    // 系统级写入时反复失效 MainView（真机二分：v117 引入轻触跳焦，v117 新增的
+    // 持续足迹=这批观察者）。改为计算属性直读直写：缓存功能不变，观察者归零
+    // （回到 v116 的 1 个小键 tmdbDate）。
+    private var tmdbCache: String {
+        get { UserDefaults.standard.string(forKey: "fnos.tmdb.cache") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "fnos.tmdb.cache") }
+    }
     /// v115：Bangumi 番剧推荐
     @State private var bangumiItems: [FNOSBangumiItem] = []
     @State private var bangumiDetailItem: FNOSBangumiItem?
-    @AppStorage("fnos.bangumi.date") private var bangumiDate = ""
-    @AppStorage("fnos.bangumi.cache") private var bangumiCache = ""
+    private var bangumiDate: String {
+        get { UserDefaults.standard.string(forKey: "fnos.bangumi.date") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "fnos.bangumi.date") }
+    }
+    private var bangumiCache: String {
+        get { UserDefaults.standard.string(forKey: "fnos.bangumi.cache") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "fnos.bangumi.cache") }
+    }
     /// v126：豆瓣热门（电影/电视剧/综艺 各 20 = 60 条）
     @State private var doubanItems: [FNOSDoubanItem] = []
     @State private var doubanDetailItem: FNOSDoubanItem?
-    @AppStorage("fnos.douban.date") private var doubanDate = ""
-    @AppStorage("fnos.douban.cache") private var doubanCache = ""
+    private var doubanDate: String {
+        get { UserDefaults.standard.string(forKey: "fnos.douban.date") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "fnos.douban.date") }
+    }
+    private var doubanCache: String {
+        get { UserDefaults.standard.string(forKey: "fnos.douban.cache") ?? "" }
+        set { UserDefaults.standard.set(newValue, forKey: "fnos.douban.cache") }
+    }
     @State private var isLoading = false
     @State private var didBootstrap = false
 

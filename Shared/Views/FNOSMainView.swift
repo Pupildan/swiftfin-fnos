@@ -243,8 +243,9 @@ struct FNOSMainView: View {
                         // 此守卫拦的是引擎自身的空间跳（右滑窜到右下卡片等）
                         if oldValue == nil {
                             let now = Date()
-                            if now.timeIntervalSince(lastShelfEntry) < 0.8 {
-                                FNOSDiagLog.send("guard: 2nd entry within 0.8s, allow")
+                            // v152：窗口 0.8s→3s（真机实测人手二次下键间隔 1-6s，0.8s 来不及）
+                            if now.timeIntervalSince(lastShelfEntry) < 3.0 {
+                                FNOSDiagLog.send("guard: 2nd entry within 3s, allow")
                             } else {
                                 lastShelfEntry = now
                                 shelfCardFocused = nil

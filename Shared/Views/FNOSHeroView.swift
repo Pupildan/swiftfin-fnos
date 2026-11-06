@@ -353,6 +353,10 @@ struct FNOSHeroBanner: View {
                     switch direction {
                     case .left:
                         pagePrevious()
+                    // v152：上滑=下一页——.right 被引擎空间跳吃掉（窜右下卡片）从不投递，
+                    // 垂直轴(.up/.down)是唯一可靠送达的方向；.down 留空防轻触漂移误触
+                    case .up:
+                        pageNext()
                     default:
                         break
                     }
@@ -390,6 +394,9 @@ struct FNOSHeroBanner: View {
                     FNOSDiagLog.send("hero move detail \(direction) idx=\(currentIndex)")
                     switch direction {
                     case .right:
+                        pageNext()
+                    // v152：上滑=下一页（同 play——.right 投递不可靠，.up 可靠）
+                    case .up:
                         pageNext()
                     default:
                         break

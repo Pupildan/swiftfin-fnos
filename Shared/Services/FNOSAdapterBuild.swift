@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v151"
+    static let version = "v152"
 
     /// 本版主要变更摘要
-    static let changes = "v151:轻触跳焦根因实锤(v150日志:轻触未按任何下键,onDownToShelf连发3次)——跳焦走的就是v98接线的.down→onDownToShelf,轻触漂移被分类为.down。本版:1)删除三按钮.down分支(跳焦源头,v140-v147已验证删除即不跳);2)恢复v132式守卫——无bypass进入海报墙弹回Hero,800ms内第二次进入=用户坚持(故意下键)放行;3)守卫同时拦截引擎空间跳(右滑窜到右下卡片),使.detail右滑的.right命令能送达翻页。已知代价:下键导航需按两次。下键/翻页/半屏修复路径均有诊断日志。"
+    static let changes = "v152:1)下键导航修复——守卫双击窗口0.8s→3s(真机日志:人手二次下键间隔1-6s,0.8s来不及;轻触跳焦已由v151根除,3s窗口误放行风险极低)。2)向前翻页换通道——日志证实.right从不投递(引擎拿去空间跳)而垂直轴.up/.down可靠送达,play/detail增加.up→pageNext(上滑=下一页);.left→pagePrevious保持(play左滑翻页日志已验证送达)。"
 }

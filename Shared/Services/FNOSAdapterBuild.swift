@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v143"
+    static let version = "v144"
 
     /// 本版主要变更摘要
-    static let changes = "v143:1)修按下键Hero残留半屏——原生最小reveal只把首卡拉到屏幕底缘(滚约290pt),现焦点从Hero进入海报墙时显式滚到墙顶(ScrollViewReader+scrollTo,详情归还路径标记intent不触发),视觉结果=v133。2)Hero翻页/焦点全链路诊断日志(onMoveCommand投递、pageNext/pagePrevious节流与边界、焦点迁移、海报墙焦点)回传开发机,定位切换失效的真实断点。"
+    static let changes = "v144:修Hero轮播切换(日志实锤根因)。诊断日志证实:焦点在Hero按钮上时,触摸板水平滑动全部被垂直ScrollView分类为.down(onMoveCommand .left/.right从未触发)。修法=焦点在Hero时scrollDisabled(true)禁用ScrollView滚动,水平滑动不再被吃、正确分类为.left/.right触发翻页。焦点移到海报墙后scrollDisabled自动解除恢复滚动。半屏修复(v143)保留。"
 }

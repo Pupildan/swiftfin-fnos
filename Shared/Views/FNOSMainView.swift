@@ -222,6 +222,10 @@ struct FNOSMainView: View {
                         prefetchDetailBackdrop(itemID: focused, client: client)
                     }
                     .ignoresSafeArea()
+                    // v144：焦点在 Hero 时禁用 ScrollView 滚动——防止垂直 ScrollView 把水平
+                    // 触摸板滑动吃掉分类成 .down（日志实锤：horizontal swipe 全部分类为 .down，
+                    // onMoveCommand .left/.right 从未触发）。焦点移到海报墙后自动恢复滚动。
+                    .scrollDisabled(shelfCardFocused == nil)
                     }
                     // 仅飞行期（cover 呈现前 0~0.74s）禁用主页：此时飞行层盖住底层，
                     // 焦点会漏到被盖住的可聚焦元素上 → Menu 失灵（v76 根因）。

@@ -235,12 +235,10 @@ struct FNOSMainView: View {
                         }
                     }
         // 焦点落到卡片即预取 1920 横图进内存缓存：点按起跳必高清（不预取=起跳灰底转圈）
-        // v158：v143 半屏修复 + v151 守卫（3s 窗口）+ 首卡纠正。
-        // .down→onDownToShelf 已从 Hero 移除（v150 日志实锤：轻触漂移被分类为 .down 走该路径跳焦），
-        // 下键入墙 = 引擎原生空间移动 + 本守卫二次放行。
-        .onChange(of: shelfCardFocused) { oldValue, focused in
-            FNOSDiagLog.send("shelf focus \(oldValue ?? "nil") → \(focused ?? "nil")")
-            // 焦点回到 Hero（nil 迁移且无 cover/飞行）——整页滚回顶部
+        // 焦点落到卡片即预取 1920 横图进内存缓存：点按起跳必高清（不预取=起跳灰底转圈）
+        // v159：守卫移除（.down 处理器已删——跳焦主路径不存在，v140-v144 同配置真机验证不跳），
+        // 单次下键恢复。保留：v143 半屏修复（进入滚墙顶）+ v150 回 Hero 滚顶。
+        .onChange(of: shelfCardFocused) { _, focused in
             guard let focused else {
                 guard detailItem == nil, flight == nil else { return }
                 withAnimation(.easeInOut(duration: 0.3)) {
@@ -248,39 +246,9 @@ struct FNOSMainView: View {
                 }
                 return
             }
-            // 详情归还 bypass 直接放行
-            if shelfReturnIntent {
-                shelfReturnIntent = false
-                guard let client else { return }
-                prefetchDetailBackdrop(itemID: focused, client: client)
-                return
+            withAnimation(.easeInOut(duration: 0.4)) {
+                proxy.scrollTo("fnos-shelf-top", anchor: .top)
             }
-            // 守卫：无 bypass 的进入（轻触漂移/引擎空间跳）——3s 内第二次进入 = 用户坚持
-            // 要下去（故意下键），放行并纠正到首卡；否则弹回 Hero
-            if oldValue == nil {
-                let now = Date()
-                if now.timeIntervalSince(lastShelfEntry) < 3.0 {
-                    FNOSDiagLog.send("guard: 2nd entry within 3s, allow")
-                    // 放行时把焦点纠正到继续播放首卡——引擎的下键空间跳可能落在底部行
-                    if let lead = resumeEntries.first?.item.Id
-                        ?? sections.first(where: { !$0.items.isEmpty })?.items.first?.Id {
-                        if focused != lead { shelfCardFocused = lead }
-                    }
-                } else {
-                    lastShelfEntry = now
-                    shelfCardFocused = nil
-                    heroFocusResetToken += 1
-                    FNOSDiagLog.send("guard: illegal entry, snap back to hero")
-                    return
-                }
-            }
-            // 放行路径：半屏修复——滚到墙顶
-            if oldValue == nil {
-                withAnimation(.easeInOut(duration: 0.4)) {
-                    proxy.scrollTo("fnos-shelf-top", anchor: .top)
-                }
-            }
-            lastShelfEntry = .distantPast
             guard let client else { return }
             prefetchDetailBackdrop(itemID: focused, client: client)
         }

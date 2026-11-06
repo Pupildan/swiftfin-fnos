@@ -144,10 +144,8 @@ struct FNOSMainView: View {
     @FocusState private var shelfCardFocused: String?
     // v161：推荐行动态挂载——焦点在 Hero 时三行不挂载（首页=纯 v98 结构，真机实验证实
     // 轻触不跳/翻页正常/下键正常），下键进入海报墙后挂载，回 Hero 时卸载（视口外发生，无闪烁）
+    // v166：挂载/卸载触发信号 = Hero 的 onHeroFocusChanged（焦点状态），与 nil 计时无关
     @State private var recommendationsMounted = false
-    // v163：卸载延迟任务——行间移动焦点会经过瞬态 nil（引擎释放旧焦点→滚动曝光→获取新焦点），
-    // 立即卸载会导致行闪没+焦点跳回首卡；nil 后等 400ms，期间重新聚焦则取消卸载
-    @State private var unmountTask: Task<Void, Never>?
 
     // Hero 每日随机抽选（每天首次进入重新抽 6 部电影）
     @AppStorage("fnos.hero.date") private var heroDate = ""
@@ -211,6 +209,19 @@ struct FNOSMainView: View {
                                                 shelfCardFocused = lead
                                             }
                                         }
+                                    },
+                                    // v166：Hero 焦点状态驱动推荐行挂载/卸载——
+                                    // 焦点回 Hero = 卸载 + 滚回顶部；焦点去海报墙 = 挂载。
+                                    // 与 nil 计时无关，不受 LazyHStack 跨行瞬态 nil 影响
+                                    onHeroFocusChanged: { isHeroFocused in
+                                        if isHeroFocused {
+                                            recommendationsMounted = false
+                                            withAnimation(.easeInOut(duration: 0.3)) {
+                                                proxy.scrollTo("fnos-hero-top", anchor: .top)
+                                            }
+                                        } else {
+                                            recommendationsMounted = true
+                                        }
                                     }
                                 )
                                 .frame(width: geo.size.width, height: geo.size.height)
@@ -254,61 +265,10 @@ struct FNOSMainView: View {
                         }
                     }
         // 焦点落到卡片即预取 1920 横图进内存缓存：点按起跳必高清（不预取=起跳灰底转圈）
-        // v163：nil 迁移走「延迟卸载」——行间移动焦点会经过瞬态 nil（引擎释放旧焦点→
-        // 滚动曝光新行→获取新焦点），立即卸载会闪行+焦点跳回首卡；400ms 内重新聚焦即取消
-        .onChange(of: shelfCardFocused) { oldValue, focused in
-            if let focused {
-                FNOSDiagLog.send("entry old=\(oldValue ?? "nil") new=\(focused) mounted=\(recommendationsMounted)")
-                // ????:???????;??????????+???+?????
-                unmountTask?.cancel()
-                unmountTask = nil
-                // v162:???????--?????(???????????,???
-                // .down ??,onDownToShelf ???,?????????)
-                if !recommendationsMounted {
-                    FNOSDiagLog.send("MOUNT fired, correcting focus to lead if needed")
-                    recommendationsMounted = true
-                    withAnimation(.easeInOut(duration: 0.4)) {
-                        proxy.scrollTo("fnos-shelf-top", anchor: .top)
-                    }
-                    if let lead = resumeEntries.first?.item.Id
-                        ?? sections.first(where: { !$0.items.isEmpty })?.items.first?.Id {
-                        if focused != lead {
-                            FNOSDiagLog.send("lead correction: \(focused) -> \(lead)")
-                            shelfCardFocused = lead
-                        }
-                    }
-                }
-                guard let client else { return }
-                prefetchDetailBackdrop(itemID: focused, client: client)
-                return
-            }
-            FNOSDiagLog.send("nil transition, scheduling unmount (1500ms)")
-            // nil ??:???????????????(?? Hero)
-            guard detailItem == nil, flight == nil,
-                  playbackTarget == nil, seriesItem == nil else {
-                FNOSDiagLog.send("nil but presenting state active, no unmount scheduled")
-                return
-            }
-            unmountTask?.cancel()
-            unmountTask = Task { @MainActor in
-                // v164：400ms→1500ms——跨行焦点移动需要滚动曝光（引擎释放焦点→滚动→获取），
-                // 曝光时长可超 400ms，窗口太短会在曝光中途拆行→引擎目标消失→拉回首卡
-                try? await Task.sleep(for: .milliseconds(1500))
-                guard !Task.isCancelled else {
-                    FNOSDiagLog.send("unmount task cancelled")
-                    return
-                }
-                // 延迟后仍是 nil（真回到 Hero）才卸载 + 滚回顶部
-                guard shelfCardFocused == nil else {
-                    FNOSDiagLog.send("unmount task fired but shelfFocused non-nil, skip")
-                    return
-                }
-                FNOSDiagLog.send("unmount task EXECUTING (rows removed)")
-                recommendationsMounted = false
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    proxy.scrollTo("fnos-hero-top", anchor: .top)
-                }
-            }
+        // v153：还原 v100 原版（守卫/滚顶/诊断全部移除——操作语义回归 v100）
+        .onChange(of: shelfCardFocused) { _, focused in
+            guard let focused, let client else { return }
+            prefetchDetailBackdrop(itemID: focused, client: client)
         }
                     .ignoresSafeArea()
                     }

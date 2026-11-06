@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v165"
+    static let version = "v166"
 
     /// 本版主要变更摘要
-    static let changes = "v165:诊断日志版(行为零改动)——onChange进入/nil迁移/挂载纠正/卸载任务执行全链路日志回传开发机,定位「焦点到推荐行瞬间拉回继续播放」的精确事件序列。1500ms卸载窗口保留。"
+    static let changes = "v166:挂载/卸载触发信号换源(基于v165日志实锤:跨行焦点移动的瞬态nil可持续1500ms以上,任何基于nil计时的卸载都会在LazyHStack滚动曝光中途拆行→引擎目标消失→拉回首卡)。新信号=Hero自身的焦点状态(onHeroFocusChanged回调):焦点回Hero=卸载+滚顶;焦点去海报墙=挂载。与nil计时完全无关,不受惰性实现延迟影响。onDownToShelf挂载保留(双保险)。移除延迟卸载任务。"
 }

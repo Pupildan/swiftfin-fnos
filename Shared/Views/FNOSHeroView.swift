@@ -69,6 +69,11 @@ struct FNOSHeroBanner: View {
     let onPlay: (FNOSItem) -> Void
     let onDetail: (FNOSItem) -> Void
     let onDownToShelf: () -> Void
+    /// v166：Hero 焦点状态上报——true=焦点在 Hero 按钮上（推荐行卸载时机），
+    /// false=焦点离开 Hero 去海报墙（推荐行挂载时机）。
+    /// 比 onChange(shelfCardFocused) 的 nil 计时可靠：LazyHStack 跨行移动的
+    /// 焦点释放→滚动曝光→获取会产生超长瞬态 nil，任何固定延迟都会误判。
+    let onHeroFocusChanged: (Bool) -> Void
 
     /// 轮播目标索引（驱动 HStack 横向偏移 + 动画）
     @State private var currentIndex = 0
@@ -403,6 +408,11 @@ struct FNOSHeroBanner: View {
             #if os(tvOS)
                 .defaultFocus($focusedButton, .play)
             #endif
+        }
+        // v166：Hero 焦点状态上报（推荐行挂载/卸载的触发信号——与 nil 计时无关，
+        // 不受 LazyHStack 跨行移动的瞬态 nil 影响）
+        .onChange(of: focusedButton) { _, newValue in
+            onHeroFocusChanged(newValue != nil)
         }
     }
 

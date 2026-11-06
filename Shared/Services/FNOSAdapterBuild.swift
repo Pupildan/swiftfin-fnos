@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v150"
+    static let version = "v151"
 
     /// 本版主要变更摘要
-    static let changes = "v150:轻触跳焦新假设——跳焦与滚动位置相关。证据链:轻触被分类为.down→走v98接线的onDownToShelf落到继续播放(v140-v144无.down分支故不跳);v100不跳的解释=测试时页面停在顶部(引擎下方无屏内目标,模糊向量被忽略),而v148/v149测试前做过下键导航,页面停在半滚动状态(引擎最小reveal只拉到视口底缘),继续播放卡在屏内一点即中。本版:焦点回到Hero时整页滚回顶部(恢复v100静止条件,也是ATV+正确视觉);onDownToShelf加诊断日志区分handler路径vs引擎路径。Hero文件不动。"
+    static let changes = "v151:轻触跳焦根因实锤(v150日志:轻触未按任何下键,onDownToShelf连发3次)——跳焦走的就是v98接线的.down→onDownToShelf,轻触漂移被分类为.down。本版:1)删除三按钮.down分支(跳焦源头,v140-v147已验证删除即不跳);2)恢复v132式守卫——无bypass进入海报墙弹回Hero,800ms内第二次进入=用户坚持(故意下键)放行;3)守卫同时拦截引擎空间跳(右滑窜到右下卡片),使.detail右滑的.right命令能送达翻页。已知代价:下键导航需按两次。下键/翻页/半屏修复路径均有诊断日志。"
 }

@@ -126,6 +126,10 @@ struct FNOSMainView: View {
     @FocusState private var shelfCardFocused: String?
     // v143：详情归还意图——closeDetail/cancelFlight 程序化焦点归还时不触发「滚到墙顶」
     @State private var shelfReturnIntent = false
+    // v151：海报墙守卫——无 bypass 的焦点进入（轻触/引擎空间跳）弹回 Hero；
+    // 800ms 内第二次进入 = 用户坚持要下去（故意下键），放行
+    @State private var lastShelfEntry = Date.distantPast
+    @State private var heroFocusResetToken = 0
 
     // Hero 每日随机抽选（每天首次进入重新抽 6 部电影）
     @AppStorage("fnos.hero.date") private var heroDate = ""
@@ -174,21 +178,7 @@ struct FNOSMainView: View {
                                         // Hero 无卡片可起跳：直接出详情页
                                         openDetailDirect(item: item)
                                     },
-                                    onDownToShelf: {
-                                        // v150：诊断——区分轻触走 handler 还是引擎自行移动
-                                        FNOSDiagLog.send("onDownToShelf fired")
-                                        // v148：v100 原版——下键显式滚动到海报墙顶
-                                        withAnimation(.easeInOut(duration: 0.4)) {
-                                            proxy.scrollTo("fnos-shelf-top", anchor: .top)
-                                        }
-                                        Task { @MainActor in
-                                            try? await Task.sleep(for: .milliseconds(450))
-                                            if let lead = resumeEntries.first?.item.Id
-                                                ?? sections.first(where: { !$0.items.isEmpty })?.items.first?.Id {
-                                                shelfCardFocused = lead
-                                            }
-                                        }
-                                    }
+                                    focusResetToken: heroFocusResetToken
                                 )
                                 .frame(width: geo.size.width, height: geo.size.height)
                                 // v149：还原 v98 几何——banner 不再 ignore 安全区（ScrollView 自带），
@@ -231,26 +221,47 @@ struct FNOSMainView: View {
                     // v143：onChange 必须在 ScrollViewReader 内部才能拿到 proxy
                     .onChange(of: shelfCardFocused) { oldValue, focused in
                         FNOSDiagLog.send("shelf focus \(oldValue ?? "nil") → \(focused ?? "nil") intent=\(shelfReturnIntent)")
-                        // v150：焦点回到 Hero（shelfCardFocused→nil 且无 cover/飞行）——
-                        // 整页滚回顶部。引擎的最小 reveal 只把按钮拉到视口底缘，页面停在
-                        // 半滚动状态时继续播放卡就在屏内，轻触漂移一点即中（v100 不跳的
-                        // 原因=测试时页面停在顶部，下方无屏内目标）。恢复静止态=顶部。
-                        guard focused == nil else {
-                            if oldValue == nil && !shelfReturnIntent {
-                                withAnimation(.easeInOut(duration: 0.4)) {
-                                    proxy.scrollTo("fnos-shelf-top", anchor: .top)
-                                }
+                        // v150：焦点回到 Hero（nil 迁移且无 cover/飞行）——整页滚回顶部，
+                        // 恢复 v100 静止条件（也是 ATV+ 正确视觉：焦点在 Hero = Hero 完整可见）
+                        guard let focused else {
+                            guard detailItem == nil, flight == nil else { return }
+                            withAnimation(.easeInOut(duration: 0.3)) {
+                                proxy.scrollTo("fnos-hero-top", anchor: .top)
                             }
-                            shelfReturnIntent = false
-                            guard let client else { return }
-                            prefetchDetailBackdrop(itemID: focused!, client: client)
                             return
                         }
-                        // nil 迁移：区分「回 Hero」与「开详情导致失焦」
-                        guard detailItem == nil, flight == nil else { return }
-                        withAnimation(.easeInOut(duration: 0.3)) {
-                            proxy.scrollTo("fnos-hero-top", anchor: .top)
+                        // v151：详情归还 bypass 直接放行（半屏修复不适用于归还路径）
+                        if shelfReturnIntent {
+                            shelfReturnIntent = false
+                            guard let client else { return }
+                            prefetchDetailBackdrop(itemID: focused, client: client)
+                            return
                         }
+                        // v151 守卫：无 bypass 的进入（轻触漂移/引擎空间跳）——
+                        // 800ms 内第二次进入 = 用户坚持要下去（故意下键），放行；
+                        // 否则弹回 Hero。轻触跳焦源头（.down→onDownToShelf）已随 v151 移除，
+                        // 此守卫拦的是引擎自身的空间跳（右滑窜到右下卡片等）
+                        if oldValue == nil {
+                            let now = Date()
+                            if now.timeIntervalSince(lastShelfEntry) < 0.8 {
+                                FNOSDiagLog.send("guard: 2nd entry within 0.8s, allow")
+                            } else {
+                                lastShelfEntry = now
+                                shelfCardFocused = nil
+                                heroFocusResetToken += 1
+                                FNOSDiagLog.send("guard: illegal entry, snap back to hero")
+                                return
+                            }
+                        }
+                        // 放行路径：半屏修复——首次进入滚到墙顶
+                        if oldValue == nil {
+                            withAnimation(.easeInOut(duration: 0.4)) {
+                                proxy.scrollTo("fnos-shelf-top", anchor: .top)
+                            }
+                        }
+                        lastShelfEntry = .distantPast
+                        guard let client else { return }
+                        prefetchDetailBackdrop(itemID: focused, client: client)
                     }
                     .ignoresSafeArea()
                     }

@@ -68,7 +68,8 @@ struct FNOSHeroBanner: View {
     let userID: String
     let onPlay: (FNOSItem) -> Void
     let onDetail: (FNOSItem) -> Void
-    let onDownToShelf: () -> Void
+    /// v151：外部弹回（海报墙守卫拦截轻触/空间跳时递增，强制焦点回 play）
+    var focusResetToken: Int = 0
 
     /// 轮播目标索引（驱动 HStack 横向偏移 + 动画）
     @State private var currentIndex = 0
@@ -348,11 +349,10 @@ struct FNOSHeroBanner: View {
                 .focusEffectDisabled()
                 .focused($focusedButton, equals: .play)
                 .onMoveCommand { direction in
+                    FNOSDiagLog.send("hero move play \(direction) idx=\(currentIndex)")
                     switch direction {
                     case .left:
                         pagePrevious()
-                    case .down:
-                        onDownToShelf()
                     default:
                         break
                     }
@@ -371,9 +371,7 @@ struct FNOSHeroBanner: View {
                 .focusEffectDisabled()
                 .focused($focusedButton, equals: .plus)
                 .onMoveCommand { direction in
-                    if direction == .down {
-                        onDownToShelf()
-                    }
+                    FNOSDiagLog.send("hero move plus \(direction) idx=\(currentIndex)")
                 }
 
                 // 详情
@@ -389,11 +387,10 @@ struct FNOSHeroBanner: View {
                 .focusEffectDisabled()
                 .focused($focusedButton, equals: .detail)
                 .onMoveCommand { direction in
+                    FNOSDiagLog.send("hero move detail \(direction) idx=\(currentIndex)")
                     switch direction {
                     case .right:
                         pageNext()
-                    case .down:
-                        onDownToShelf()
                     default:
                         break
                     }
@@ -403,6 +400,10 @@ struct FNOSHeroBanner: View {
             #if os(tvOS)
                 .defaultFocus($focusedButton, .play)
             #endif
+        }
+        // v151：海报墙守卫弹回——外部递增 focusResetToken 时强制焦点回 play 按钮
+        .onChange(of: focusResetToken) { _, _ in
+            focusedButton = .play
         }
     }
 

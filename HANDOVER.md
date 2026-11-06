@@ -208,3 +208,50 @@ xcodebuild -project Swiftfin.xcodeproj -scheme "Swiftfin tvOS" \
 16. 每次交付：改代码 → bump `FNOSAdapterBuild.version` → commit → push → 轮询 CI → 下载 artifact 重命名交付，**无论成败都要主动汇报**。
 17. 构建失败只修 error 不重构；日志看 Actions run 的 build step（历史日志在 `build-package/ci-run*.log`）。
 18. 历史交付包全在 `fndanmu-tvos/output/`，回退基线：tag `v16-baseline`（4b920f0）。
+
+---
+
+# 首页焦点战役（v131→v166，36 版）——已解决，最终方案与全部教训
+
+## 战役结果（v166 真机验证通过）
+
+轻触不跳 / 左右滑翻页 / 单次下键进海报墙 / ⬆️回Hero卸载滚顶 / 推荐行可导航。
+最终架构 = **v98 Hero 原文件（只删 .down→onDownToShelf 分支）+ 方案A动态挂载 + onHeroFocusChanged 触发信号**。
+
+## 当前首页焦点架构（v166）
+
+1. **Hero = v98 原文件**：focusEffectDisabled + .left→pagePrevious/.right→pageNext + **.down 分支已删**（轻触跳焦路径）。
+2. **三行推荐（豆瓣/TMDB/番剧）动态挂载**：焦点在 Hero 按钮上 = 不挂载（首页 = 纯 v98 结构）；焦点进海报墙 = 挂载；回 Hero = 卸载 + 整页滚回顶部。
+3. **挂载/卸载触发信号 = Hero 的 onHeroFocusChanged 回调**（focusedButton 的 onChange 上报 true/false）——**与 shelfCardFocused 的 nil 计时完全无关**（跨行移动的瞬态 nil 可持续 1500ms+，任何计时方案都会误判）。
+4. onDownToShelf 挂载保留（双保险，幂等）；三行数据拉取常开与挂载无关（数据常驻，挂载瞬时显示）。
+5. 设置面板的「内容行排查」循环器与守卫等全部临时机制已移除。
+
+## 跳焦根因（最终版）
+
+轻触跳焦 = **轻触漂移被引擎分类为 .down + v98 接线的 .down→onDownToShelf 把焦点送回继续播放首卡**。
+- 三行推荐的存在是「引擎投递该命令」的条件（经典模式实验证实：三行全隐藏时引擎无目标不投递）。
+- 任何单行都不是特异因（逐行掩码实验证实：隐藏任意一行仍跳）。
+- v100/v116 ipa 不跳而新构建跳的原因未在代码层定位（疑似 tvOS 引擎行为差异/测试手势差异）——最终解法是**复刻 v100 的行为结构**（删 .down 分支 + Hero 态无三行）而非解释差异。
+
+## 踩坑清单（36 版的失败分类，按消耗排序）
+
+1. **无实机证据就发明机制（约 12 版）**：守卫/双击下键/换通道/scrollDisabled/容器级 onMoveCommand/UIFocusGuide 重定向——引擎是黑盒，猜 10 次不如测 1 次。
+2. **把视图结构当变量穷举（8 版 v134-v141）**：事后 `git diff v98..HEAD` 证明外壳焦点 API 面与 v98 完全一致——结构从来不是变量，八版全部无效。
+3. **两次未验证的对比推断各误导一轮**：v133 删 focusEffectDisabled（"select 失灵"理论）/ v142 恢复它（"v122 对比"）——都没有 A/B 支撑。
+4. **诊断日志加得太晚（最大教训）**：v143 才挂日志，v150 日志一出就实锤根因（轻触 onDownToShelf 连发 3 次）。若 v131 挂日志省约 19 版。
+5. **擅自改操作逻辑**：v152 上滑翻页 + 双击下键被用户打回——交互变化必须先经用户确认。
+6. **二分数据过度定罪**：v116/v117 二分只能缩小范围；据此定罪 @AppStorage（v155）被证伪。
+7. **tvOS 硬限制**：DragGesture 不可用（编译错）；.right 从不投递（引擎空间跳劫持 + 触控板纵向漂移污染 .down）→ 右滑前翻 = 硬件层限制（修右物理键/Gen1 遥控）。
+8. **惰性实现延迟**：LazyHStack 跨行移动的瞬态 nil 可持续 1500ms+——任何基于 nil 计时的机制都会误判（v163 400ms/v164 1500ms 均失败）→ 触发信号必须换源（v166 焦点状态）。
+9. **PowerShell 拼接中文文件必损坏**（两次截断 MainView）——中文编辑一律用 Edit 工具，Read 后 Edit。
+10. **掩码/开关门控拉取会丢数据**：停在隐藏档重启 → 拉取被跳过 → 行永远回不来。拉取常开，掩码只控显示。
+
+## 未来可能出现的问题（预案）
+
+- 行闪没 + 焦点跳回首卡复发 = 瞬态 nil 窗口问题再现 → 先查 onHeroFocusChanged 触发链是否被绕过（不应再有 nil 计时逻辑）。
+- 新增全屏呈现态（新播放器/新面板）忘加卸载守卫 → 对应状态退出后推荐行消失 → 把新状态加进 onChange 卸载守卫（当前已含 detailItem/flight/playbackTarget/seriesItem）。
+- 快速上下往返掉帧 = 挂载/卸载 70+ 控件的布局尖峰 → 挂载/卸载加 0.2s 防抖。
+- 首屏无推荐内容 = 方案 A 的设计代价（用户已确认接受），不是 bug。
+- 右滑前翻不可靠 = 硬件限制；若右物理键修好，v98 的 .right→pageNext 接线即可恢复前翻。
+- 推荐行空白 = 查数据层（fetch 失败/cache 空），不是挂载逻辑。
+- 完整症状→原因→解法对照表（10 项）见记忆文件 plan-a-dynamic-mount-known-issues。

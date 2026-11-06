@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v145"
+    static let version = "v146"
 
     /// 本版主要变更摘要
-    static let changes = "v145:容器级onMoveCommand统一处理Hero方向输入。三个按钮各自挂的onMoveCommand在tvOS上投递不可靠(引擎可能不向按钮投递),改为在FNOSHeroBanner容器体上挂单个.onMoveCommand,通过焦点环境链接收所有方向命令,用focusedButton状态统一路由。撤回v144的scrollDisabled(导致双击下键才能下移)。半屏修复(v143)保留。"
+    static let changes = "v146:DragGesture翻页(不依赖onMoveCommand/焦点引擎)。Hero容器挂.simultaneousGesture(DragGesture)——水平分量占优时翻页(w<0=上一页,w>0=下一页),垂直分量占优时交给ScrollView滚动。完全绕开onMoveCommand/焦点引擎分类问题。日志保留(hero drag w= h= btn=)。焦点路由零改动。"
 }

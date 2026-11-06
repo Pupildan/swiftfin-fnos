@@ -231,22 +231,24 @@ struct FNOSHeroBanner: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .animation(.easeInOut(duration: 0.3), value: currentIndex)
-            // v144：容器级 onMoveCommand——统一处理所有按钮的方向输入。
-            // 按钮级 onMoveCommand 在 tvOS 上不可靠（引擎可能不向按钮投递），
-            // 容器级通过焦点环境链保证收到所有方向命令。
-            .onMoveCommand { direction in
-                guard let btn = focusedButton else { return }
-                FNOSDiagLog.send("hero container move btn=\(btn) dir=\(direction) idx=\(currentIndex)")
-                switch (btn, direction) {
-                case (.play, .left):  pagePrevious()
-                case (.play, .right): focusedButton = .plus
-                case (.plus, .left):  focusedButton = .play
-                case (.plus, .right): focusedButton = .detail
-                case (.detail, .left): focusedButton = .plus
-                case (.detail, .right): pageNext()
-                default: break
-                }
-            }
+            // v146：DragGesture 翻页——不依赖 onMoveCommand（ScrollView 会把水平滑动
+            // 吃掉分类成 .down），改用 simultaneousGesture 让 DragGesture 与 ScrollView
+            // 共存：水平分量占优时翻页，垂直分量占优时交给 ScrollView 滚动。
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 40)
+                    .onEnded { value in
+                        let w = value.translation.width
+                        let h = value.translation.height
+                        guard abs(w) > abs(h), abs(w) > 40 else { return }
+                        guard focusedButton != nil else { return }
+                        FNOSDiagLog.send("hero drag w=\(Int(w)) h=\(Int(h)) btn=\(focusedButton.map(String.init(describing:)) ?? "nil")")
+                        if w < 0 {
+                            pageNext()
+                        } else {
+                            pagePrevious()
+                        }
+                    }
+            )
             .onAppear {
                 // 双保险：启动/回前台时把初始焦点强制锁到「播放」按钮，不给设置按钮抢走
                 Task { @MainActor in

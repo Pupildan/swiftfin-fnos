@@ -144,7 +144,7 @@ struct FNOSMainView: View {
     @FocusState private var shelfCardFocused: String?
     // v154：轻触跳焦对照实验开关——开=首页隐藏豆瓣/TMDB/番剧三行并停用其异步拉取
     // （首页动态结构=纯 v98），关=现状。设置面板可切，即时生效，用于真机 A/B 定位根因。
-    @AppStorage("fnos.home.legacy98") private var legacyHome98 = false
+    @AppStorage("fnos.home.rowMask") private var rowMask = 7
     // v143：详情归还意图——closeDetail/cancelFlight 程序化焦点归还时不触发「滚到墙顶」
     @State private var shelfReturnIntent = false
     // v151：海报墙守卫——无 bypass 的焦点进入（轻触/引擎空间跳）弹回 Hero；
@@ -226,15 +226,15 @@ struct FNOSMainView: View {
                                     shelf(section, screenWidth: geo.size.width)
                                 }
                                 // v126：豆瓣热门（电影/电视剧/综艺 各20=60条），排在热门影视前面
-                                if !doubanItems.isEmpty, !legacyHome98 {
+                                if !doubanItems.isEmpty, rowMask & 1 != 0 {
                                     doubanShelf(screenWidth: geo.size.width)
                                 }
                                 // v111：热门推荐（TMDB），有数据才显示
-                                if !tmdbItems.isEmpty, !legacyHome98 {
+                                if !tmdbItems.isEmpty, rowMask & 2 != 0 {
                                     tmdbShelf(screenWidth: geo.size.width)
                                 }
                                 // v115：番剧推荐（Bangumi），有数据才显示
-                                if !bangumiItems.isEmpty, !legacyHome98 {
+                                if !bangumiItems.isEmpty, rowMask & 4 != 0 {
                                     bangumiShelf(screenWidth: geo.size.width)
                                 }
                             }
@@ -1230,9 +1230,9 @@ struct FNOSMainView: View {
             refreshHeroSnapshot()
             // 继续播放（v91：服务端 + 本机记录合并；只展示最近 6 条，ATV 版式）
             rebuildResumeEntries()
-            if !legacyHome98 { await fetchTMDBIfNeeded() }
-            if !legacyHome98 { await fetchBangumi() }
-            if !legacyHome98 { await fetchDoubanIfNeeded() }
+            if rowMask & 2 != 0 { await fetchTMDBIfNeeded() }
+            if rowMask & 4 != 0 { await fetchBangumi() }
+            if rowMask & 1 != 0 { await fetchDoubanIfNeeded() }
         } catch {
             isLoading = false
             print("FNOS❗️加载媒体库失败: \(error)")
@@ -1665,10 +1665,30 @@ struct FNOSHomeSettingsView: View {
     @AppStorage("fnos.mp.url") private var mpURLSetting = ""
     @AppStorage("fnos.mp.apikey") private var mpKeySetting = ""
     /// v154：经典首页模式开关（与主视图共用同一键——开=隐藏三行新内容，排查轻触跳焦）
-    @AppStorage("fnos.home.legacy98") private var legacyHome98 = false
+    @AppStorage("fnos.home.rowMask") private var rowMask = 7
 
     // 过渡动画 Demo（验证 matchedGeometryEffect 在真机上的顺滑度，确认后再决定是否集成到海报墙）
     @State private var showTransitionDemo = false
+
+    private var rowMaskTitle: String {
+        switch rowMask {
+        case 7: return "内容行排查：全部显示（现状）"
+        case 6: return "内容行排查：隐藏番剧行"
+        case 5: return "内容行排查：隐藏TMDB行"
+        case 3: return "内容行排查：隐藏豆瓣行"
+        case 0: return "内容行排查：仅海报墙（纯v98）"
+        default: return "内容行排查：组合 \(rowMask)"
+        }
+    }
+    private func nextRowMask() -> Int {
+        switch rowMask {
+        case 7: return 6
+        case 6: return 5
+        case 5: return 3
+        case 3: return 0
+        default: return 7
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -1680,13 +1700,14 @@ struct FNOSHomeSettingsView: View {
                             onRefresh()
                         }
                         // v154：轻触跳焦对照实验开关——经典首页(纯 v98 结构，无三行新内容)
+                        // v156：内容行逐行排查——每按一次换一档；轻触测试定位跳焦凶手
                         FNOSSettingRow(
-                            title: "经典首页模式 v98（排查用）",
-                            systemImage: "hourglass",
-                            isOn: legacyHome98
+                            title: rowMaskTitle,
+                            systemImage: "list.bullet.rectangle"
                         ) {
-                            legacyHome98.toggle()
+                            rowMask = nextRowMask()
                         }
+
                         FNOSSettingRow(
                             title: "退出登录",
                             systemImage: "rectangle.portrait.and.arrow.right",

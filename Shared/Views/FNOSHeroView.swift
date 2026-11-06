@@ -354,6 +354,7 @@ struct FNOSHeroBanner: View {
                 .focusEffectDisabled()
                 .focused($focusedButton, equals: .play)
                 .onMoveCommand { direction in
+                    FNOSDiagLog.send("hero move play \(direction) idx=\(currentIndex)")
                     switch direction {
                     case .left:
                         pagePrevious()
@@ -378,6 +379,7 @@ struct FNOSHeroBanner: View {
                 .focusEffectDisabled()
                 .focused($focusedButton, equals: .plus)
                 .onMoveCommand { direction in
+                    FNOSDiagLog.send("hero move plus \(direction) idx=\(currentIndex)")
                     switch direction {
                     case .left:
                         focusedButton = .play
@@ -401,6 +403,7 @@ struct FNOSHeroBanner: View {
                 .focusEffectDisabled()
                 .focused($focusedButton, equals: .detail)
                 .onMoveCommand { direction in
+                    FNOSDiagLog.send("hero move detail \(direction) idx=\(currentIndex)")
                     switch direction {
                     case .left:
                         // v131：左键回到 plus 按钮（不逃到海报墙）
@@ -419,6 +422,9 @@ struct FNOSHeroBanner: View {
             // 恢复 v133 语境（无此修饰符时翻页正常）；下键入墙由 ScrollView 原生几何处理，不依赖它。
             .defaultFocus($focusedButton, .play)
         #endif
+        .onChange(of: focusedButton) { old, new in
+            FNOSDiagLog.send("hero focus \(String(describing: old)) → \(String(describing: new))")
+        }
         }
     }
 
@@ -451,8 +457,15 @@ struct FNOSHeroBanner: View {
 
     private func pagePrevious() {
         // v125：滑动节流——轻滑一次只翻一页，过滤连续触发的多余命令
-        guard Date().timeIntervalSince(lastPageTime) > 0.45 else { return }
-        guard currentIndex > 0 else { return }
+        guard Date().timeIntervalSince(lastPageTime) > 0.45 else {
+            FNOSDiagLog.send("pagePrevious throttled idx=\(currentIndex)")
+            return
+        }
+        guard currentIndex > 0 else {
+            FNOSDiagLog.send("pagePrevious at-start idx=\(currentIndex)")
+            return
+        }
+        FNOSDiagLog.send("pagePrevious flip \(currentIndex)→\(currentIndex - 1)")
         lastPageTime = Date()
         let target = currentIndex - 1
         withAnimation(.easeInOut(duration: 0.35)) {
@@ -466,8 +479,15 @@ struct FNOSHeroBanner: View {
 
     private func pageNext() {
         // v125：滑动节流——轻滑一次只翻一页，过滤连续触发的多余命令
-        guard Date().timeIntervalSince(lastPageTime) > 0.45 else { return }
-        guard currentIndex < items.count - 1 else { return }
+        guard Date().timeIntervalSince(lastPageTime) > 0.45 else {
+            FNOSDiagLog.send("pageNext throttled idx=\(currentIndex)")
+            return
+        }
+        guard currentIndex < items.count - 1 else {
+            FNOSDiagLog.send("pageNext at-end idx=\(currentIndex)/\(items.count)")
+            return
+        }
+        FNOSDiagLog.send("pageNext flip \(currentIndex)→\(currentIndex + 1)")
         lastPageTime = Date()
         let target = currentIndex + 1
         withAnimation(.easeInOut(duration: 0.35)) {

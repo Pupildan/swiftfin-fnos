@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v142"
+    static let version = "v143"
 
     /// 本版主要变更摘要
-    static let changes = "v142:修Hero轮播切换(真根因)。diff证明v141按钮代码≡v133,而v122翻页正常——唯一差异=v133误删的.focusEffectDisabled()。该修饰符在场时方向输入回落到按钮onMoveCommand(左滑翻页),删除后引擎自行处理方向输入、onMoveCommand不再投递。三个按钮恢复此修饰符(v122验证配置,仅屏蔽系统焦点视觉,自绘视觉与焦点移动不受影响)。v141的focusSection摘除保留(无意义但无害)。"
+    static let changes = "v143:1)修按下键Hero残留半屏——原生最小reveal只把首卡拉到屏幕底缘(滚约290pt),现焦点从Hero进入海报墙时显式滚到墙顶(ScrollViewReader+scrollTo,详情归还路径标记intent不触发),视觉结果=v133。2)Hero翻页/焦点全链路诊断日志(onMoveCommand投递、pageNext/pagePrevious节流与边界、焦点迁移、海报墙焦点)回传开发机,定位切换失效的真实断点。"
 }

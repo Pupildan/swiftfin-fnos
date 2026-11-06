@@ -124,6 +124,8 @@ struct FNOSMainView: View {
     @FocusState private var settingsButtonFocused: Bool
     // 媒体库卡片焦点（下键从 Hero 跳入海报墙的落点）
     @FocusState private var shelfCardFocused: String?
+    // v143：详情归还意图——closeDetail/cancelFlight 程序化焦点归还时不触发「滚到墙顶」
+    @State private var shelfReturnIntent = false
 
     // Hero 每日随机抽选（每天首次进入重新抽 6 部电影）
     @AppStorage("fnos.hero.date") private var heroDate = ""
@@ -154,6 +156,8 @@ struct FNOSMainView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     // v140：Hero 作为 ScrollView 第一项——背景/Logo/简介/按钮组随滚动一起平滑滑出（ATV+ 内容跟随）
+                    // v143：ScrollViewReader 仅用于「焦点从 Hero 进入海报墙时整页滚到墙顶」
+                    ScrollViewReader { proxy in
                     ScrollView(.vertical, showsIndicators: false) {
                         VStack(spacing: 0) {
                             // Hero 整体（全屏背景+渐变遮罩+Logo+简介+按钮组）= ScrollView 第一项
@@ -201,9 +205,11 @@ struct FNOSMainView: View {
                                 }
                             }
                             .padding(.vertical, 40)
+                            .id("fnos-shelf-top")
                         }
                     }
                     .ignoresSafeArea()
+                    }
                     // 仅飞行期（cover 呈现前 0~0.74s）禁用主页：此时飞行层盖住底层，
                     // 焦点会漏到被盖住的可聚焦元素上 → Menu 失灵（v76 根因）。
                     // 注意：主页保持可见（不 opacity 0），由飞行层半透明压暗盖住。
@@ -375,9 +381,18 @@ struct FNOSMainView: View {
             )
         }
         // 焦点落到卡片即预取 1920 横图进内存缓存：点按起跳必高清（不预取=起跳灰底转圈）
-        // v138：guard 已移除——UIFocusGuide 隔离带原生接管焦点路由，不再需要弹回逻辑
-        .onChange(of: shelfCardFocused) { _, focused in
-            guard let focused, let client else { return }
+        // v143：焦点从 Hero 进入海报墙（nil→非nil 且非详情归还）时整页滚到墙顶——
+        // 原生「最小 reveal」只把首卡拉进屏幕底缘，Hero 残留约 3/4 屏（用户报的半屏问题）
+        .onChange(of: shelfCardFocused) { oldValue, focused in
+            FNOSDiagLog.send("shelf focus \(oldValue ?? "nil") → \(focused ?? "nil") intent=\(shelfReturnIntent)")
+            guard let focused else { return }
+            if oldValue == nil && !shelfReturnIntent {
+                withAnimation(.easeInOut(duration: 0.4)) {
+                    proxy.scrollTo("fnos-shelf-top", anchor: .top)
+                }
+            }
+            shelfReturnIntent = false
+            guard let client else { return }
             prefetchDetailBackdrop(itemID: focused, client: client)
         }
         // v122：首页连按两次播放/暂停键 → 从飞牛刷新媒体库（单按给提示）
@@ -1009,6 +1024,8 @@ struct FNOSMainView: View {
         for delay in [0.1, 0.3, 0.6, 1.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 guard flight == nil, detailItem == nil, lastOpenedCardID == returning else { return }
+                // v143：详情归还——标记意图，不触发「滚到墙顶」
+                shelfReturnIntent = true
                 if shelfCardFocused != returning { shelfCardFocused = returning }
             }
         }
@@ -1055,6 +1072,8 @@ struct FNOSMainView: View {
         withAnimation(.easeOut(duration: 0.2)) { flight = nil }
         if let returning = lastOpenedCardID {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
+                // v143：详情归还——标记意图，不触发「滚到墙顶」
+                shelfReturnIntent = true
                 shelfCardFocused = returning
             }
         }
@@ -2037,6 +2056,21 @@ struct FNOSBareButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+// MARK: - v143 诊断日志（临时：Hero 翻页/焦点链路抓取，定位后移除）
+
+/// print + POST 到开发机监听器（192.168.10.122:9999，_tools/fnos_log_listener.ps1）
+enum FNOSDiagLog {
+    static func send(_ line: String) {
+        print("FNOSDIAG|\(line)")
+        guard let url = URL(string: "http://192.168.10.122:9999/") else { return }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        req.timeoutInterval = 2
+        req.httpBody = Data(line.utf8)
+        URLSession.shared.dataTask(with: req) { _, _, _ in }.resume()
     }
 }
 

@@ -231,6 +231,22 @@ struct FNOSHeroBanner: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .animation(.easeInOut(duration: 0.3), value: currentIndex)
+            // v144：容器级 onMoveCommand——统一处理所有按钮的方向输入。
+            // 按钮级 onMoveCommand 在 tvOS 上不可靠（引擎可能不向按钮投递），
+            // 容器级通过焦点环境链保证收到所有方向命令。
+            .onMoveCommand { direction in
+                guard let btn = focusedButton else { return }
+                FNOSDiagLog.send("hero container move btn=\(btn) dir=\(direction) idx=\(currentIndex)")
+                switch (btn, direction) {
+                case (.play, .left):  pagePrevious()
+                case (.play, .right): focusedButton = .plus
+                case (.plus, .left):  focusedButton = .play
+                case (.plus, .right): focusedButton = .detail
+                case (.detail, .left): focusedButton = .plus
+                case (.detail, .right): pageNext()
+                default: break
+                }
+            }
             .onAppear {
                 // 双保险：启动/回前台时把初始焦点强制锁到「播放」按钮，不给设置按钮抢走
                 Task { @MainActor in
@@ -353,18 +369,6 @@ struct FNOSHeroBanner: View {
                 // 该修饰符只屏蔽系统焦点视觉效果（自绘视觉由 focusedButton 驱动，不受影响）。
                 .focusEffectDisabled()
                 .focused($focusedButton, equals: .play)
-                .onMoveCommand { direction in
-                    FNOSDiagLog.send("hero move play \(direction) idx=\(currentIndex)")
-                    switch direction {
-                    case .left:
-                        pagePrevious()
-                    case .right:
-                        // v131：右键在 Hero 按钮间移动（play→plus），不再逃到海报墙
-                        focusedButton = .plus
-                    default:
-                        break
-                    }
-                }
 
                 // + 稍后观看
                 Button {
@@ -378,17 +382,6 @@ struct FNOSHeroBanner: View {
                 .buttonStyle(FNOSBareButtonStyle())
                 .focusEffectDisabled()
                 .focused($focusedButton, equals: .plus)
-                .onMoveCommand { direction in
-                    FNOSDiagLog.send("hero move plus \(direction) idx=\(currentIndex)")
-                    switch direction {
-                    case .left:
-                        focusedButton = .play
-                    case .right:
-                        focusedButton = .detail
-                    default:
-                        break
-                    }
-                }
 
                 // 详情
                 Button {
@@ -402,18 +395,6 @@ struct FNOSHeroBanner: View {
                 .buttonStyle(FNOSBareButtonStyle())
                 .focusEffectDisabled()
                 .focused($focusedButton, equals: .detail)
-                .onMoveCommand { direction in
-                    FNOSDiagLog.send("hero move detail \(direction) idx=\(currentIndex)")
-                    switch direction {
-                    case .left:
-                        // v131：左键回到 plus 按钮（不逃到海报墙）
-                        focusedButton = .plus
-                    case .right:
-                        pageNext()
-                    default:
-                        break
-                    }
-                }
         }
         .padding(.top, 8)
         #if os(tvOS)

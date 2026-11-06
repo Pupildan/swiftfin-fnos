@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v144"
+    static let version = "v145"
 
     /// 本版主要变更摘要
-    static let changes = "v144:修Hero轮播切换(日志实锤根因)。诊断日志证实:焦点在Hero按钮上时,触摸板水平滑动全部被垂直ScrollView分类为.down(onMoveCommand .left/.right从未触发)。修法=焦点在Hero时scrollDisabled(true)禁用ScrollView滚动,水平滑动不再被吃、正确分类为.left/.right触发翻页。焦点移到海报墙后scrollDisabled自动解除恢复滚动。半屏修复(v143)保留。"
+    static let changes = "v145:容器级onMoveCommand统一处理Hero方向输入。三个按钮各自挂的onMoveCommand在tvOS上投递不可靠(引擎可能不向按钮投递),改为在FNOSHeroBanner容器体上挂单个.onMoveCommand,通过焦点环境链接收所有方向命令,用focusedButton状态统一路由。撤回v144的scrollDisabled(导致双击下键才能下移)。半屏修复(v143)保留。"
 }

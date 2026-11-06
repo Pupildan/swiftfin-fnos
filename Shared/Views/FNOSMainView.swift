@@ -142,15 +142,9 @@ struct FNOSMainView: View {
     @FocusState private var settingsButtonFocused: Bool
     // 媒体库卡片焦点（下键从 Hero 跳入海报墙的落点）
     @FocusState private var shelfCardFocused: String?
-    // v154：轻触跳焦对照实验开关——开=首页隐藏豆瓣/TMDB/番剧三行并停用其异步拉取
-    // （首页动态结构=纯 v98），关=现状。设置面板可切，即时生效，用于真机 A/B 定位根因。
-    @AppStorage("fnos.home.rowMask") private var rowMask = 7
-    // v143：详情归还意图——closeDetail/cancelFlight 程序化焦点归还时不触发「滚到墙顶」
-    @State private var shelfReturnIntent = false
-    // v151：海报墙守卫——无 bypass 的焦点进入（轻触/引擎空间跳）弹回 Hero；
-    // 800ms 内第二次进入 = 用户坚持要下去（故意下键），放行
-    @State private var lastShelfEntry = Date.distantPast
-    @State private var heroFocusResetToken = 0
+    // v161：推荐行动态挂载——焦点在 Hero 时三行不挂载（首页=纯 v98 结构，真机实验证实
+    // 轻触不跳/翻页正常/下键正常），下键进入海报墙后挂载，回 Hero 时卸载（视口外发生，无闪烁）
+    @State private var recommendationsMounted = false
 
     // Hero 每日随机抽选（每天首次进入重新抽 6 部电影）
     @AppStorage("fnos.hero.date") private var heroDate = ""
@@ -200,7 +194,9 @@ struct FNOSMainView: View {
                                         openDetailDirect(item: item)
                                     },
                                     onDownToShelf: {
-                                        // v153：v100 原版——单次下键滚动到海报墙顶
+                                        // v161：挂载推荐行（数据常驻内存，无网络等待）
+                                        recommendationsMounted = true
+                                        // v100 原版——单次下键滚动到海报墙顶
                                         withAnimation(.easeInOut(duration: 0.4)) {
                                             proxy.scrollTo("fnos-shelf-top", anchor: .top)
                                         }
@@ -214,6 +210,8 @@ struct FNOSMainView: View {
                                     }
                                 )
                                 .frame(width: geo.size.width, height: geo.size.height)
+                                // v161：Hero 滚动锚点（回 Hero 时整页滚回顶部）
+                                .id("fnos-hero-top")
                             }
 
                             // 媒体库横向海报墙（非懒容器：保证屏外行存在，焦点引擎才有落点）
@@ -225,17 +223,21 @@ struct FNOSMainView: View {
                                 ForEach(sections.filter { !$0.items.isEmpty }) { section in
                                     shelf(section, screenWidth: geo.size.width)
                                 }
-                                // v126：豆瓣热门（电影/电视剧/综艺 各20=60条），排在热门影视前面
-                                if !doubanItems.isEmpty, rowMask & 1 != 0 {
-                                    doubanShelf(screenWidth: geo.size.width)
-                                }
-                                // v111：热门推荐（TMDB），有数据才显示
-                                if !tmdbItems.isEmpty, rowMask & 2 != 0 {
-                                    tmdbShelf(screenWidth: geo.size.width)
-                                }
-                                // v115：番剧推荐（Bangumi），有数据才显示
-                                if !bangumiItems.isEmpty, rowMask & 4 != 0 {
-                                    bangumiShelf(screenWidth: geo.size.width)
+                                // v161：推荐行动态挂载——仅海报墙状态下存在（Hero 态卸载，
+                                // 消除轻触跳焦的引擎条件；数据常驻挂载即显示）
+                                if recommendationsMounted {
+                                    // v126：豆瓣热门（电影/电视剧/综艺 各20=60条），排在热门影视前面
+                                    if !doubanItems.isEmpty {
+                                        doubanShelf(screenWidth: geo.size.width)
+                                    }
+                                    // v111：热门推荐（TMDB），有数据才显示
+                                    if !tmdbItems.isEmpty {
+                                        tmdbShelf(screenWidth: geo.size.width)
+                                    }
+                                    // v115：番剧推荐（Bangumi），有数据才显示
+                                    if !bangumiItems.isEmpty {
+                                        bangumiShelf(screenWidth: geo.size.width)
+                                    }
                                 }
                             }
                             .padding(.vertical, 40)
@@ -248,9 +250,18 @@ struct FNOSMainView: View {
                         }
                     }
         // 焦点落到卡片即预取 1920 横图进内存缓存：点按起跳必高清（不预取=起跳灰底转圈）
-        // v153：还原 v100 原版（守卫/滚顶/诊断全部移除——操作语义回归 v100）
+        // v161：焦点回到 Hero（nil 迁移且无 cover/飞行）——卸载推荐行 + 整页滚回顶部。
+        // 卸载/挂载都发生在视口外，无视觉闪烁；Hero 态 = 纯 v98 结构（轻触/翻页/下键正常）
         .onChange(of: shelfCardFocused) { _, focused in
-            guard let focused, let client else { return }
+            guard let focused else {
+                guard detailItem == nil, flight == nil else { return }
+                recommendationsMounted = false
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    proxy.scrollTo("fnos-hero-top", anchor: .top)
+                }
+                return
+            }
+            guard let client else { return }
             prefetchDetailBackdrop(itemID: focused, client: client)
         }
                     .ignoresSafeArea()
@@ -1054,8 +1065,6 @@ struct FNOSMainView: View {
         for delay in [0.1, 0.3, 0.6, 1.0] {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
                 guard flight == nil, detailItem == nil, lastOpenedCardID == returning else { return }
-                // v143：详情归还——标记意图，不触发「滚到墙顶」
-                shelfReturnIntent = true
                 if shelfCardFocused != returning { shelfCardFocused = returning }
             }
         }
@@ -1102,8 +1111,6 @@ struct FNOSMainView: View {
         withAnimation(.easeOut(duration: 0.2)) { flight = nil }
         if let returning = lastOpenedCardID {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) {
-                // v143：详情归还——标记意图，不触发「滚到墙顶」
-                shelfReturnIntent = true
                 shelfCardFocused = returning
             }
         }
@@ -1666,31 +1673,9 @@ struct FNOSHomeSettingsView: View {
     /// v120：MoviePilot 入库设置（与主视图共用同一批键）
     @AppStorage("fnos.mp.url") private var mpURLSetting = ""
     @AppStorage("fnos.mp.apikey") private var mpKeySetting = ""
-    /// v154：经典首页模式开关（与主视图共用同一键——开=隐藏三行新内容，排查轻触跳焦）
-    @AppStorage("fnos.home.rowMask") private var rowMask = 7
 
     // 过渡动画 Demo（验证 matchedGeometryEffect 在真机上的顺滑度，确认后再决定是否集成到海报墙）
     @State private var showTransitionDemo = false
-
-    private var rowMaskTitle: String {
-        switch rowMask {
-        case 7: return "内容行排查：全部显示（现状）"
-        case 6: return "内容行排查：隐藏豆瓣行"
-        case 5: return "内容行排查：隐藏TMDB行"
-        case 3: return "内容行排查：隐藏番剧行"
-        case 0: return "内容行排查：仅海报墙（纯v98）"
-        default: return "内容行排查：组合 \(rowMask)"
-        }
-    }
-    private func nextRowMask() -> Int {
-        switch rowMask {
-        case 7: return 6
-        case 6: return 5
-        case 5: return 3
-        case 3: return 0
-        default: return 7
-        }
-    }
 
     var body: some View {
         NavigationStack {
@@ -1701,15 +1686,6 @@ struct FNOSHomeSettingsView: View {
                             dismiss()
                             onRefresh()
                         }
-                        // v154：轻触跳焦对照实验开关——经典首页(纯 v98 结构，无三行新内容)
-                        // v156：内容行逐行排查——每按一次换一档；轻触测试定位跳焦凶手
-                        FNOSSettingRow(
-                            title: rowMaskTitle,
-                            systemImage: "list.bullet.rectangle"
-                        ) {
-                            rowMask = nextRowMask()
-                        }
-
                         FNOSSettingRow(
                             title: "退出登录",
                             systemImage: "rectangle.portrait.and.arrow.right",

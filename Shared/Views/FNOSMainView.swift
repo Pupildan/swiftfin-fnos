@@ -208,6 +208,19 @@ struct FNOSMainView: View {
                             .id("fnos-shelf-top")
                         }
                     }
+                    // v143：onChange 必须在 ScrollViewReader 内部才能拿到 proxy
+                    .onChange(of: shelfCardFocused) { oldValue, focused in
+                        FNOSDiagLog.send("shelf focus \(oldValue ?? "nil") → \(focused ?? "nil") intent=\(shelfReturnIntent)")
+                        guard let focused else { return }
+                        if oldValue == nil && !shelfReturnIntent {
+                            withAnimation(.easeInOut(duration: 0.4)) {
+                                proxy.scrollTo("fnos-shelf-top", anchor: .top)
+                            }
+                        }
+                        shelfReturnIntent = false
+                        guard let client else { return }
+                        prefetchDetailBackdrop(itemID: focused, client: client)
+                    }
                     .ignoresSafeArea()
                     }
                     // 仅飞行期（cover 呈现前 0~0.74s）禁用主页：此时飞行层盖住底层，
@@ -379,21 +392,6 @@ struct FNOSMainView: View {
                     openPlayback(item: episode)
                 }
             )
-        }
-        // 焦点落到卡片即预取 1920 横图进内存缓存：点按起跳必高清（不预取=起跳灰底转圈）
-        // v143：焦点从 Hero 进入海报墙（nil→非nil 且非详情归还）时整页滚到墙顶——
-        // 原生「最小 reveal」只把首卡拉进屏幕底缘，Hero 残留约 3/4 屏（用户报的半屏问题）
-        .onChange(of: shelfCardFocused) { oldValue, focused in
-            FNOSDiagLog.send("shelf focus \(oldValue ?? "nil") → \(focused ?? "nil") intent=\(shelfReturnIntent)")
-            guard let focused else { return }
-            if oldValue == nil && !shelfReturnIntent {
-                withAnimation(.easeInOut(duration: 0.4)) {
-                    proxy.scrollTo("fnos-shelf-top", anchor: .top)
-                }
-            }
-            shelfReturnIntent = false
-            guard let client else { return }
-            prefetchDetailBackdrop(itemID: focused, client: client)
         }
         // v122：首页连按两次播放/暂停键 → 从飞牛刷新媒体库（单按给提示）
         .onPlayPauseCommand {

@@ -198,19 +198,6 @@ struct FNOSMainView: View {
                                     onDetail: { item in
                                         // Hero 无卡片可起跳：直接出详情页
                                         openDetailDirect(item: item)
-                                    },
-                                    onDownToShelf: {
-                                        // v153：v100 原版——单次下键滚动到海报墙顶
-                                        withAnimation(.easeInOut(duration: 0.4)) {
-                                            proxy.scrollTo("fnos-shelf-top", anchor: .top)
-                                        }
-                                        Task { @MainActor in
-                                            try? await Task.sleep(for: .milliseconds(450))
-                                            if let lead = resumeEntries.first?.item.Id
-                                                ?? sections.first(where: { !$0.items.isEmpty })?.items.first?.Id {
-                                                shelfCardFocused = lead
-                                            }
-                                        }
                                     }
                                 )
                                 .frame(width: geo.size.width, height: geo.size.height)
@@ -248,9 +235,53 @@ struct FNOSMainView: View {
                         }
                     }
         // 焦点落到卡片即预取 1920 横图进内存缓存：点按起跳必高清（不预取=起跳灰底转圈）
-        // v153：还原 v100 原版（守卫/滚顶/诊断全部移除——操作语义回归 v100）
-        .onChange(of: shelfCardFocused) { _, focused in
-            guard let focused, let client else { return }
+        // v158：v143 半屏修复 + v151 守卫（3s 窗口）+ 首卡纠正。
+        // .down→onDownToShelf 已从 Hero 移除（v150 日志实锤：轻触漂移被分类为 .down 走该路径跳焦），
+        // 下键入墙 = 引擎原生空间移动 + 本守卫二次放行。
+        .onChange(of: shelfCardFocused) { oldValue, focused in
+            FNOSDiagLog.send("shelf focus \(oldValue ?? "nil") → \(focused ?? "nil")")
+            // 焦点回到 Hero（nil 迁移且无 cover/飞行）——整页滚回顶部
+            guard let focused else {
+                guard detailItem == nil, flight == nil else { return }
+                withAnimation(.easeInOut(duration: 0.3)) {
+                    proxy.scrollTo("fnos-hero-top", anchor: .top)
+                }
+                return
+            }
+            // 详情归还 bypass 直接放行
+            if shelfReturnIntent {
+                shelfReturnIntent = false
+                guard let client else { return }
+                prefetchDetailBackdrop(itemID: focused, client: client)
+                return
+            }
+            // 守卫：无 bypass 的进入（轻触漂移/引擎空间跳）——3s 内第二次进入 = 用户坚持
+            // 要下去（故意下键），放行并纠正到首卡；否则弹回 Hero
+            if oldValue == nil {
+                let now = Date()
+                if now.timeIntervalSince(lastShelfEntry) < 3.0 {
+                    FNOSDiagLog.send("guard: 2nd entry within 3s, allow")
+                    // 放行时把焦点纠正到继续播放首卡——引擎的下键空间跳可能落在底部行
+                    if let lead = resumeEntries.first?.item.Id
+                        ?? sections.first(where: { !$0.items.isEmpty })?.items.first?.Id {
+                        if focused != lead { shelfCardFocused = lead }
+                    }
+                } else {
+                    lastShelfEntry = now
+                    shelfCardFocused = nil
+                    heroFocusResetToken += 1
+                    FNOSDiagLog.send("guard: illegal entry, snap back to hero")
+                    return
+                }
+            }
+            // 放行路径：半屏修复——滚到墙顶
+            if oldValue == nil {
+                withAnimation(.easeInOut(duration: 0.4)) {
+                    proxy.scrollTo("fnos-shelf-top", anchor: .top)
+                }
+            }
+            lastShelfEntry = .distantPast
+            guard let client else { return }
             prefetchDetailBackdrop(itemID: focused, client: client)
         }
                     .ignoresSafeArea()
@@ -1230,9 +1261,9 @@ struct FNOSMainView: View {
             refreshHeroSnapshot()
             // 继续播放（v91：服务端 + 本机记录合并；只展示最近 6 条，ATV 版式）
             rebuildResumeEntries()
-            if rowMask & 2 != 0 { await fetchTMDBIfNeeded() }
-            if rowMask & 4 != 0 { await fetchBangumi() }
-            if rowMask & 1 != 0 { await fetchDoubanIfNeeded() }
+            await fetchTMDBIfNeeded()
+            await fetchBangumi()
+            await fetchDoubanIfNeeded()
         } catch {
             isLoading = false
             print("FNOS❗️加载媒体库失败: \(error)")

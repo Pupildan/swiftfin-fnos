@@ -281,9 +281,11 @@ struct FNOSMainView: View {
                   playbackTarget == nil, seriesItem == nil else { return }
             unmountTask?.cancel()
             unmountTask = Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(400))
+                // v164：400ms→1500ms——跨行焦点移动需要滚动曝光（引擎释放焦点→滚动→获取），
+                // 曝光时长可超 400ms，窗口太短会在曝光中途拆行→引擎目标消失→拉回首卡
+                try? await Task.sleep(for: .milliseconds(1500))
                 guard !Task.isCancelled else { return }
-                // 400ms 后仍是 nil（真回到 Hero）才卸载 + 滚回顶部
+                // 延迟后仍是 nil（真回到 Hero）才卸载 + 滚回顶部
                 guard shelfCardFocused == nil else { return }
                 recommendationsMounted = false
                 withAnimation(.easeInOut(duration: 0.3)) {

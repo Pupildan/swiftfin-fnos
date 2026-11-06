@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v152"
+    static let version = "v153"
 
     /// 本版主要变更摘要
-    static let changes = "v152:1)下键导航修复——守卫双击窗口0.8s→3s(真机日志:人手二次下键间隔1-6s,0.8s来不及;轻触跳焦已由v151根除,3s窗口误放行风险极低)。2)向前翻页换通道——日志证实.right从不投递(引擎拿去空间跳)而垂直轴.up/.down可靠送达,play/detail增加.up→pageNext(上滑=下一页);.left→pagePrevious保持(play左滑翻页日志已验证送达)。"
+    static let changes = "v153:操作逻辑完全还原v100(用户明确要求)。HeroView=v98/v100原文件字节级还原(focusEffectDisabled+左右滑翻页+.down单次下键→onDownToShelf滚墙顶);MainView外壳还原v100语义:单次下键进海报墙(scrollTo墙顶+450ms落焦点)、onChange仅预取(守卫/滚顶/诊断全部移除)、focusSection回整墙、banner无ignoresSafeArea。撤销v144-v152全部实验手势(.up翻页/双击下键/守卫/scrollDisabled/DragGesture/UIPanDetector)。保留v140架构(Hero随滚动滑出)+v100后新功能(豆瓣/TMDB/番剧行、入库、刷新)。"
 }

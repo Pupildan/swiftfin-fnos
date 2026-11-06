@@ -250,16 +250,31 @@ struct FNOSMainView: View {
                         }
                     }
         // 焦点落到卡片即预取 1920 横图进内存缓存：点按起跳必高清（不预取=起跳灰底转圈）
-        // v161：焦点回到 Hero（nil 迁移且无 cover/飞行）——卸载推荐行 + 整页滚回顶部。
-        // 卸载/挂载都发生在视口外，无视觉闪烁；Hero 态 = 纯 v98 结构（轻触/翻页/下键正常）
+        // v161：焦点回到 Hero（nil 迁移且无全屏呈现）——卸载推荐行 + 整页滚回顶部。
+        // 卸载/挂载都发生在视口外，无视觉闪烁；Hero 态 = 纯 v98 结构（轻触/翻页正常）
+        // v162：守卫扩展到播放器/选集面板（否则播放期间推荐行被误卸载）
         .onChange(of: shelfCardFocused) { _, focused in
             guard let focused else {
-                guard detailItem == nil, flight == nil else { return }
+                guard detailItem == nil, flight == nil,
+                      playbackTarget == nil, seriesItem == nil else { return }
                 recommendationsMounted = false
                 withAnimation(.easeInOut(duration: 0.3)) {
                     proxy.scrollTo("fnos-hero-top", anchor: .top)
                 }
                 return
+            }
+            // v162：首次进入海报墙——挂载推荐行 + 滚到墙顶 + 焦点纠正到首卡。
+            // 实机实证：引擎的下键移动是静默的（不投递 .down 命令，onDownToShelf 不触发），
+            // 挂载兜底必须放在此处，两条进入路径（命令投递/静默移动）才都能挂载
+            if !recommendationsMounted {
+                recommendationsMounted = true
+                withAnimation(.easeInOut(duration: 0.4)) {
+                    proxy.scrollTo("fnos-shelf-top", anchor: .top)
+                }
+                if let lead = resumeEntries.first?.item.Id
+                    ?? sections.first(where: { !$0.items.isEmpty })?.items.first?.Id {
+                    if focused != lead { shelfCardFocused = lead }
+                }
             }
             guard let client else { return }
             prefetchDetailBackdrop(itemID: focused, client: client)

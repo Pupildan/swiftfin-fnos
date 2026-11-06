@@ -175,6 +175,8 @@ struct FNOSMainView: View {
                                         openDetailDirect(item: item)
                                     },
                                     onDownToShelf: {
+                                        // v150：诊断——区分轻触走 handler 还是引擎自行移动
+                                        FNOSDiagLog.send("onDownToShelf fired")
                                         // v148：v100 原版——下键显式滚动到海报墙顶
                                         withAnimation(.easeInOut(duration: 0.4)) {
                                             proxy.scrollTo("fnos-shelf-top", anchor: .top)
@@ -191,6 +193,8 @@ struct FNOSMainView: View {
                                 .frame(width: geo.size.width, height: geo.size.height)
                                 // v149：还原 v98 几何——banner 不再 ignore 安全区（ScrollView 自带），
                                 // 按钮组与海报墙之间恢复 v98 的安全区死区距离
+                                // v150：给 Hero 一个滚动锚点——焦点回到 Hero 时整页滚回顶部
+                                .id("fnos-hero-top")
                             }
 
                             // 媒体库横向海报墙（非懒容器：保证屏外行存在，焦点引擎才有落点）
@@ -227,15 +231,26 @@ struct FNOSMainView: View {
                     // v143：onChange 必须在 ScrollViewReader 内部才能拿到 proxy
                     .onChange(of: shelfCardFocused) { oldValue, focused in
                         FNOSDiagLog.send("shelf focus \(oldValue ?? "nil") → \(focused ?? "nil") intent=\(shelfReturnIntent)")
-                        guard let focused else { return }
-                        if oldValue == nil && !shelfReturnIntent {
-                            withAnimation(.easeInOut(duration: 0.4)) {
-                                proxy.scrollTo("fnos-shelf-top", anchor: .top)
+                        // v150：焦点回到 Hero（shelfCardFocused→nil 且无 cover/飞行）——
+                        // 整页滚回顶部。引擎的最小 reveal 只把按钮拉到视口底缘，页面停在
+                        // 半滚动状态时继续播放卡就在屏内，轻触漂移一点即中（v100 不跳的
+                        // 原因=测试时页面停在顶部，下方无屏内目标）。恢复静止态=顶部。
+                        guard focused == nil else {
+                            if oldValue == nil && !shelfReturnIntent {
+                                withAnimation(.easeInOut(duration: 0.4)) {
+                                    proxy.scrollTo("fnos-shelf-top", anchor: .top)
+                                }
                             }
+                            shelfReturnIntent = false
+                            guard let client else { return }
+                            prefetchDetailBackdrop(itemID: focused!, client: client)
+                            return
                         }
-                        shelfReturnIntent = false
-                        guard let client else { return }
-                        prefetchDetailBackdrop(itemID: focused, client: client)
+                        // nil 迁移：区分「回 Hero」与「开详情导致失焦」
+                        guard detailItem == nil, flight == nil else { return }
+                        withAnimation(.easeInOut(duration: 0.3)) {
+                            proxy.scrollTo("fnos-hero-top", anchor: .top)
+                        }
                     }
                     .ignoresSafeArea()
                     }

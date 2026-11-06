@@ -1673,9 +1673,9 @@ struct FNOSHomeSettingsView: View {
     private var rowMaskTitle: String {
         switch rowMask {
         case 7: return "内容行排查：全部显示（现状）"
-        case 6: return "内容行排查：隐藏番剧行"
+        case 6: return "内容行排查：隐藏豆瓣行"
         case 5: return "内容行排查：隐藏TMDB行"
-        case 3: return "内容行排查：隐藏豆瓣行"
+        case 3: return "内容行排查：隐藏番剧行"
         case 0: return "内容行排查：仅海报墙（纯v98）"
         default: return "内容行排查：组合 \(rowMask)"
         }

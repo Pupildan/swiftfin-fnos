@@ -198,6 +198,19 @@ struct FNOSMainView: View {
                                     onDetail: { item in
                                         // Hero 无卡片可起跳：直接出详情页
                                         openDetailDirect(item: item)
+                                    },
+                                    onDownToShelf: {
+                                        // v153：v100 原版——单次下键滚动到海报墙顶
+                                        withAnimation(.easeInOut(duration: 0.4)) {
+                                            proxy.scrollTo("fnos-shelf-top", anchor: .top)
+                                        }
+                                        Task { @MainActor in
+                                            try? await Task.sleep(for: .milliseconds(450))
+                                            if let lead = resumeEntries.first?.item.Id
+                                                ?? sections.first(where: { !$0.items.isEmpty })?.items.first?.Id {
+                                                shelfCardFocused = lead
+                                            }
+                                        }
                                     }
                                 )
                                 .frame(width: geo.size.width, height: geo.size.height)
@@ -235,21 +248,9 @@ struct FNOSMainView: View {
                         }
                     }
         // 焦点落到卡片即预取 1920 横图进内存缓存：点按起跳必高清（不预取=起跳灰底转圈）
-        // 焦点落到卡片即预取 1920 横图进内存缓存：点按起跳必高清（不预取=起跳灰底转圈）
-        // v159：守卫移除（.down 处理器已删——跳焦主路径不存在，v140-v144 同配置真机验证不跳），
-        // 单次下键恢复。保留：v143 半屏修复（进入滚墙顶）+ v150 回 Hero 滚顶。
+        // v153：还原 v100 原版（守卫/滚顶/诊断全部移除——操作语义回归 v100）
         .onChange(of: shelfCardFocused) { _, focused in
-            guard let focused else {
-                guard detailItem == nil, flight == nil else { return }
-                withAnimation(.easeInOut(duration: 0.3)) {
-                    proxy.scrollTo("fnos-hero-top", anchor: .top)
-                }
-                return
-            }
-            withAnimation(.easeInOut(duration: 0.4)) {
-                proxy.scrollTo("fnos-shelf-top", anchor: .top)
-            }
-            guard let client else { return }
+            guard let focused, let client else { return }
             prefetchDetailBackdrop(itemID: focused, client: client)
         }
                     .ignoresSafeArea()
@@ -1229,6 +1230,8 @@ struct FNOSMainView: View {
             refreshHeroSnapshot()
             // 继续播放（v91：服务端 + 本机记录合并；只展示最近 6 条，ATV 版式）
             rebuildResumeEntries()
+            // v160：拉取常开（v157 bug 修复——掩码门控拉取导致停在隐藏档重启后
+            // 数据为空，行永远显示不回来）。掩码只控制行的显示与否。
             await fetchTMDBIfNeeded()
             await fetchBangumi()
             await fetchDoubanIfNeeded()

@@ -68,8 +68,7 @@ struct FNOSHeroBanner: View {
     let userID: String
     let onPlay: (FNOSItem) -> Void
     let onDetail: (FNOSItem) -> Void
-    // v158：onDownToShelf 移除——.down 分支是轻触跳焦的实锤路径（v150 日志：
-    // 轻触未按下键 onDownToShelf 连发 3 次），下键入墙改由引擎原生移动 + 守卫放行
+    let onDownToShelf: () -> Void
 
     /// 轮播目标索引（驱动 HStack 横向偏移 + 动画）
     @State private var currentIndex = 0
@@ -352,6 +351,8 @@ struct FNOSHeroBanner: View {
                     switch direction {
                     case .left:
                         pagePrevious()
+                    case .down:
+                        onDownToShelf()
                     default:
                         break
                     }
@@ -371,7 +372,7 @@ struct FNOSHeroBanner: View {
                 .focused($focusedButton, equals: .plus)
                 .onMoveCommand { direction in
                     if direction == .down {
-                        // v158：.down 留空——轻触漂移会误触发（v150 日志实锤），下键入墙走守卫放行
+                        onDownToShelf()
                     }
                 }
 
@@ -391,6 +392,8 @@ struct FNOSHeroBanner: View {
                     switch direction {
                     case .right:
                         pageNext()
+                    case .down:
+                        onDownToShelf()
                     default:
                         break
                     }

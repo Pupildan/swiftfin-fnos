@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v159"
+    static let version = "v160"
 
     /// 本版主要变更摘要
-    static let changes = "v159:移除下键守卫,恢复单次下键进海报墙。依据:v140-v144(无.down处理器+无守卫)真机验证轻触不跳——守卫防的「引擎空间跳」路径基本不存在,守卫只在伤害正常下键。跳焦主路径(.down→onDownToShelf)已在v158删除。保留:v143半屏修复(进入滚墙顶)+v150回Hero滚顶+行排查器(掩码只控行显示,拉取常开)。回答用户质问:TMDB从未实锤(变量是.down处理器非任何行);双击下键是v151守卫的产物,本版移除。"
+    static let changes = "v160:回到v157+修循环点击bug(用户指令:先完成逐行排查,结论出来再定修改方向)。1)还原v158/v159的全部改动(.down→onDownToShelf与onDownToShelf回调回归,单次下键进海报墙;守卫/滚顶移除回归v157)。2)修排查器:拉取常开不再受掩码门控(v157 bug——停在隐藏档重启后数据为空,行永远显示不回来),掩码只控行显示。待用户逐档轻触完成排查(重点:隐藏TMDB档)后再定修复方向。"
 }

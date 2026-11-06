@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v153"
+    static let version = "v154"
 
     /// 本版主要变更摘要
-    static let changes = "v153:操作逻辑完全还原v100(用户明确要求)。HeroView=v98/v100原文件字节级还原(focusEffectDisabled+左右滑翻页+.down单次下键→onDownToShelf滚墙顶);MainView外壳还原v100语义:单次下键进海报墙(scrollTo墙顶+450ms落焦点)、onChange仅预取(守卫/滚顶/诊断全部移除)、focusSection回整墙、banner无ignoresSafeArea。撤销v144-v152全部实验手势(.up翻页/双击下键/守卫/scrollDisabled/DragGesture/UIPanDetector)。保留v140架构(Hero随滚动滑出)+v100后新功能(豆瓣/TMDB/番剧行、入库、刷新)。"
+    static let changes = "v154:轻触跳焦对照实验。静态排查结论:v98→HEAD的MainView结构/焦点API与v98逐字一致(用户怀疑的focusSection误加/间距缩小均被diff否定),唯一差异=内容层(豆瓣/TMDB/番剧三行+异步拉取+v110卡片渲染/v112 Equatable/v123标题换行/v122排序刷新)。本版加设置开关「经典首页模式v98」:开=隐藏三行+停用其异步拉取(首页动态结构=纯v98),关=现状。真机即时A/B定位根因,不用反复出包。"
 }

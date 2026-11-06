@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v148"
+    static let version = "v149"
 
     /// 本版主要变更摘要
-    static let changes = "v148:Hero区一比一复刻v98真机验证版(git checkout 1672097原文件,603行字节级还原)。三按钮.focusEffectDisabled()+onMoveCommand(.down→onDownToShelf显式滚墙顶,play左翻/detail右翻,无节流无v131按钮间导航);MainView恢复onDownToShelf传参(scrollTo墙顶+450ms落焦点)。外层保持v140架构(Hero在ScrollView内随滚动滑出)+v143半屏修复。移除v144-v147全部实验代码(scrollDisabled/容器级onMoveCommand/DragGesture/UIPanGestureRecognizer)。"
+    static let changes = "v149:轻触跳焦排查结论落地。Hero文件已排除(与v100字节级相同)。本版把外壳焦点配置还原到v98原样:1).focusSection()从继续播放行移回整个海报墙VStack(v98原位置,恢复焦点边界穿越语义);2)去掉banner的.ignoresSafeArea()(恢复按钮组与海报墙的v98安全区几何距离)。Hero文件/三行内容/半屏修复均不动。"
 }

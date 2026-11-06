@@ -189,7 +189,8 @@ struct FNOSMainView: View {
                                     }
                                 )
                                 .frame(width: geo.size.width, height: geo.size.height)
-                                .ignoresSafeArea()
+                                // v149：还原 v98 几何——banner 不再 ignore 安全区（ScrollView 自带），
+                                // 按钮组与海报墙之间恢复 v98 的安全区死区距离
                             }
 
                             // 媒体库横向海报墙（非懒容器：保证屏外行存在，焦点引擎才有落点）
@@ -197,9 +198,6 @@ struct FNOSMainView: View {
                                 // 继续播放（服务端 + 本机记录合并）：有记录才显示
                                 if !resumeEntries.isEmpty {
                                     resumeShelf(screenWidth: geo.size.width)
-                                        #if os(tvOS)
-                                        .focusSection()
-                                        #endif
                                 }
                                 ForEach(sections.filter { !$0.items.isEmpty }) { section in
                                     shelf(section, screenWidth: geo.size.width)
@@ -219,6 +217,11 @@ struct FNOSMainView: View {
                             }
                             .padding(.vertical, 40)
                             .id("fnos-shelf-top")
+                            // v149：还原 v98 焦点分组——整个海报墙是一个 focusSection（
+                            // 焦点进入是边界穿越，引擎对模糊手势的落点判定回到 v98 语义）
+                            #if os(tvOS)
+                            .focusSection()
+                            #endif
                         }
                     }
                     // v143：onChange 必须在 ScrollViewReader 内部才能拿到 proxy

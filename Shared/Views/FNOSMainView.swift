@@ -173,6 +173,19 @@ struct FNOSMainView: View {
                                     onDetail: { item in
                                         // Hero 无卡片可起跳：直接出详情页
                                         openDetailDirect(item: item)
+                                    },
+                                    onDownToShelf: {
+                                        // v148：v100 原版——下键显式滚动到海报墙顶
+                                        withAnimation(.easeInOut(duration: 0.4)) {
+                                            proxy.scrollTo("fnos-shelf-top", anchor: .top)
+                                        }
+                                        Task { @MainActor in
+                                            try? await Task.sleep(for: .milliseconds(450))
+                                            if let lead = resumeEntries.first?.item.Id
+                                                ?? sections.first(where: { !$0.items.isEmpty })?.items.first?.Id {
+                                                shelfCardFocused = lead
+                                            }
+                                        }
                                     }
                                 )
                                 .frame(width: geo.size.width, height: geo.size.height)

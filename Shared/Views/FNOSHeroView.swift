@@ -68,12 +68,10 @@ struct FNOSHeroBanner: View {
     let userID: String
     let onPlay: (FNOSItem) -> Void
     let onDetail: (FNOSItem) -> Void
+    let onDownToShelf: () -> Void
 
     /// 轮播目标索引（驱动 HStack 横向偏移 + 动画）
     @State private var currentIndex = 0
-    /// v125：翻页节流——Siri 遥控滑动一次会连续触发多次 onMoveCommand，
-    /// 无节流则轻滑就连跳好几页/误判方向窜到海报墙。0.45s 内的后续翻页请求一律忽略。
-    @State private var lastPageTime = Date.distantPast
     /// 文案索引（延迟到翻页动画结束才跟随 currentIndex）
     /// 根因：动画 0.35s 期间旧海报仍在屏幕中央，若文案瞬时切换就会「图文不匹配」。
     @State private var displayedIndex = 0
@@ -210,11 +208,10 @@ struct FNOSHeroBanner: View {
                 .allowsHitTesting(false)
 
                 // ---- 左下角：大标题 + 分类 + 简介 + 按钮组 ----
-                // v140：整体上移（bottom 72→190，对齐 ATV+ 参考图——按钮组位于屏幕约 85% 处，底部留出内容行 peek 空间）
                 if let item = current {
                     infoStack(item: item)
                         .padding(.leading, 72)
-                        .padding(.bottom, 190)
+                        .padding(.bottom, 72)
                 }
 
                 // ---- 底部正中：轮播指示圆点 ----
@@ -231,12 +228,6 @@ struct FNOSHeroBanner: View {
             }
             .frame(width: geo.size.width, height: geo.size.height)
             .animation(.easeInOut(duration: 0.3), value: currentIndex)
-            // v147：UIPanGestureRecognizer 水平滑动翻页（tvOS 可用，替代不可用的 DragGesture）
-            // 水平分量占优时翻页，垂直分量占优时交给 ScrollView 滚动。
-            FNOSPanDetector { isNext in
-                if isNext { pageNext() } else { pagePrevious() }
-            }
-            .frame(width: geo.size.width, height: geo.size.height)
             .onAppear {
                 // 双保险：启动/回前台时把初始焦点强制锁到「播放」按钮，不给设置按钮抢走
                 Task { @MainActor in
@@ -244,17 +235,17 @@ struct FNOSHeroBanner: View {
                     focusedButton = .play
                 }
             }
-        .onChange(of: items.count) { _, newCount in
-            // 刷新媒体库后快照变短：索引越界会让 current 为 nil、HStack 偏移指向不存在页
-            stopPreview()
-            if newCount == 0 {
-                currentIndex = 0
-                displayedIndex = 0
-            } else {
-                if currentIndex >= newCount { currentIndex = newCount - 1 }
-                if displayedIndex >= newCount { displayedIndex = newCount - 1 }
+            .onChange(of: items.count) { _, newCount in
+                // 刷新媒体库后快照变短：索引越界会让 current 为 nil、HStack 偏移指向不存在页
+                stopPreview()
+                if newCount == 0 {
+                    currentIndex = 0
+                    displayedIndex = 0
+                } else {
+                    if currentIndex >= newCount { currentIndex = newCount - 1 }
+                    if displayedIndex >= newCount { displayedIndex = newCount - 1 }
+                }
             }
-        }
         }
         .task(id: previewTriggerKey) {
             // 智能预告：Hero 按钮持焦 + 5 秒无操作 → 正片中间 30 秒静音预览。
@@ -354,11 +345,18 @@ struct FNOSHeroBanner: View {
                     }
                 }
                 .buttonStyle(FNOSBareButtonStyle())
-                // v142：恢复 .focusEffectDisabled()（v122 验证过的配置）——
-                // v133 误删后焦点引擎接管方向输入、onMoveCommand 不再投递，轮播翻页失效。
-                // 该修饰符只屏蔽系统焦点视觉效果（自绘视觉由 focusedButton 驱动，不受影响）。
                 .focusEffectDisabled()
                 .focused($focusedButton, equals: .play)
+                .onMoveCommand { direction in
+                    switch direction {
+                    case .left:
+                        pagePrevious()
+                    case .down:
+                        onDownToShelf()
+                    default:
+                        break
+                    }
+                }
 
                 // + 稍后观看
                 Button {
@@ -372,6 +370,11 @@ struct FNOSHeroBanner: View {
                 .buttonStyle(FNOSBareButtonStyle())
                 .focusEffectDisabled()
                 .focused($focusedButton, equals: .plus)
+                .onMoveCommand { direction in
+                    if direction == .down {
+                        onDownToShelf()
+                    }
+                }
 
                 // 详情
                 Button {
@@ -385,17 +388,21 @@ struct FNOSHeroBanner: View {
                 .buttonStyle(FNOSBareButtonStyle())
                 .focusEffectDisabled()
                 .focused($focusedButton, equals: .detail)
-        }
-        .padding(.top, 8)
-        #if os(tvOS)
-            // v141：摘除按钮组 .focusSection()——它会让焦点引擎接管组内导航、
-            // 不再向按钮投递 onMoveCommand，导致 play/detail 左右方向键的轮播翻页失效。
-            // 恢复 v133 语境（无此修饰符时翻页正常）；下键入墙由 ScrollView 原生几何处理，不依赖它。
-            .defaultFocus($focusedButton, .play)
-        #endif
-        .onChange(of: focusedButton) { old, new in
-            FNOSDiagLog.send("hero focus \(String(describing: old)) → \(String(describing: new))")
-        }
+                .onMoveCommand { direction in
+                    switch direction {
+                    case .right:
+                        pageNext()
+                    case .down:
+                        onDownToShelf()
+                    default:
+                        break
+                    }
+                }
+            }
+            .padding(.top, 8)
+            #if os(tvOS)
+                .defaultFocus($focusedButton, .play)
+            #endif
         }
     }
 
@@ -427,17 +434,7 @@ struct FNOSHeroBanner: View {
     // MARK: 焦点驱动的海报翻页（翻页后焦点强制留在原按钮上）
 
     private func pagePrevious() {
-        // v125：滑动节流——轻滑一次只翻一页，过滤连续触发的多余命令
-        guard Date().timeIntervalSince(lastPageTime) > 0.45 else {
-            FNOSDiagLog.send("pagePrevious throttled idx=\(currentIndex)")
-            return
-        }
-        guard currentIndex > 0 else {
-            FNOSDiagLog.send("pagePrevious at-start idx=\(currentIndex)")
-            return
-        }
-        FNOSDiagLog.send("pagePrevious flip \(currentIndex)→\(currentIndex - 1)")
-        lastPageTime = Date()
+        guard currentIndex > 0 else { return }
         let target = currentIndex - 1
         withAnimation(.easeInOut(duration: 0.35)) {
             currentIndex = target
@@ -449,17 +446,7 @@ struct FNOSHeroBanner: View {
     }
 
     private func pageNext() {
-        // v125：滑动节流——轻滑一次只翻一页，过滤连续触发的多余命令
-        guard Date().timeIntervalSince(lastPageTime) > 0.45 else {
-            FNOSDiagLog.send("pageNext throttled idx=\(currentIndex)")
-            return
-        }
-        guard currentIndex < items.count - 1 else {
-            FNOSDiagLog.send("pageNext at-end idx=\(currentIndex)/\(items.count)")
-            return
-        }
-        FNOSDiagLog.send("pageNext flip \(currentIndex)→\(currentIndex + 1)")
-        lastPageTime = Date()
+        guard currentIndex < items.count - 1 else { return }
         let target = currentIndex + 1
         withAnimation(.easeInOut(duration: 0.35)) {
             currentIndex = target
@@ -611,47 +598,6 @@ struct FNOSPreviewPlayerView: UIViewRepresentable {
     func updateUIView(_ uiView: UIView, context: Context) {
         if let layer = uiView.layer.sublayers?.compactMap({ $0 as? AVPlayerLayer }).first {
             layer.frame = uiView.bounds
-        }
-    }
-}
-
-// MARK: - v147 UIPanGestureRecognizer 水平滑动检测（tvOS 可用，替代不可用的 DragGesture）
-
-/// 覆盖在 Hero 区域的透明 UIView，通过 UIPanGestureRecognizer 检测水平滑动。
-/// 水平分量占优时回调 onSwipe(true=下一页, false=上一页)；垂直分量占优时不触发。
-/// cancelsTouchesInView=false + shouldRecognizeSimultaneouslyWith=true 与 ScrollView 共存。
-struct FNOSPanDetector: UIViewRepresentable {
-    var onSwipe: (Bool) -> Void
-
-    func makeUIView(context: Context) -> UIView {
-        let view = UIView()
-        view.backgroundColor = .clear
-        let pan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePan(_:)))
-        pan.cancelsTouchesInView = false
-        pan.delegate = context.coordinator
-        view.addGestureRecognizer(pan)
-        return view
-    }
-
-    func updateUIView(_ view: UIView, context: Context) {
-        context.coordinator.onSwipe = onSwipe
-    }
-
-    func makeCoordinator() -> Coordinator { Coordinator() }
-
-    class Coordinator: NSObject, UIGestureRecognizerDelegate {
-        var onSwipe: ((Bool) -> Void)?
-
-        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
-                               shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
-            true
-        }
-
-        @objc func handlePan(_ gesture: UIPanGestureRecognizer) {
-            guard gesture.state == .ended else { return }
-            let t = gesture.translation(in: gesture.view)
-            guard abs(t.x) > abs(t.y), abs(t.x) > 40 else { return }
-            onSwipe?(t.x < 0)
         }
     }
 }

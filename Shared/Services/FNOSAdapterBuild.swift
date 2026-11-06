@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v147"
+    static let version = "v148"
 
     /// 本版主要变更摘要
-    static let changes = "v147:UIPanGestureRecognizer水平滑动翻页(tvOS可用,替代tvOS不可用的DragGesture)。Hero区域覆盖透明UIView+UIPanGestureRecognizer,水平分量占优时翻页(左滑=下一页,右滑=上一页),垂直分量占优时交给ScrollView滚动。cancelsTouchesInView=false+shouldRecognizeSimultaneouslyWith=true与ScrollView共存。焦点路由零改动。"
+    static let changes = "v148:Hero区一比一复刻v98真机验证版(git checkout 1672097原文件,603行字节级还原)。三按钮.focusEffectDisabled()+onMoveCommand(.down→onDownToShelf显式滚墙顶,play左翻/detail右翻,无节流无v131按钮间导航);MainView恢复onDownToShelf传参(scrollTo墙顶+450ms落焦点)。外层保持v140架构(Hero在ScrollView内随滚动滑出)+v143半屏修复。移除v144-v147全部实验代码(scrollDisabled/容器级onMoveCommand/DragGesture/UIPanGestureRecognizer)。"
 }

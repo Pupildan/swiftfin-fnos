@@ -195,12 +195,21 @@ enum FNOSDoubanClient {
         }
     }
 
-    /// frodo 通用 GET（签名 + 请求，返回 JSON dict）
-    /// extra：附加 query 参数（签名只对 path，实测 photos 等带参请求同款可用）
+    /// frodo 通用 GET（对象根）——v168: 修签名缺 /api/v2 前缀（见 frodoGetAny）
     private static func frodoGet(path: String, extra: [URLQueryItem] = []) async -> [String: Any]? {
+        await frodoGetAny(path: path, extra: extra) as? [String: Any]
+    }
+
+    /// frodo 通用 GET（任意 JSON 根：对象给详情类，数组给 recommendations）
+    /// v168 根因修复：签名串必须含 /api/v2 前缀（实测缺前缀=HTTP 400，带前缀=200）。
+    /// 此前自 v129 起 celebrities/reviews/photos 三条 frodoGet 通道全部静默 400 →
+    /// 演员头像退化文字、短评弹幕不出现、Hero 横图退回竖版——一个根因三个症状。
+    /// （MoviePilot apiv2.py 的 sign 用完整实际路径，照抄时漏了前缀。）
+    private static func frodoGetAny(path: String, extra: [URLQueryItem] = []) async -> Any? {
+        let signPath = "/api/v2" + path          // 签名 = 完整实际路径
         let ts = Int(Date().timeIntervalSince1970)
-        let sig = frodoSign(path: path, ts: ts)
-        var comps = URLComponents(string: frodoBase + path)
+        let sig = frodoSign(path: signPath, ts: ts)
+        var comps = URLComponents(string: frodoBase + path)   // frodoBase 已含 /api/v2，URL 不重复拼
         comps?.queryItems = [
             URLQueryItem(name: "apiKey", value: frodoAPIKey),
             URLQueryItem(name: "os_rom", value: "android"),
@@ -214,12 +223,11 @@ enum FNOSDoubanClient {
         req.setValue("application/json", forHTTPHeaderField: "Accept")
         do {
             let (data, response) = try await URLSession.shared.data(for: req)
-            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
                 print("FNOS⚠️豆瓣 frodo GET 失败 \(path) HTTP=\((response as? HTTPURLResponse)?.statusCode ?? -1)")
                 return nil
             }
-            return json
+            return try? JSONSerialization.jsonObject(with: data)
         } catch {
             print("FNOS⚠️豆瓣 frodo GET 异常: \(error.localizedDescription)")
             return nil
@@ -280,16 +288,18 @@ enum FNOSDoubanClient {
     static func frodoLandscapeURL(id: String, category: String) async -> URL? {
         let sub = category == "电影" ? "/movie/\(id)" : "/tv/\(id)"
         var best: (width: Int, url: URL)? = nil
-        for start in [0, 50] {
-            let json = await frodoGet(
-                path: "\(sub)/photos",
-                extra: [
-                    URLQueryItem(name: "kind", value: "s"),
-                    URLQueryItem(name: "count", value: "50"),
-                    URLQueryItem(name: "start", value: String(start)),
-                ]
-            )
-            guard let photos = json?["photos"] as? [[String: Any]], !photos.isEmpty else { break }
+        // 查询计划：kind=s 两页（常规）→ 全量兜底一页（kind=s 空洞时）
+        let plans: [(kind: String?, start: Int)] = [("s", 0), ("s", 50), (nil, 0)]
+        for plan in plans {
+            var extra = [
+                URLQueryItem(name: "count", value: "50"),
+                URLQueryItem(name: "start", value: String(plan.start)),
+            ]
+            if let k = plan.kind {
+                extra.insert(URLQueryItem(name: "kind", value: k), at: 0)
+            }
+            let json = await frodoGet(path: "\(sub)/photos", extra: extra)
+            guard let photos = json?["photos"] as? [[String: Any]], !photos.isEmpty else { continue }
             for p in photos {
                 guard let img = p["image"] as? [String: Any],
                       let large = img["large"] as? [String: Any],
@@ -305,6 +315,44 @@ enum FNOSDoubanClient {
             if best != nil { break }
         }
         return best?.url
+    }
+
+    // MARK: - v168 相似推荐（frodo /recommendations，电影/剧集同款，实测 200）
+
+    struct FNOSDoubanRec: Identifiable {
+        let id: String
+        let title: String
+        let subtitle: String
+        let posterURL: URL?
+        let rating: Double?
+        let mediaType: String      // movie / tv
+        let subjectURL: String
+    }
+
+    /// /recommendations 返回 JSON 数组（非对象根）——走 frodoGetAny
+    static func frodoRecommendations(id: String, category: String) async -> [FNOSDoubanRec] {
+        let sub = category == "电影" ? "/movie/\(id)" : "/tv/\(id)"
+        guard let arr = await frodoGetAny(
+            path: "\(sub)/recommendations",
+            extra: [
+                URLQueryItem(name: "count", value: "12"),
+                URLQueryItem(name: "start", value: "0"),
+            ]
+        ) as? [[String: Any]] else { return [] }
+        return arr.prefix(12).compactMap { d in
+            guard let rid = d["id"] as? String ?? (d["id"] as? Int).map(String.init),
+                  let title = d["title"] as? String, !title.isEmpty else { return nil }
+            let subtitle = d["card_subtitle"] as? String ?? ""
+            let poster = (d["pic"] as? [String: Any])?["large"] as? String
+            let posterURL = poster.flatMap { URL(string: $0) }
+            let rating = (d["rating"] as? [String: Any])?["value"] as? Double
+            let mediaType = d["type"] as? String ?? "movie"
+            let subjectURL = d["url"] as? String ?? ""
+            return FNOSDoubanRec(
+                id: rid, title: title, subtitle: subtitle, posterURL: posterURL,
+                rating: rating, mediaType: mediaType, subjectURL: subjectURL
+            )
+        }
     }
 
     /// 豆瓣评论（短评）

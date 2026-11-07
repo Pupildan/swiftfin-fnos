@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v167"
+    static let version = "v168"
 
     /// 本版主要变更摘要
-    static let changes = "v167:①豆瓣详情页Hero换横屏高清剧照(frodo /photos kind=s 两页窗口,横屏优先按分辨率降序,规范化imgN doubanio /l/ 高清直链;竖版海报aspectFill垫底兜底,不再拉伸放大糊画)。②豆瓣内容区严格对齐TMDB版式:主要演员(80pt头像行)/评论/制作信息卡(label100+value18同款)三段独立focusable。③豆瓣+番剧详情页Hero短评弹幕:顶部带匀速右→左推移,TimelineView帧推导无状态机;豆瓣取frodo短评,番剧解析bangumi.tv评论页HTML;allowsHitTesting(false)无focusable,不碰焦点引擎。"
+    static let changes = "v168:修frodoGet签名缺/api/v2前缀(实测缺前缀HTTP400、带前缀200——v129起celebrities/reviews/photos三通道全部静默失效:演员头像退化文字、短评弹幕不出现、Hero横图退回竖版,一个根因三症状;MoviePilot apiv2签名用完整路径,照抄时漏了前缀)。②新增相似推荐行(frodo /recommendations 实测200,电影/剧集同款,160x240海报+标题TMDB同款,点按递归进详情)。③豆瓣弹幕预热prewarmLanes=2:打开即有弹幕在屏,杜绝首几秒空白被误判为没有弹幕;组件默认0,番剧页零改动。"
 }

@@ -21,6 +21,9 @@ struct FNOSDoubanDetailView: View {
     @State private var reviews: [FNOSDoubanClient.FNOSDoubanReview] = []
     /// v167: Hero 横屏高清剧照（frodo photos）；nil 时竖版海报垫底兜底
     @State private var landscapeURL: URL?
+    /// v168: 相似推荐 + 点按进详情（与 TMDB similar 同款递归）
+    @State private var recItems: [FNOSDoubanClient.FNOSDoubanRec] = []
+    @State private var recDetailItem: FNOSDoubanItem?
     @Environment(\.dismiss) private var dismiss
 
     /// 入库按钮状态机（与 TMDB/番剧详情页同构）
@@ -84,6 +87,16 @@ struct FNOSDoubanDetailView: View {
                                 .padding(.bottom, 40)
                                 .focusable()
                         }
+                        // v168: 相似推荐行（TMDB 相关内容同位）
+                        if !recItems.isEmpty {
+                            similarSection
+                                .padding(.horizontal, 60)
+                                .padding(.bottom, 40)
+                                .focusable()
+                                #if os(tvOS)
+                                .focusSection()
+                                #endif
+                        }
                         if !productionRows.isEmpty {
                             productionSection
                                 .padding(.horizontal, 60)
@@ -111,7 +124,19 @@ struct FNOSDoubanDetailView: View {
         }
         // v167: 横屏剧照独立并行拉取（不阻塞详情渲染，到位后叠到竖版海报上层）
         .task { landscapeURL = await FNOSDoubanClient.frodoLandscapeURL(id: item.id, category: item.category) }
+        // v168: 相似推荐独立并行拉取（frodo /recommendations）
+        .task { recItems = await FNOSDoubanClient.frodoRecommendations(id: item.id, category: item.category) }
         .task { await refreshLibState() }
+        // v168: 相似推荐进详情（与 TMDB similar 同款递归 fullScreenCover）
+        .fullScreenCover(item: $recDetailItem) { rec in
+            FNOSDoubanDetailView(
+                item: rec,
+                onDismiss: { recDetailItem = nil },
+                mpBase: mpBase,
+                mpKey: mpKey,
+                inLibraryCheck: inLibraryCheck
+            )
+        }
     }
 
     // MARK: - Hero（海报 backdrop + 左下文字 + 右下主演导演，同热门影视/番剧详情页）
@@ -154,9 +179,9 @@ struct FNOSDoubanDetailView: View {
                 endPoint: .bottom
             )
 
-            // v167: 豆瓣短评弹幕（顶部带，纯展示不参与焦点）
+            // v167: 豆瓣短评弹幕（顶部带，纯展示不参与焦点）；v168 预热 2 道，打开即在屏
             if !reviews.isEmpty {
-                FNOSReviewDanmaku(texts: reviews.map { String($0.content.prefix(60)) })
+                FNOSReviewDanmaku(texts: reviews.map { String($0.content.prefix(60)) }, prewarmLanes: 2)
             }
 
             // 左下信息区
@@ -373,6 +398,44 @@ struct FNOSDoubanDetailView: View {
                         .padding(20)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.07)))
+                    }
+                }
+            }
+        }
+    }
+
+    /// 相似推荐行（v168，与 TMDB similarSection 同款：160x240 海报 + 标题，点按进详情）
+    private var similarSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("相似推荐")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundColor(.white.opacity(0.92))
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 20) {
+                    ForEach(recItems) { rec in
+                        Button {
+                            recDetailItem = FNOSDoubanItem(
+                                id: rec.id,
+                                title: rec.title,
+                                rate: rec.rating.map { String(format: "%.1f", $0) } ?? "",
+                                coverURL: rec.posterURL,
+                                subjectURL: rec.subjectURL,
+                                episodesInfo: "",
+                                category: rec.mediaType == "movie" ? "电影" : "电视剧"
+                            )
+                        } label: {
+                            VStack(alignment: .leading, spacing: 8) {
+                                FNOSAsyncImage(url: rec.posterURL, headers: ["Referer": "https://movie.douban.com/"], usePosterCache: true)
+                                    .frame(width: 160, height: 240)
+                                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                Text(rec.title)
+                                    .font(.system(size: 15, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.9))
+                                    .lineLimit(2)
+                                    .frame(width: 160, alignment: .leading)
+                            }
+                        }
+                        .buttonStyle(.card)
                     }
                 }
             }

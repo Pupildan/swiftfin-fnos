@@ -19,8 +19,8 @@ struct FNOSDoubanDetailView: View {
     @State private var frodo: FNOSDoubanClient.FNOSDoubanFrodoDetail?
     @State private var celebrities: [FNOSDoubanClient.FNOSDoubanCelebrity] = []
     @State private var reviews: [FNOSDoubanClient.FNOSDoubanReview] = []
-    /// v169: 评论卡展开集合（点按卡片切换全屏阅读）
-    @State private var expandedReviewIds: Set<String> = []
+    /// v170: 评论弹窗（焦点落卡→确认键→屏幕居中弹窗完整显示）
+    @State private var popupReview: FNOSDoubanClient.FNOSDoubanReview?
     /// v167: Hero 横屏高清剧照（frodo photos）；nil 时竖版海报垫底兜底
     @State private var landscapeURL: URL?
     /// v168: 相似推荐 + 点按进详情（与 TMDB similar 同款递归）
@@ -141,6 +141,57 @@ struct FNOSDoubanDetailView: View {
                 mpKey: mpKey,
                 inLibraryCheck: inLibraryCheck
             )
+        }
+        // v170: 评论弹窗（焦点落卡→确认键→屏幕居中弹窗完整显示）
+        // fullScreenCover：tvOS 自动把焦点移入弹窗（overlay 不保证），关闭=关闭键或按钮
+        .fullScreenCover(item: $popupReview) { review in
+            ZStack {
+                // 压暗背景，保证弹窗内纯白文字可读（文字本身不加任何阴影）
+                Color.black.opacity(0.85)
+                    .ignoresSafeArea()
+                    .onTapGesture { popupReview = nil }
+
+                VStack(alignment: .leading, spacing: 16) {
+                    HStack(spacing: 10) {
+                        Text(review.author)
+                            .font(.system(size: 18, weight: .semibold))
+                            .foregroundColor(.white)
+                        if let rating = review.rating {
+                            HStack(spacing: 3) {
+                                Image(systemName: "star.fill").foregroundColor(.yellow)
+                                Text(String(format: "%.0f", rating))
+                                    .foregroundColor(.yellow.opacity(0.9))
+                            }
+                            .font(.system(size: 14))
+                        }
+                        Spacer()
+                        Button {
+                            popupReview = nil
+                        } label: {
+                            Text("关闭")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundColor(.white)
+                        }
+                        .buttonStyle(.card)
+                    }
+
+                    ScrollView(.vertical, showsIndicators: false) {
+                        Text(review.content)
+                            .font(.system(size: 18))
+                            .foregroundColor(.white)
+                            .lineSpacing(7)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .focusable()
+                }
+                .frame(width: 960, height: 620)
+                .padding(36)
+                // iOS 26 液态玻璃（与入库按钮同款 API），背景严格按玻璃材质实现
+                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+                .onExitCommand { popupReview = nil }
+            }
         }
     }
 
@@ -380,16 +431,9 @@ struct FNOSDoubanDetailView: View {
                     .foregroundColor(.white.opacity(0.92))
                 VStack(alignment: .leading, spacing: 20) {
                     ForEach(reviews) { review in
-                        let expanded = expandedReviewIds.contains(review.id)
-                        // v169: 默认折叠 4 行，点按卡片切换展开/收起（长评右上角提示）
+                        // v170: 卡片可聚焦（焦点落卡→确认键→居中弹窗完整显示）
                         Button {
-                            withAnimation(.easeInOut(duration: 0.2)) {
-                                if expanded {
-                                    expandedReviewIds.remove(review.id)
-                                } else {
-                                    expandedReviewIds.insert(review.id)
-                                }
-                            }
+                            popupReview = review
                         } label: {
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack(spacing: 10) {
@@ -404,25 +448,18 @@ struct FNOSDoubanDetailView: View {
                                         }
                                         .font(.system(size: 13))
                                     }
-                                    Spacer()
-                                    if review.content.count > 80 {
-                                        Text(expanded ? "收起" : "展开")
-                                            .font(.system(size: 13, weight: .medium))
-                                            .foregroundColor(.white.opacity(0.6))
-                                    }
                                 }
                                 Text(review.content)
                                     .font(.system(size: 15))
                                     .foregroundColor(.white.opacity(0.8))
                                     .lineSpacing(5)
-                                    .lineLimit(expanded ? nil : 4)
-                                    .multilineTextAlignment(.leading)
+                                    .fixedSize(horizontal: false, vertical: true)
                             }
                             .padding(20)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.07)))
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(.card)
                     }
                 }
             }

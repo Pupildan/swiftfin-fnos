@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v169"
+    static let version = "v170"
 
     /// 本版主要变更摘要
-    static let changes = "v169:弹幕体验重写(豆瓣+番剧hero共用组件):①字号21→26加大。②弃全部时间判定(删TimelineView/Date逐帧推导,20fps步进=闪烁根因)——每泳道=文本链双拷贝+repeatForever纯线性offset,CoreAnimation只对光栅化整链做transform(60fps零重排);链身.drawingGroup()强制GPU离屏渲染,滚动期文本零重绘;每Text.fixedSize()锁行宽防长短突变;无缝循环=单份链估宽≥屏宽150+行程链宽间距。③豆瓣评论卡折叠:默认4行,lineLimit按需展开,点按卡片切换收起(长评>80字右上角提示),评论区补focusSection。番剧调用点零改动(共享组件字号/闪烁修复自动生效)。"
+    static let changes = "v170:按用户指令回退+新增。①弹幕组件回退到v168实现(逐字节git checkout恢复,TimelineView每帧推导滚动正常;唯一保留改动=字号21→26)。②豆瓣评论卡:可聚焦按钮(.card),确认键打开屏幕居中弹窗完整显示全文(不再用v169行内lineLimit展开)。③弹窗背景=iOS26液态玻璃.glassEffect(.regular)+黑色压暗scrim保证可读;文字纯白、零阴影(用户明令)。弹窗含关闭按钮(确认键)+Menu(ExitCommand)均可退出。番剧侧零改动。"
 }

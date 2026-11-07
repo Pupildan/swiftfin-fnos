@@ -118,7 +118,7 @@ private struct DanmakuLane: View {
                     .background {
                         if copy == 0 {
                             GeometryReader { g in
-                                Color.clear.preference(DanmakuPassWidthKey.self, g.size.width)
+                                Color.clear.preference(key: DanmakuPassWidthKey.self, value: g.size.width)
                             }
                         }
                     }

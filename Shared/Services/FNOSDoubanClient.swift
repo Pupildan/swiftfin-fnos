@@ -380,4 +380,70 @@ enum FNOSDoubanClient {
             return FNOSDoubanReview(id: rid, author: author, rating: rating, content: content, title: title)
         }
     }
+
+    // MARK: - v174 影评全文（列表 abstract 是摘要截断；正文需单独取 /review/{rid}）
+
+    /// 拉单条影评全文。列表接口的 abstract 是摘要（实测 473 字符截断），
+    /// 全文在详情端点 /review/{rid}（实测 content 2284 字符，含 HTML）。
+    /// 返回纯文本（保留段落换行，剥其余标签、解实体）；失败返回 ""（调用方退回摘要）。
+    static func frodoReviewContent(id: String, reviewId: String) async -> String {
+        guard let json = await frodoGet(path: "/review/\(reviewId)") else { return "" }
+        guard let raw = json["content"] as? String, !raw.isEmpty else { return "" }
+        var text = raw
+        text = text.replacingOccurrences(of: "<br\\s*/?>", with: "\n", options: .regularExpression)
+        text = text.replacingOccurrences(of: "</p>", with: "\n", options: .regularExpression)
+        text = text.replacingOccurrences(of: "<[^>]+>", with: "", options: .regularExpression)
+        text = decodeHTMLEntities(text)
+        text = text.replacingOccurrences(of: "\\n{3,}", with: "\n\n", options: .regularExpression)
+        return text.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 解常见 HTML 实体 + 数字实体（frodo 正文里偶发 &amp;/&#xxxx; 等）
+    private static func decodeHTMLEntities(_ s: String) -> String {
+        var out = s
+        let map = [
+            "&amp;": "&",
+            "&lt;": "<",
+            "&gt;": ">",
+            "&quot;": "\"",
+            "&#39;": "'",
+            "&apos;": "'",
+            "&nbsp;": " ",
+            "&mdash;": "—",
+            "&hellip;": "…",
+            "&ldquo;": "“",
+            "&rdquo;": "”",
+        ]
+        for (entity, char) in map {
+            out = out.replacingOccurrences(of: entity, with: char)
+        }
+        // 数字实体 &#NNNN; / &#xHHHH;
+        out = regexReplace(out, pattern: "&#(\\d+);") { m in
+            guard let code = UInt32(m) else { return "" }
+            return String(UnicodeScalar(code) ?? " ")
+        }
+        out = regexReplace(out, pattern: "&#x([0-9a-fA-F]+);") { m in
+            guard let code = UInt32(m, radix: 16) else { return "" }
+            return String(UnicodeScalar(code) ?? " ")
+        }
+        return out
+    }
+
+    private static func regexReplace(_ s: String, pattern: String, transform: (String) -> String) -> String {
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return s }
+        var out = s
+        let range = NSRange(out.startIndex..., in: out)
+        var replacements: [(NSRange, String)] = []
+        regex.enumerateMatches(in: out, options: [], range: range) { match, _, _ in
+            guard let match, match.numberOfRanges >= 2,
+                  let full = Range(match.range, in: out),
+                  let grp = Range(match.range(at: 1), in: out) else { return }
+            replacements.append((match.range, transform(String(out[grp]))))
+        }
+        for (nsRange, value) in replacements.reversed() {
+            guard let r = Range(nsRange, in: out) else { continue }
+            out.replaceSubrange(r, with: value)
+        }
+        return out
+    }
 }

@@ -21,6 +21,8 @@ struct FNOSDoubanDetailView: View {
     @State private var reviews: [FNOSDoubanClient.FNOSDoubanReview] = []
     /// v170: 评论弹窗（焦点落卡→确认键→屏幕居中弹窗完整显示）
     @State private var popupReview: FNOSDoubanClient.FNOSDoubanReview?
+    /// v174: 弹窗内影评全文（列表 abstract 是摘要截断，弹窗打开后拉 /review/{rid} 全文）
+    @State private var popupFullContent: String = ""
     /// v167: Hero 横屏高清剧照（frodo photos）；nil 时竖版海报垫底兜底
     @State private var landscapeURL: URL?
     /// v168: 相似推荐 + 点按进详情（与 TMDB similar 同款递归）
@@ -144,14 +146,23 @@ struct FNOSDoubanDetailView: View {
                 inLibraryCheck: inLibraryCheck
             )
         }
-        // v173: 评论弹窗（焦点落卡→确认键→屏幕居中弹窗完整显示；共享组件，豆瓣/番剧同款）
+        // v174: 评论弹窗（焦点落卡→确认键→屏幕居中弹窗；先显摘要，后台拉全文替换）
         .fullScreenCover(item: $popupReview) { review in
             FNOSReviewPopupSheet(
                 author: review.author,
                 ratingText: review.rating.map { String(format: "%.0f", $0) },
-                content: review.content,
-                onClose: { popupReview = nil }
+                content: popupFullContent.isEmpty ? review.content : popupFullContent,
+                onClose: {
+                    popupReview = nil
+                    popupFullContent = ""
+                }
             )
+            .task {
+                // 列表 abstract 是摘要截断；弹窗打开后拉 /review/{rid} 全文
+                popupFullContent = ""
+                let full = await FNOSDoubanClient.frodoReviewContent(id: item.id, reviewId: review.id)
+                if !full.isEmpty { popupFullContent = full }
+            }
         }
     }
 
@@ -402,6 +413,7 @@ struct FNOSDoubanDetailView: View {
                         // v170: 卡片可聚焦（焦点落卡→确认键→居中弹窗完整显示）
                         Button {
                             popupReview = review
+                            popupFullContent = ""
                         } label: {
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack(spacing: 10) {

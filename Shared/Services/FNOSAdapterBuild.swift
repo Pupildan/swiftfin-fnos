@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v173"
+    static let version = "v174"
 
     /// 本版主要变更摘要
-    static let changes = "v173:①豆瓣评论卡默认折叠3行、卡底改液态玻璃(与弹窗同款glassEffect),文字纯白;确认键弹窗改共享组件FNOSReviewPopupSheet(内容区maxHeight+ScrollView,修v172固定620高导致长评显示不全)。②评论功能1:1复刻到番剧详情页:评论解析升级返回作者+正文,「相关条目」栏下新增短评区(标题+总条数/可聚焦卡片/确认键弹窗),Hero弹幕复用同一批数据。③修KS/MPV播放器弹幕闪烁:FNOSDanmuView弃Canvas每帧全量重绘,改原生Text.position(每条一视图,SwiftUI只做transform合成),引擎时间轴/锚点零改动,仅换渲染层。"
+    static let changes = "v174:①豆瓣评论弹窗拉全文:列表abstract是摘要截断,新增frodoReviewContent打/review/{rid}详情端点取全文(实测2284字符含HTML),剥标签解实体保留段落;弹窗先显摘要后台拉全文替换。②播放器弹幕抖动:FNOSDanmuView从.position(布局属性,每帧改触发宿主重布局→叠视频层=抖动)改.offset(纯transform,GPU合成不重布局),并去掉左右出画guard(估宽≠实宽在屏边突现/消失=跳变),出画由30s驱逐兜底。引擎锚点/轨道零改动。"
 }

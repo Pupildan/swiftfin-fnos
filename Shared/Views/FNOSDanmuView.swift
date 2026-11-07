@@ -407,21 +407,22 @@ struct FNOSDanmuView: View {
     private var laneTopInset: CGFloat { 110 + CGFloat(offsetY) }
 
     var body: some View {
-        // v173: 弃 Canvas 每帧全量重绘（闪烁根因），改原生 Text.position ——
-        // 每条弹幕一个视图，SwiftUI 只做 transform 合成，滚动期间文本零重绘。
+        // v174: 弹幕用 .offset（纯 transform，GPU 合成、不触发布局）而非 .position（布局属性，
+        // 每帧改会触发宿主重新布局 → 叠在视频层上表现为抖动/步进）。去掉左右出画 guard
+        // （估宽≠实宽会在屏边突然出现/消失=跳变），出画后由 30s 驱逐兜底，远屏外渲染开销可忽略。
         // 引擎（时间轴/锚点/轨道）零改动，仅渲染层换皮。
         TimelineView(.animation) { timeline in
             GeometryReader { geo in
                 let mediaNow = engine.mediaTime(at: timeline.date)
                 ForEach(engine.active) { entry in
-                    if let center = screenPosition(for: entry, mediaNow: mediaNow, size: geo.size) {
+                    if let origin = screenOrigin(for: entry, mediaNow: mediaNow, size: geo.size) {
                         Text(entry.comment.text)
                             .font(.system(size: CGFloat(fontSize), weight: .medium))
                             .foregroundColor(entry.comment.color)
                             .opacity(opacity)
                             .lineLimit(1)
                             .fixedSize()
-                            .position(x: center.x, y: center.y)
+                            .offset(x: origin.x, y: origin.y)
                     }
                 }
             }
@@ -430,33 +431,30 @@ struct FNOSDanmuView: View {
         .accessibilityHidden(true)
     }
 
-    /// 计算单条弹幕当前屏幕位置（纯几何，与旧 Canvas 版逐行对应）
-    private func screenPosition(for entry: FNOSDanmuEngine.ActiveComment, mediaNow: Double, size: CGSize) -> CGPoint? {
+    /// 计算单条弹幕左上角的 offset（纯 transform，无出画 guard → 无边缘跳变）
+    private func screenOrigin(for entry: FNOSDanmuEngine.ActiveComment, mediaNow: Double, size: CGSize) -> CGPoint? {
         let comment = entry.comment
 
         if comment.mode == 4 || comment.mode == 5 {
-            // 底部 / 顶部固定弹幕
+            // 底部 / 顶部固定弹幕（水平居中：offset 从左上起算，减半个估宽）
             let elapsed = mediaNow - comment.time
             guard elapsed >= 0, elapsed <= 5 else { return nil }
             let rawY = comment.mode == 4
                 ? size.height - 80 + CGFloat(offsetY)
                 : laneTopInset
             let y = min(max(rawY, 60), size.height - 60)
-            return CGPoint(x: size.width / 2, y: y)
+            let textW = estimatedWidth(of: comment.text)
+            return CGPoint(x: size.width / 2 - textW / 2, y: y - CGFloat(fontSize) * 0.6)
         }
 
-        // 滚动弹幕：右侧进入、匀速向左（speed 为用户设置倍率）
+        // 滚动弹幕：左边缘从屏宽起、匀速向左（speed 为用户设置倍率）
         let textWidth = estimatedWidth(of: comment.text)
         let velocity = (size.width + textWidth) / (12 / max(speed, 0.1))
         let distance = CGFloat(mediaNow - comment.time) * velocity
-        let trailingX = size.width - distance
-        let centerX = trailingX + textWidth / 2
-
-        guard centerX + textWidth / 2 > 0 else { return nil }
-        guard centerX - textWidth / 2 < size.width else { return nil }
+        let leadingX = size.width - distance
 
         let y = laneTopInset + CGFloat(entry.lane) * laneHeight
-        return CGPoint(x: centerX, y: y)
+        return CGPoint(x: leadingX, y: y - CGFloat(fontSize) * 0.6)
     }
 
     /// CJK 全角估算：每字符 ≈ 1.0 倍字号

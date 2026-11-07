@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v171"
+    static let version = "v172"
 
     /// 本版主要变更摘要
-    static let changes = "v171:①修弹幕闪烁(豆瓣+番剧共用组件):删TimelineView每帧重建(20fps步进=闪烁根因),改文本链双拷贝+repeatForever纯线性offset(GPU transform,60fps平滑零重绘);不用preference测宽/不用drawingGroup(v169死因),链宽确定性估宽直算保证滚动;字号26。②豆瓣评论头显示总条数(frodo comment_count,如「评论 258 条」)。③评论弹窗背景严格透明液态玻璃:撤0.85黑scrim(用户看到的灰底),加presentationBackground(.clear)让详情页透在玻璃后,纯白文字零阴影。"
+    static let changes = "v172:修豆瓣评论区焦点进不去(用户真机:焦点无法在每条评论间切换/确认无弹窗)。根因=评论区外层.focusable()把整段当成一个焦点目标,焦点跳过所有评论卡直达下一节。撤掉该.focusable(),保留.focusSection()引导引擎进入本节,评论卡自身Button(.card)原生可聚焦→可逐条下移→确认开弹窗(海报墙同款模式)。弹幕/弹窗/评论计数均未动。"
 }

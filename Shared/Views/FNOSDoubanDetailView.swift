@@ -87,7 +87,9 @@ struct FNOSDoubanDetailView: View {
                             reviewsSection
                                 .padding(.horizontal, 60)
                                 .padding(.bottom, 40)
-                                .focusable()
+                                // v172: 撤掉外层 .focusable()——它把整段当成一个焦点目标，
+                                // 焦点跳过所有评论卡直接进下一节。卡片自身是 Button 原生可聚焦，
+                                // 外层只留 focusSection 引导引擎进入本节（海报墙同款模式）。
                                 #if os(tvOS)
                                 .focusSection()
                                 #endif

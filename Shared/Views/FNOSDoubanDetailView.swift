@@ -19,6 +19,8 @@ struct FNOSDoubanDetailView: View {
     @State private var frodo: FNOSDoubanClient.FNOSDoubanFrodoDetail?
     @State private var celebrities: [FNOSDoubanClient.FNOSDoubanCelebrity] = []
     @State private var reviews: [FNOSDoubanClient.FNOSDoubanReview] = []
+    /// v167: Hero 横屏高清剧照（frodo photos）；nil 时竖版海报垫底兜底
+    @State private var landscapeURL: URL?
     @Environment(\.dismiss) private var dismiss
 
     /// 入库按钮状态机（与 TMDB/番剧详情页同构）
@@ -65,14 +67,36 @@ struct FNOSDoubanDetailView: View {
                 ScrollView(.vertical, showsIndicators: false) {
                     VStack(spacing: 0) {
                         heroSection(size: geo.size)
-                        contentSection
-                            .padding(.horizontal, 60)
-                            .padding(.top, 20)
-                            .padding(.bottom, 60)
-                            .focusable()
-                            #if os(tvOS)
-                            .focusSection()
-                            #endif
+                        // v167: 内容区严格按 TMDB 版式拆段——主要演员 / 评论 / 制作信息，
+                        // 每段独立 focusable(+focusSection)，与 FNOSTMDBDetailView 同构
+                        if !celebrities.isEmpty || !(frodo?.castNames.isEmpty ?? true) {
+                            celebSection
+                                .padding(.horizontal, 60)
+                                .padding(.bottom, 40)
+                                .focusable()
+                                #if os(tvOS)
+                                .focusSection()
+                                #endif
+                        }
+                        if !reviews.isEmpty {
+                            reviewsSection
+                                .padding(.horizontal, 60)
+                                .padding(.bottom, 40)
+                                .focusable()
+                        }
+                        if !productionRows.isEmpty {
+                            productionSection
+                                .padding(.horizontal, 60)
+                                .padding(.bottom, 60)
+                                .focusable()
+                        }
+                        // frodo 拿不到时的降级来源卡
+                        if frodo == nil {
+                            sourceFallbackSection
+                                .padding(.horizontal, 60)
+                                .padding(.bottom, 60)
+                                .focusable()
+                        }
                     }
                 }
             }
@@ -85,6 +109,8 @@ struct FNOSDoubanDetailView: View {
             celebrities = await FNOSDoubanClient.frodoCelebrities(id: item.id, category: item.category)
             reviews = await FNOSDoubanClient.frodoReviews(id: item.id, category: item.category)
         }
+        // v167: 横屏剧照独立并行拉取（不阻塞详情渲染，到位后叠到竖版海报上层）
+        .task { landscapeURL = await FNOSDoubanClient.frodoLandscapeURL(id: item.id, category: item.category) }
         .task { await refreshLibState() }
     }
 
@@ -93,11 +119,20 @@ struct FNOSDoubanDetailView: View {
     @ViewBuilder
     private func heroSection(size: CGSize) -> some View {
         ZStack(alignment: .bottomLeading) {
-            // 高清海报作全宽 backdrop
-            if let cover = item.coverURL {
-                FNOSAsyncImage(url: cover, headers: ["Referer": "https://movie.douban.com/"], usePosterCache: true)
-                    .frame(width: size.width, height: size.width * 9 / 16)
-                    .clipped()
+            // v167: 底层竖版海报（aspectFill 中心裁切兜底）+ 上层横屏高清剧照。
+            // 横图失败/未到位时海报透出（FNOSAsyncImage 失败态是 6% 白纱，不遮挡），
+            // 彻底解决「竖屏海报放大成 16:9」的糊画问题。
+            ZStack {
+                if let cover = item.coverURL {
+                    FNOSAsyncImage(url: cover, headers: ["Referer": "https://movie.douban.com/"], usePosterCache: true)
+                        .frame(width: size.width, height: size.width * 9 / 16)
+                        .clipped()
+                }
+                if let land = landscapeURL {
+                    FNOSAsyncImage(url: land, headers: ["Referer": "https://movie.douban.com/"])
+                        .frame(width: size.width, height: size.width * 9 / 16)
+                        .clipped()
+                }
             }
 
             // 渐变压暗：左黑右透 + 下黑上透
@@ -118,6 +153,11 @@ struct FNOSDoubanDetailView: View {
                 startPoint: .top,
                 endPoint: .bottom
             )
+
+            // v167: 豆瓣短评弹幕（顶部带，纯展示不参与焦点）
+            if !reviews.isEmpty {
+                FNOSReviewDanmaku(texts: reviews.map { String($0.content.prefix(60)) })
+            }
 
             // 左下信息区
             VStack(alignment: .leading, spacing: 14) {
@@ -248,115 +288,165 @@ struct FNOSDoubanDetailView: View {
         .disabled(libState != .idle)
     }
 
-    // MARK: - 内容行（简介 + 主演头像 + 评论，frodo 数据）
+    // MARK: - 内容区（v167: 严格按 TMDB 详情页版式——主要演员 / 评论 / 制作信息 卡片）
 
+    /// 主要演员行（与 TMDB castAvatarSection 同构：80pt 圆形头像，间距 20，frame 80）
     @ViewBuilder
-    private var contentSection: some View {
-        VStack(alignment: .leading, spacing: 32) {
-            // 简介（contentSection 不再重复——已搬进 hero）
-            // v132：简介已在 hero 里显示，此处只保留主演头像行和评论
-
-            // 主演（圆形头像 + 角色，来自 frodo celebrities）
-            if !celebrities.isEmpty {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("主演")
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.92))
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        LazyHStack(spacing: 20) {
-                            ForEach(celebrities) { person in
-                                VStack(spacing: 8) {
-                                    if let avatar = person.avatarURL {
-                                        FNOSAsyncImage(url: avatar, headers: ["Referer": "https://movie.douban.com/"])
-                                            .frame(width: 80, height: 80)
-                                            .clipShape(Circle())
-                                    } else {
-                                        Circle().fill(Color.white.opacity(0.1)).frame(width: 80, height: 80)
-                                    }
-                                    Text(person.name)
-                                        .font(.system(size: 14, weight: .medium))
-                                        .foregroundColor(.white.opacity(0.85))
-                                        .lineLimit(1)
-                                        .frame(width: 90)
-                                    if !person.character.isEmpty {
-                                        Text(person.character)
-                                            .font(.system(size: 12))
-                                            .foregroundColor(.white.opacity(0.5))
-                                            .lineLimit(1)
-                                            .frame(width: 90)
-                                    }
+    private var celebSection: some View {
+        if !celebrities.isEmpty {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("主要演员")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.9))
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 20) {
+                        ForEach(celebrities) { person in
+                            VStack(spacing: 8) {
+                                if let avatar = person.avatarURL {
+                                    FNOSAsyncImage(url: avatar, headers: ["Referer": "https://movie.douban.com/"])
+                                        .frame(width: 80, height: 80)
+                                        .clipShape(Circle())
+                                } else {
+                                    Circle().fill(Color.white.opacity(0.1)).frame(width: 80, height: 80)
                                 }
-                            }
-                        }
-                    }
-                }
-            } else if let f = frodo, !f.castNames.isEmpty {
-                // v132：celebrities 接口失败时用 frodoDetail.castNames 文字降级
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("主演")
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.92))
-                    Text(f.castNames.joined(separator: " / "))
-                        .font(.system(size: 17))
-                        .foregroundColor(.white.opacity(0.8))
-                        .lineSpacing(6)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-
-            // 评论（frodo 短评）
-            if !reviews.isEmpty {
-                VStack(alignment: .leading, spacing: 16) {
-                    Text("评论")
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.92))
-                    VStack(alignment: .leading, spacing: 20) {
-                        ForEach(reviews) { review in
-                            VStack(alignment: .leading, spacing: 8) {
-                                HStack(spacing: 10) {
-                                    Text(review.author)
-                                        .font(.system(size: 15, weight: .semibold))
-                                        .foregroundColor(.white.opacity(0.9))
-                                    if let rating = review.rating {
-                                        HStack(spacing: 3) {
-                                            Image(systemName: "star.fill").foregroundColor(.yellow)
-                                            Text(String(format: "%.0f", rating))
-                                                .foregroundColor(.yellow.opacity(0.9))
-                                        }
+                                Text(person.name)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.85))
+                                    .lineLimit(1)
+                                if !person.character.isEmpty {
+                                    Text(person.character)
                                         .font(.system(size: 13))
-                                    }
+                                        .foregroundColor(.white.opacity(0.5))
+                                        .lineLimit(1)
                                 }
-                                Text(review.content)
-                                    .font(.system(size: 15))
-                                    .foregroundColor(.white.opacity(0.8))
-                                    .lineSpacing(5)
-                                    .fixedSize(horizontal: false, vertical: true)
                             }
-                            .padding(20)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.07)))
+                            .frame(width: 80)
                         }
                     }
                 }
             }
-
-            // 来源说明（frodo 拿不到时降级显示）
-            if frodo == nil {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("数据来源")
-                        .font(.system(size: 22, weight: .semibold))
-                        .foregroundColor(.white.opacity(0.92))
-                    Text("本条目信息来自豆瓣（movie.douban.com）。豆瓣未提供公开 API，故此处展示列表可获取的标题、评分、类型与集数信息。")
-                        .font(.system(size: 16))
-                        .foregroundColor(.white.opacity(0.7))
-                        .lineSpacing(5)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(28)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.white.opacity(0.07)))
+        } else if let f = frodo, !f.castNames.isEmpty {
+            // celebrities 接口失败时用 frodoDetail.castNames 文字降级
+            VStack(alignment: .leading, spacing: 16) {
+                Text("主要演员")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.9))
+                Text(f.castNames.joined(separator: " / "))
+                    .font(.system(size: 17))
+                    .foregroundColor(.white.opacity(0.8))
+                    .lineSpacing(6)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+
+    /// 评论（frodo 短评卡片，与 TMDB 行标题同款字体）
+    @ViewBuilder
+    private var reviewsSection: some View {
+        if !reviews.isEmpty {
+            VStack(alignment: .leading, spacing: 16) {
+                Text("评论")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.92))
+                VStack(alignment: .leading, spacing: 20) {
+                    ForEach(reviews) { review in
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 10) {
+                                Text(review.author)
+                                    .font(.system(size: 15, weight: .semibold))
+                                    .foregroundColor(.white.opacity(0.9))
+                                if let rating = review.rating {
+                                    HStack(spacing: 3) {
+                                        Image(systemName: "star.fill").foregroundColor(.yellow)
+                                        Text(String(format: "%.0f", rating))
+                                            .foregroundColor(.yellow.opacity(0.9))
+                                    }
+                                    .font(.system(size: 13))
+                                }
+                            }
+                            Text(review.content)
+                                .font(.system(size: 15))
+                                .foregroundColor(.white.opacity(0.8))
+                                .lineSpacing(5)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(20)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.07)))
+                    }
+                }
+            }
+        }
+    }
+
+    /// 制作信息卡数据（与 TMDB productionSection 的 label 100pt / value 18pt 行同构）
+    private var productionRows: [(String, String)] {
+        guard let f = frodo else { return [] }
+        var rows: [(String, String)] = []
+        if !f.year.isEmpty { rows.append(("年份", f.year)) }
+        if !f.genres.isEmpty { rows.append(("类型", f.genres.joined(separator: " / "))) }
+        if !f.directors.isEmpty { rows.append(("导演", f.directors.joined(separator: " / "))) }
+        if !f.castNames.isEmpty { rows.append(("主演", f.castNames.joined(separator: " / "))) }
+        if !f.countries.isEmpty { rows.append(("地区", f.countries.joined(separator: " / "))) }
+        if !f.languages.isEmpty { rows.append(("语言", f.languages.joined(separator: " / "))) }
+        if !f.durations.isEmpty { rows.append(("片长", f.durations.joined(separator: " / "))) }
+        if !f.pubdate.isEmpty { rows.append(("上映", f.pubdate.prefix(2).joined(separator: " / "))) }
+        if f.ratingValue > 0 {
+            var v = String(format: "%.1f", f.ratingValue)
+            if f.ratingCount > 0 { v += "（\(f.ratingCount) 人评价）" }
+            rows.append(("豆瓣评分", v))
+        }
+        if f.commentCount > 0 { rows.append(("短评", "\(f.commentCount) 条")) }
+        if !f.originalTitle.isEmpty { rows.append(("原名", f.originalTitle)) }
+        rows.append(("数据来源", "豆瓣电影"))
+        return rows
+    }
+
+    /// 制作信息卡（与 TMDB productionSection 完全同款样式）
+    private var productionSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("制作信息")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundColor(.white.opacity(0.92))
+            VStack(alignment: .leading, spacing: 20) {
+                ForEach(Array(productionRows.enumerated()), id: \.offset) { _, row in
+                    HStack(alignment: .top, spacing: 20) {
+                        Text(row.0)
+                            .font(.system(size: 16))
+                            .foregroundColor(.white.opacity(0.5))
+                            .frame(width: 100, alignment: .leading)
+                        Text(row.1)
+                            .font(.system(size: 18))
+                            .foregroundColor(.white.opacity(0.92))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer()
+                    }
+                }
+            }
+            .padding(28)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.white.opacity(0.08))
+            )
+        }
+    }
+
+    /// frodo 拿不到时的来源说明降级卡
+    private var sourceFallbackSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("数据来源")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundColor(.white.opacity(0.92))
+            Text("本条目信息来自豆瓣（movie.douban.com）。豆瓣未提供公开 API，故此处展示列表可获取的标题、评分、类型与集数信息。")
+                .font(.system(size: 16))
+                .foregroundColor(.white.opacity(0.7))
+                .lineSpacing(5)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(28)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.white.opacity(0.07)))
     }
 
     // MARK: - 入库状态机（按标题，与 TMDB/番剧详情页同构）

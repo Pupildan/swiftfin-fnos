@@ -118,13 +118,21 @@ enum FNOSDoubanClient {
         return Data(sig).base64EncodedString()
     }
 
-    /// frodo 完整详情（简介/类型/年份/主演/导演）
+    /// frodo 完整详情（简介/类型/年份/主演/导演 + v167 制作信息卡字段）
     struct FNOSDoubanFrodoDetail {
         var summary: String = ""
         var genres: [String] = []
         var year: String = ""
         var castNames: [String] = []
         var directors: [String] = []
+        var countries: [String] = []
+        var languages: [String] = []
+        var durations: [String] = []
+        var pubdate: [String] = []
+        var originalTitle: String = ""
+        var ratingValue: Double = 0
+        var ratingCount: Int = 0
+        var commentCount: Int = 0
     }
 
     /// 抓 frodo 完整详情（movie_detail / tv_detail），失败返回 nil 降级
@@ -169,6 +177,17 @@ enum FNOSDoubanClient {
             if let directors = json["directors"] as? [[String: Any]] {
                 d.directors = directors.compactMap { $0["name"] as? String }
             }
+            // v167: 制作信息卡字段（全部防御性解析，缺字段=空）
+            d.countries = (json["countries"] as? [String]) ?? []
+            d.languages = (json["languages"] as? [String]) ?? []
+            d.durations = (json["durations"] as? [String]) ?? []
+            d.pubdate = (json["pubdate"] as? [String]) ?? []
+            d.originalTitle = json["original_title"] as? String ?? ""
+            if let rating = json["rating"] as? [String: Any] {
+                d.ratingValue = (rating["value"] as? Double) ?? 0
+                d.ratingCount = (rating["count"] as? Int) ?? 0
+            }
+            d.commentCount = (json["comment_count"] as? Int) ?? 0
             return d
         } catch {
             print("FNOS⚠️豆瓣 frodo 详情异常: \(error.localizedDescription)")
@@ -177,7 +196,8 @@ enum FNOSDoubanClient {
     }
 
     /// frodo 通用 GET（签名 + 请求，返回 JSON dict）
-    private static func frodoGet(path: String) async -> [String: Any]? {
+    /// extra：附加 query 参数（签名只对 path，实测 photos 等带参请求同款可用）
+    private static func frodoGet(path: String, extra: [URLQueryItem] = []) async -> [String: Any]? {
         let ts = Int(Date().timeIntervalSince1970)
         let sig = frodoSign(path: path, ts: ts)
         var comps = URLComponents(string: frodoBase + path)
@@ -186,7 +206,7 @@ enum FNOSDoubanClient {
             URLQueryItem(name: "os_rom", value: "android"),
             URLQueryItem(name: "_ts", value: String(ts)),
             URLQueryItem(name: "_sig", value: sig),
-        ]
+        ] + extra
         guard let url = comps?.url else { return nil }
         var req = URLRequest(url: url)
         req.timeoutInterval = 15
@@ -234,6 +254,57 @@ enum FNOSDoubanClient {
             }
         }
         return result
+    }
+
+    // MARK: - v167 Hero 横屏高清剧照
+
+    /// 把 frodo 图片 URL 规范化为高清直链：
+    /// 提取 pXXXX.扩展名 文件名 → https://img1.doubanio.com/view/photo/l/public/{文件名}
+    /// （raw 是 418 防盗图不可用；/l/ 实测 200，qnmob3 签名 CDN 的临时链接也归一到长效域名）
+    private static func canonicalPhotoURL(_ raw: String) -> URL? {
+        let noQuery = raw.components(separatedBy: "?").first ?? raw
+        guard let file = noQuery.split(separator: "/").last,
+              file.range(of: #"^p\d+\.(jpg|jpeg|png|webp)$"#, options: .regularExpression) != nil
+        else { return nil }
+        // 原 host 本身是 img*.doubanio.com 就沿用（webp 扩展名在原 host 实测可用），否则统一 img1
+        var host = "img1.doubanio.com"
+        if let h = URL(string: raw)?.host, h.hasPrefix("img"), h.hasSuffix("doubanio.com") {
+            host = h
+        }
+        return URL(string: "https://\(host)/view/photo/l/public/\(file)")
+    }
+
+    /// v167: Hero 横屏高清剧照——frodo /photos?kind=s 两页窗口(0/50)，
+    /// 过滤横屏(w>h)按分辨率降序取最优；首页已有横屏则不翻第二页（TV 番剧横图稀疏，需翻页）。
+    /// 失败/无横屏返回 nil → 详情页竖版海报垫底兜底（不拉伸变形由视图层 aspectFill 负责）。
+    static func frodoLandscapeURL(id: String, category: String) async -> URL? {
+        let sub = category == "电影" ? "/movie/\(id)" : "/tv/\(id)"
+        var best: (width: Int, url: URL)? = nil
+        for start in [0, 50] {
+            let json = await frodoGet(
+                path: "\(sub)/photos",
+                extra: [
+                    URLQueryItem(name: "kind", value: "s"),
+                    URLQueryItem(name: "count", value: "50"),
+                    URLQueryItem(name: "start", value: String(start)),
+                ]
+            )
+            guard let photos = json?["photos"] as? [[String: Any]], !photos.isEmpty else { break }
+            for p in photos {
+                guard let img = p["image"] as? [String: Any],
+                      let large = img["large"] as? [String: Any],
+                      let w = large["width"] as? Int, let h = large["height"] as? Int,
+                      w > h,
+                      let raw = large["url"] as? String,
+                      let url = canonicalPhotoURL(raw)
+                else { continue }
+                if best == nil || w > best!.width {
+                    best = (w, url)
+                }
+            }
+            if best != nil { break }
+        }
+        return best?.url
     }
 
     /// 豆瓣评论（短评）

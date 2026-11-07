@@ -187,6 +187,41 @@ enum FNOSBangumiClient {
         }
     }
 
+    // MARK: - v167 短评（网页 HTML 解析——官方 API 无评论端点）
+
+    /// 短评正文列表（/subject/{id}/comments，取前 40 条；纯文本单行，供 Hero 弹幕用）
+    /// 结构实测：<p class="comment">正文</p>（外层 <div class="item clearit" data-item-user=...>）
+    static func comments(id: Int) async -> [String] {
+        guard let url = URL(string: "https://bangumi.tv/subject/\(id)/comments") else { return [] }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 15
+        req.setValue("text/html,application/xhtml+xml", forHTTPHeaderField: "Accept")
+        req.setValue("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+                     forHTTPHeaderField: "User-Agent")
+        guard let (data, _) = try? await URLSession.shared.data(for: req),
+              let html = String(data: data, encoding: .utf8) else {
+            return []
+        }
+        let pattern = #"<p class="comment">([\s\S]*?)</p>"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let range = NSRange(html.startIndex..., in: html)
+        var out: [String] = []
+        regex.enumerateMatches(in: html, options: [], range: range) { match, _, _ in
+            guard let match, match.numberOfRanges >= 2,
+                  let r = Range(match.range(at: 1), in: html) else { return }
+            var text = String(html[r])
+            // 内联标签 → 空格（防词黏连），再解实体、折叠空白成单行
+            text = text.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+            text = decodeHTMLEntities(text)
+            text = text.components(separatedBy: .whitespacesAndNewlines)
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+            text = String(text.prefix(60))   // 弹幕单行长度上限
+            if !text.isEmpty { out.append(text) }
+        }
+        return Array(out.prefix(40))
+    }
+
     /// infobox 键值对提取（放送日/原名/集数/时长/制作/官网等）
     static func infobox(from json: [String: Any]) -> [(key: String, value: String)] {
         guard let info = json["infobox"] as? [[String: Any]] else { return [] }

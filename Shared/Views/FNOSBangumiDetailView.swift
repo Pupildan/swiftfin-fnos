@@ -49,6 +49,8 @@ struct FNOSBangumiDetailView: View {
     @State private var relatedDetailItem: FNOSBangumiItem?  // 相关条目进详情
     /// v125：Hero 海报取色（详情页背景高斯模糊用）
     @State private var themeColor: Color?
+    /// v167: 短评列表（bangumi.tv 评论页 HTML 解析，Hero 弹幕用）
+    @State private var reviewTexts: [String] = []
 
     /// v121：入库按钮状态机（与 TMDB 详情页同构）
     private enum LibState {
@@ -135,6 +137,8 @@ struct FNOSBangumiDetailView: View {
         .ignoresSafeArea()
         .task { await loadDetail() }
         .task { await refreshLibState() }
+        // v167: 短评独立并行拉取（不阻塞详情主体，到位后 Hero 弹幕自动出现）
+        .task { reviewTexts = await FNOSBangumiClient.comments(id: item.id) }
         // v123: 相关条目进详情
         .fullScreenCover(item: $relatedDetailItem) { relItem in
             FNOSBangumiDetailView(
@@ -211,6 +215,11 @@ struct FNOSBangumiDetailView: View {
                 startPoint: .top,
                 endPoint: .bottom
             )
+
+            // v167: 番剧短评弹幕（顶部带，纯展示不参与焦点）
+            if !reviewTexts.isEmpty {
+                FNOSReviewDanmaku(texts: reviewTexts)
+            }
 
             // 左下信息区
             VStack(alignment: .leading, spacing: 14) {

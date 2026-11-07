@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v166"
+    static let version = "v167"
 
     /// 本版主要变更摘要
-    static let changes = "v166:挂载/卸载触发信号换源(基于v165日志实锤:跨行焦点移动的瞬态nil可持续1500ms以上,任何基于nil计时的卸载都会在LazyHStack滚动曝光中途拆行→引擎目标消失→拉回首卡)。新信号=Hero自身的焦点状态(onHeroFocusChanged回调):焦点回Hero=卸载+滚顶;焦点去海报墙=挂载。与nil计时完全无关,不受惰性实现延迟影响。onDownToShelf挂载保留(双保险)。移除延迟卸载任务。"
+    static let changes = "v167:①豆瓣详情页Hero换横屏高清剧照(frodo /photos kind=s 两页窗口,横屏优先按分辨率降序,规范化imgN doubanio /l/ 高清直链;竖版海报aspectFill垫底兜底,不再拉伸放大糊画)。②豆瓣内容区严格对齐TMDB版式:主要演员(80pt头像行)/评论/制作信息卡(label100+value18同款)三段独立focusable。③豆瓣+番剧详情页Hero短评弹幕:顶部带匀速右→左推移,TimelineView帧推导无状态机;豆瓣取frodo短评,番剧解析bangumi.tv评论页HTML;allowsHitTesting(false)无focusable,不碰焦点引擎。"
 }

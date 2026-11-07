@@ -431,7 +431,7 @@ struct FNOSDanmuView: View {
     }
 
     /// 计算单条弹幕当前屏幕位置（纯几何，与旧 Canvas 版逐行对应）
-    private func screenPosition(for entry: ActiveComment, mediaNow: Double, size: CGSize) -> CGPoint? {
+    private func screenPosition(for entry: FNOSDanmuEngine.ActiveComment, mediaNow: Double, size: CGSize) -> CGPoint? {
         let comment = entry.comment
 
         if comment.mode == 4 || comment.mode == 5 {

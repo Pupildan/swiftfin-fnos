@@ -245,7 +245,16 @@ struct FNOSMainView: View {
                             VStack(alignment: .leading, spacing: 44) {
                                 // 继续播放（服务端 + 本机记录合并）：有记录才显示
                                 if !resumeEntries.isEmpty {
-                                    resumeShelf(screenWidth: geo.size.width, onUpToHero: onUpToHero)
+                                    resumeShelf(screenWidth: geo.size.width, onUpToHero: {
+                            // v177：继续播放第 3+ 张卡按上键无落点 → 滚回 Hero 顶部 + 释放海报墙焦点
+                            withAnimation(.easeInOut(duration: 0.4)) {
+                                proxy.scrollTo("fnos-hero-top", anchor: .top)
+                            }
+                            Task { @MainActor in
+                                try? await Task.sleep(for: .milliseconds(450))
+                                shelfCardFocused = nil
+                            }
+                        })
                                 }
                                 ForEach(sections.filter { !$0.items.isEmpty }) { section in
                                     shelf(section, screenWidth: geo.size.width)

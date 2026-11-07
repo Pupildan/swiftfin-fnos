@@ -635,8 +635,8 @@ struct FNOSBangumiDetailView: View {
                         }
                         .padding(20)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        // 液态玻璃卡底（与弹窗同款），默认折叠 3 行
-                        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        // v175: 卡底增加透明度（深色页上液态玻璃偏深，改轻透填充）
+                        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.white.opacity(0.08)))
                     }
                     .buttonStyle(.card)
                 }

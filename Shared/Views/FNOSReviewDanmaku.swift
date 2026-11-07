@@ -12,6 +12,7 @@
 //
 
 import SwiftUI
+import UIKit
 
 /// 链内条目尾间距（池估宽与 HStack spacing 共用同一常量，保证相位一致）
 private let danmakuChainGap: CGFloat = 70
@@ -68,14 +69,10 @@ struct FNOSReviewDanmaku: View {
         return pool
     }
 
-    /// 估算文本宽度（仅建链补条用一次，不参与任何每帧计算）
+    /// 精确文本宽度（建链补条用一次；用实际字体测量，与布局字体一致 → 循环复位无缝）
     private func estWidth(_ s: String) -> CGFloat {
-        var w: CGFloat = 0
-        for ch in s {
-            let v = ch.unicodeScalars.first?.value ?? 0
-            w += (v >= 0x2E80) ? fontSize * 1.05 : fontSize * 0.65
-        }
-        return w
+        let font = UIFont.systemFont(ofSize: fontSize, weight: .semibold)
+        return (s as NSString).size(withAttributes: [.font: font]).width
     }
 }
 
@@ -120,11 +117,7 @@ private struct DanmakuMarqueeLane: View {
     }
 
     private func estWidth(_ s: String) -> CGFloat {
-        var w: CGFloat = 0
-        for ch in s {
-            let v = ch.unicodeScalars.first?.value ?? 0
-            w += (v >= 0x2E80) ? fontSize * 1.05 : fontSize * 0.65
-        }
-        return w
+        let font = UIFont.systemFont(ofSize: fontSize, weight: .semibold)
+        return (s as NSString).size(withAttributes: [.font: font]).width
     }
 }

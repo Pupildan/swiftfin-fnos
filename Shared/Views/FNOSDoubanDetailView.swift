@@ -438,8 +438,8 @@ struct FNOSDoubanDetailView: View {
                             }
                             .padding(20)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            // v173: 卡片背景改液态玻璃（与弹窗同款），默认折叠 3 行
-                            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                            // v175: 卡底增加透明度（液态玻璃在深色页上偏深，改轻透填充）
+                            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.white.opacity(0.08)))
                         }
                         .buttonStyle(.card)
                     }

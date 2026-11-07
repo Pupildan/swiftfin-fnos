@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v174"
+    static let version = "v175"
 
     /// 本版主要变更摘要
-    static let changes = "v174:①豆瓣评论弹窗拉全文:列表abstract是摘要截断,新增frodoReviewContent打/review/{rid}详情端点取全文(实测2284字符含HTML),剥标签解实体保留段落;弹窗先显摘要后台拉全文替换。②播放器弹幕抖动:FNOSDanmuView从.position(布局属性,每帧改触发宿主重布局→叠视频层=抖动)改.offset(纯transform,GPU合成不重布局),并去掉左右出画guard(估宽≠实宽在屏边突现/消失=跳变),出画由30s驱逐兜底。引擎锚点/轨道零改动。"
+    static let changes = "v175:①修评论弹窗内容不能滚动:FNOSReviewPopupSheet内容区定高560+内容.focusable(),焦点进入滚动区up/down即可滚看全文。②弹窗外内容高斯模糊:presentationBackground改.ultraThinMaterial(磨砂模糊背后详情页)。③评论卡底增加透明度:撤glassEffect(深色页上偏深)改轻透填充white0.08(豆瓣+番剧)。④修弹幕marquee循环复位轻微停顿:estWidth改NSString+实际字体精确测宽(原1.05em/0.65em估宽误差→复位跳变),循环无缝。"
 }

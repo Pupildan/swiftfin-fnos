@@ -18,6 +18,27 @@ struct FNOSReviewPopupSheet: View {
     /// 关闭回调（确认键按「关闭」或 Menu）
     var onClose: () -> Void
 
+    /// 把全文按长度切成多行：每行 .focusable()，焦点逐行下移驱动 ScrollView 滚动看全文
+    /// （单个大 Text 非焦点目标，tvOS 焦点引擎在 ScrollView 内无落点→滚不动）
+    private var contentRows: [String] {
+        let flat = content
+            .replacingOccurrences(of: "\n", with: " ")
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        guard flat.count > 110 else { return flat.isEmpty ? [] : [flat] }
+        var rows: [String] = []
+        var start = flat.startIndex
+        while start < flat.endIndex {
+            let end = flat.index(start, offsetBy: 110, limitedBy: flat.endIndex) ?? flat.endIndex
+            let chunk = String(flat[start..<end]).trimmingCharacters(in: .whitespaces)
+            if !chunk.isEmpty { rows.append(chunk) }
+            if end >= flat.endIndex { break }
+            start = end
+        }
+        return rows
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
@@ -41,15 +62,20 @@ struct FNOSReviewPopupSheet: View {
             }
 
             ScrollView(.vertical, showsIndicators: true) {
-                Text(content)
-                    .font(.system(size: 18))
-                    .foregroundColor(.white)
-                    .lineSpacing(7)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    ForEach(contentRows, id: \.self) { row in
+                        Text(row)
+                            .font(.system(size: 18))
+                            .foregroundColor(.white)
+                            .lineSpacing(6)
+                            .multilineTextAlignment(.leading)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .focusable()   // 每行一个焦点落点 → 焦点逐行下移驱动 ScrollView 滚动看全文
+                    }
+                }
+                .padding(.vertical, 4)
             }
-            .frame(height: 560)   // 有界滚动视口（内容溢出即可滚）
-            .focusable()   // v176: ScrollView 自身可聚焦 → 焦点进入后 up/down 整屏滚动
+            .frame(height: 560)   // 有界滚动视口
         }
         .padding(36)
         .frame(width: 960)

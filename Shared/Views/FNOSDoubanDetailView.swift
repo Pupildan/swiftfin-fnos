@@ -103,7 +103,7 @@ struct FNOSDoubanDetailView: View {
                             similarSection
                                 .padding(.horizontal, 60)
                                 .padding(.bottom, 40)
-                                // v176: 撤 .focusable()——内部按钮焦点进不去（同 v172 评论根因）
+                                .focusable()
                                 #if os(tvOS)
                                 .focusSection()
                                 #endif

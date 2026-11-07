@@ -124,7 +124,8 @@ struct FNOSBangumiDetailView: View {
                             relatedSection
                                 .padding(.horizontal, 60)
                                 .padding(.bottom, 40)
-                                // v176: 撤 .focusable()——内部按钮焦点进不去（同豆瓣 v172 根因）
+                                // v178: 回滚 v176——撤 .focusable() 后焦点进不去本节（内部按钮非原生可聚焦）
+                                .focusable()
                                 #if os(tvOS)
                                 .focusSection()
                                 #endif

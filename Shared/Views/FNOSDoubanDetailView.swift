@@ -143,55 +143,52 @@ struct FNOSDoubanDetailView: View {
             )
         }
         // v170: 评论弹窗（焦点落卡→确认键→屏幕居中弹窗完整显示）
-        // fullScreenCover：tvOS 自动把焦点移入弹窗（overlay 不保证），关闭=关闭键或按钮
+        // fullScreenCover：tvOS 自动把焦点移入弹窗（overlay 不保证），关闭=关闭键或 Menu
         .fullScreenCover(item: $popupReview) { review in
-            ZStack {
-                // 压暗背景，保证弹窗内纯白文字可读（文字本身不加任何阴影）
-                Color.black.opacity(0.85)
-                    .ignoresSafeArea()
-                    .onTapGesture { popupReview = nil }
-
-                VStack(alignment: .leading, spacing: 16) {
-                    HStack(spacing: 10) {
-                        Text(review.author)
-                            .font(.system(size: 18, weight: .semibold))
-                            .foregroundColor(.white)
-                        if let rating = review.rating {
-                            HStack(spacing: 3) {
-                                Image(systemName: "star.fill").foregroundColor(.yellow)
-                                Text(String(format: "%.0f", rating))
-                                    .foregroundColor(.yellow.opacity(0.9))
-                            }
-                            .font(.system(size: 14))
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 10) {
+                    Text(review.author)
+                        .font(.system(size: 18, weight: .semibold))
+                        .foregroundColor(.white)
+                    if let rating = review.rating {
+                        HStack(spacing: 3) {
+                            Image(systemName: "star.fill").foregroundColor(.yellow)
+                            Text(String(format: "%.0f", rating))
+                                .foregroundColor(.yellow.opacity(0.9))
                         }
-                        Spacer()
-                        Button {
-                            popupReview = nil
-                        } label: {
-                            Text("关闭")
-                                .font(.system(size: 16, weight: .semibold))
-                                .foregroundColor(.white)
-                        }
-                        .buttonStyle(.card)
+                        .font(.system(size: 14))
                     }
-
-                    ScrollView(.vertical, showsIndicators: false) {
-                        Text(review.content)
-                            .font(.system(size: 18))
+                    Spacer()
+                    Button {
+                        popupReview = nil
+                    } label: {
+                        Text("关闭")
+                            .font(.system(size: 16, weight: .semibold))
                             .foregroundColor(.white)
-                            .lineSpacing(7)
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
-                    .focusable()
+                    .buttonStyle(.card)
                 }
-                .frame(width: 960, height: 620)
-                .padding(36)
-                // iOS 26 液态玻璃（与入库按钮同款 API），背景严格按玻璃材质实现
-                .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-                .onExitCommand { popupReview = nil }
+
+                ScrollView(.vertical, showsIndicators: false) {
+                    Text(review.content)
+                        .font(.system(size: 18))
+                        .foregroundColor(.white)
+                        .lineSpacing(7)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .focusable()
             }
+            .frame(width: 960, height: 620)
+            .padding(36)
+            // iOS 26 液态玻璃（与入库按钮同款 API）
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // v171: 透明呈现——撤掉黑 scrim，详情页内容透在玻璃后（严格 iOS 26 液态玻璃规范）
+            .background(Color.clear)
+            .presentationBackground(.clear)
+            .onExitCommand { popupReview = nil }
         }
     }
 
@@ -426,9 +423,17 @@ struct FNOSDoubanDetailView: View {
     private var reviewsSection: some View {
         if !reviews.isEmpty {
             VStack(alignment: .leading, spacing: 16) {
-                Text("评论")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundColor(.white.opacity(0.92))
+                HStack(spacing: 10) {
+                    Text("评论")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.92))
+                    // v171: 标题后显示总评论数（frodo comment_count）
+                    if let f = frodo, f.commentCount > 0 {
+                        Text("\(f.commentCount) 条")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.white.opacity(0.55))
+                    }
+                }
                 VStack(alignment: .leading, spacing: 20) {
                     ForEach(reviews) { review in
                         // v170: 卡片可聚焦（焦点落卡→确认键→居中弹窗完整显示）

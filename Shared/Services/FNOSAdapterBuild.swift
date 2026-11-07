@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v170"
+    static let version = "v171"
 
     /// 本版主要变更摘要
-    static let changes = "v170:按用户指令回退+新增。①弹幕组件回退到v168实现(逐字节git checkout恢复,TimelineView每帧推导滚动正常;唯一保留改动=字号21→26)。②豆瓣评论卡:可聚焦按钮(.card),确认键打开屏幕居中弹窗完整显示全文(不再用v169行内lineLimit展开)。③弹窗背景=iOS26液态玻璃.glassEffect(.regular)+黑色压暗scrim保证可读;文字纯白、零阴影(用户明令)。弹窗含关闭按钮(确认键)+Menu(ExitCommand)均可退出。番剧侧零改动。"
+    static let changes = "v171:①修弹幕闪烁(豆瓣+番剧共用组件):删TimelineView每帧重建(20fps步进=闪烁根因),改文本链双拷贝+repeatForever纯线性offset(GPU transform,60fps平滑零重绘);不用preference测宽/不用drawingGroup(v169死因),链宽确定性估宽直算保证滚动;字号26。②豆瓣评论头显示总条数(frodo comment_count,如「评论 258 条」)。③评论弹窗背景严格透明液态玻璃:撤0.85黑scrim(用户看到的灰底),加presentationBackground(.clear)让详情页透在玻璃后,纯白文字零阴影。"
 }

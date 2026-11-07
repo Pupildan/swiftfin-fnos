@@ -1,11 +1,20 @@
 //
 // FNOSReviewDanmaku.swift
-// v167: 详情页 Hero 评论弹幕浮层——评论文本从右向左匀速推过，循环取池。
-// 铁律：allowsHitTesting(false)、无 .focusable、无任何手势/命令——纯展示，
-// 绝不参与焦点引擎（首页焦点战役的教训不许带进详情页）。
+// v167: 详情页 Hero 评论弹幕浮层（豆瓣 + 番剧共用）。
+// v170: 回退到 v168 TimelineView 实现（滚动正常）+ 字号 26。
+// v171: 修闪烁——删 TimelineView 每帧重建（20fps 步进=闪烁根因）。
+//   新底层 = 纯滚动：每泳道「文本链·双拷贝」+ repeatForever 纯线性 offset 动画，
+//   CoreAnimation 只对整条链做 transform（60fps 平滑，期间文本零重绘）。
+//   与 v169 的区别（v169 真机不滚动）：不用 preference 测宽（真机疑似不触发→静止）、
+//   不用 drawingGroup，链宽用确定性估宽直接算——保证一定滚。
+//   无缝循环：单份链估宽 ≥ 屏宽+150，行程 = 链宽+间距，复位瞬间第二拷贝与第一拷贝同位。
+// 铁律不变：allowsHitTesting(false)、无 .focusable、无手势——不碰焦点引擎。
 //
 
 import SwiftUI
+
+/// 链内条目尾间距（池估宽与 HStack spacing 共用同一常量，保证相位一致）
+private let danmakuChainGap: CGFloat = 70
 
 struct FNOSReviewDanmaku: View {
     /// 评论文本池（调用方已截断单行长度）
@@ -13,103 +22,108 @@ struct FNOSReviewDanmaku: View {
     var laneCount: Int = 4
     /// 横向速度 pt/s
     var speed: CGFloat = 150
-    /// 同泳道重入间隔（秒）；0 = 按屏宽自动：前一条完全出画后才放下一条
-    var laneInterval: Double = 0
+    /// 字号（v169: 21→26）
     var fontSize: CGFloat = 26
-    /// v168: 打开页面时预热的泳道数（0=旧行为，全部从右侧慢慢进入）。
-    /// 豆瓣页传 2：首帧前 2 道已有弹幕在屏，杜绝「打开后前几秒空白」被误判为没有弹幕。
-    /// 默认 0 → 番剧页调用零改动、零行为变化。
+    /// v168 预热参数（签名兼容保留）。现行实现链首帧即在屏，此参数不再参与计算。
     var prewarmLanes: Int = 0
-
-    @State private var startDate = Date()
 
     var body: some View {
         if texts.isEmpty {
             EmptyView()
         } else {
-            TimelineView(.periodic(from: startDate, by: 1.0 / 20)) { context in
-                GeometryReader { geo in
-                    let shots = makeShots(
-                        now: context.date,
-                        width: geo.size.width,
-                        height: geo.size.height
-                    )
-                    ForEach(shots) { shot in
-                        Text(shot.text)
-                            .font(.system(size: fontSize, weight: .semibold))
-                            .foregroundColor(.white)
-                            .shadow(color: .black.opacity(0.7), radius: 3, x: 1, y: 1)
-                            .position(x: shot.cx, y: shot.cy)
+            GeometryReader { geo in
+                let lanes = max(laneCount, 1)
+                VStack(spacing: 0) {
+                    ForEach(0..<lanes, id: \.self) { lane in
+                        DanmakuMarqueeLane(
+                            items: lanePool(lane, lanes: lanes, width: geo.size.width),
+                            screenWidth: geo.size.width,
+                            laneHeight: min(geo.size.height * 0.42, 470) / CGFloat(lanes),
+                            speed: speed,
+                            fontSize: fontSize
+                        )
                     }
                 }
+                .frame(maxHeight: .infinity, alignment: .top)
             }
             .allowsHitTesting(false)
         }
     }
 
-    private struct Shot: Identifiable {
-        let id: Int
-        let text: String
-        let cx: CGFloat
-        let cy: CGFloat
-    }
-
-    // MARK: - 运动计算（每帧确定性推导，无状态机、无完成回调）
-
-    private func makeShots(now: Date, width: CGFloat, height: CGFloat) -> [Shot] {
-        guard !texts.isEmpty else { return [] }
-
-        let maxW = texts.map(estWidth).max() ?? 0
-        var interval = Double((width + maxW) / speed + 0.8)
-        if laneInterval > 0 { interval = laneInterval }
-        let maxDur = Double(width + maxW) / Double(speed) + 0.5
-        let lanes = max(laneCount, 1)
-        let stag = interval / Double(lanes)
-        // v168 预热：时钟前移 prewarmLanes 个泳道间隔 → 首帧前 N 道已有弹幕在屏
-        let elapsed = now.timeIntervalSince(startDate) + Double(max(prewarmLanes, 0)) * stag
-        guard elapsed > 0 else { return [] }
-
-        // 顶部弹幕带：只占 hero 上部 42%（避开左下标题/按钮区与右下主演区）
-        let band = min(height * 0.42, 470)
-        let laneH = band / CGFloat(lanes)
-
-        var shots: [Shot] = []
-        for lane in 0..<lanes {
-            let laneOff = Double(lane) * stag
-            // 跳过早已出画的历史 shot（长驻页面不随时间退化）
-            var j = 0
-            if elapsed - laneOff > maxDur {
-                j = max(0, Int((elapsed - laneOff - maxDur) / interval))
-            }
-            while true {
-                let t0 = Double(j) * interval + laneOff
-                guard t0 <= elapsed else { break }
-                let age = elapsed - t0
-                let k = lane + j * lanes
-                let text = texts[k % texts.count]
-                let w = estWidth(text)
-                let leftX = width - CGFloat(age) * speed
-                if leftX > -w {
-                    shots.append(Shot(
-                        id: k,
-                        text: text,
-                        cx: leftX + w / 2,
-                        cy: laneH * (CGFloat(lane) + 0.5) + 8
-                    ))
-                }
-                j += 1
-                if j > 10_000 { break }   // 防御性上限
-            }
+    /// 泳道文本分配 + 估宽补链：单份链估宽 ≥ 屏宽+150（两份拷贝任何相位盖满全屏）
+    private func lanePool(_ lane: Int, lanes: Int, width: CGFloat) -> [String] {
+        var pool = stride(from: lane, to: texts.count, by: lanes).map { texts[$0] }
+        guard !pool.isEmpty else { return [] }
+        let target = width + 150
+        var w: CGFloat = 0
+        for s in pool { w += estWidth(s) + danmakuChainGap }
+        var idx = 0
+        while w < target {
+            let t = pool[idx % pool.count]
+            pool.append(t)
+            w += estWidth(t) + danmakuChainGap
+            idx += 1
+            if pool.count >= 80 { break }
         }
-        return shots
+        return pool
     }
 
-    /// 估算文本宽度：CJK 全角按 1.0em，ASCII 按 0.55em（弹幕定位只需近似）
+    /// 估算文本宽度（仅建链补条用一次，不参与任何每帧计算）
     private func estWidth(_ s: String) -> CGFloat {
         var w: CGFloat = 0
         for ch in s {
             let v = ch.unicodeScalars.first?.value ?? 0
-            w += (v >= 0x2E80) ? fontSize : fontSize * 0.55
+            w += (v >= 0x2E80) ? fontSize * 1.05 : fontSize * 0.65
+        }
+        return w
+    }
+}
+
+// MARK: - 单泳道：文本链双拷贝 + 纯 offset 无缝滚动（无时间判定、无测量）
+
+private struct DanmakuMarqueeLane: View {
+    let items: [String]
+    let screenWidth: CGFloat
+    let laneHeight: CGFloat
+    let speed: CGFloat
+    let fontSize: CGFloat
+
+    @State private var scrolling = false
+
+    var body: some View {
+        let passWidth = items.reduce(0) { $0 + estWidth($1) + danmakuChainGap }
+        let travel = passWidth + danmakuChainGap
+        HStack(spacing: danmakuChainGap) {
+            // 双拷贝：offset 走完 travel 后复位，第二拷贝与第一拷贝同位 → 视觉无缝循环
+            ForEach(0..<2, id: \.self) { _ in
+                HStack(spacing: danmakuChainGap) {
+                    ForEach(items.indices, id: \.self) { i in
+                        Text(items[i])
+                            .font(.system(size: fontSize, weight: .semibold))
+                            .foregroundColor(.white)
+                            .shadow(color: .black.opacity(0.7), radius: 3, x: 1, y: 1)
+                            .fixedSize()      // 锁行宽：长短变化不引起重排
+                    }
+                }
+            }
+        }
+        .frame(width: screenWidth, height: laneHeight, alignment: .leading)
+        .offset(x: scrolling ? -travel : 0)
+        .animation(
+            // 纯滚动：一次 linear + repeatForever，GPU 持续插值，无逐帧重算
+            scrolling
+                ? .linear(duration: Double(travel / speed)).repeatForever(autoreverses: false)
+                : nil,
+            value: scrolling
+        )
+        .onAppear { scrolling = true }   // 出现即滚；首帧链已从左缘铺开，不空屏
+    }
+
+    private func estWidth(_ s: String) -> CGFloat {
+        var w: CGFloat = 0
+        for ch in s {
+            let v = ch.unicodeScalars.first?.value ?? 0
+            w += (v >= 0x2E80) ? fontSize * 1.05 : fontSize * 0.65
         }
         return w
     }

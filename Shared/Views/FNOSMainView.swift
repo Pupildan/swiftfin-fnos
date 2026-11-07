@@ -210,6 +210,18 @@ struct FNOSMainView: View {
                                             }
                                         }
                                     },
+                                    // v177：继续播放第 3+ 张卡按上键无落点（Hero 可聚焦按钮集中在左侧）→
+                                    // 外层卡 onMoveCommand(.up) 兜底：滚回 Hero 顶部 + 聚焦播放按钮
+                                    onUpToHero: {
+                                        FNOSDiagLog.send("onUpToHero fired (resume card up, no target above)")
+                                        withAnimation(.easeInOut(duration: 0.4)) {
+                                            proxy.scrollTo("fnos-hero-top", anchor: .top)
+                                        }
+                                        Task { @MainActor in
+                                            try? await Task.sleep(for: .milliseconds(450))
+                                            shelfCardFocused = nil   // 释放海报墙焦点，让引擎回落 Hero
+                                        }
+                                    },
                                     // v166：Hero 焦点状态驱动推荐行挂载/卸载——
                                     // 焦点回 Hero = 卸载 + 滚回顶部；焦点去海报墙 = 挂载。
                                     // 与 nil 计时无关，不受 LazyHStack 跨行瞬态 nil 影响
@@ -233,7 +245,7 @@ struct FNOSMainView: View {
                             VStack(alignment: .leading, spacing: 44) {
                                 // 继续播放（服务端 + 本机记录合并）：有记录才显示
                                 if !resumeEntries.isEmpty {
-                                    resumeShelf(screenWidth: geo.size.width)
+                                    resumeShelf(screenWidth: geo.size.width, onUpToHero: onUpToHero)
                                 }
                                 ForEach(sections.filter { !$0.items.isEmpty }) { section in
                                     shelf(section, screenWidth: geo.size.width)
@@ -703,7 +715,7 @@ struct FNOSMainView: View {
     // MARK: - 继续播放（服务端多端同步）
 
     /// 继续播放横向列表（ATV 版式：一屏 4 张 16:9 卡，底部进度条）
-    private func resumeShelf(screenWidth: CGFloat) -> some View {
+    private func resumeShelf(screenWidth: CGFloat, onUpToHero: @escaping () -> Void) -> some View {
         let hPadding: CGFloat = 72
         let spacing: CGFloat = 28
         let visibleCount: CGFloat = 4
@@ -721,7 +733,7 @@ struct FNOSMainView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: spacing) {
                     ForEach(resumeEntries) { entry in
-                        resumeCard(entry, width: cardWidth)
+                        resumeCard(entry, width: cardWidth, onUpToHero: onUpToHero)
                     }
                 }
                 .padding(.horizontal, hPadding)
@@ -730,7 +742,7 @@ struct FNOSMainView: View {
         }
     }
 
-    private func resumeCard(_ entry: FNOSResumeEntry, width: CGFloat) -> some View {
+    private func resumeCard(_ entry: FNOSResumeEntry, width: CGFloat, onUpToHero: @escaping () -> Void) -> some View {
         let item = entry.item
         let fraction = entry.fraction
         // ATV+ 版式：名称直接叠在图上；信息行 = 剧集「第N集 · 剩X分」/ 电影「剩 X小时Y分钟」
@@ -812,6 +824,10 @@ struct FNOSMainView: View {
         }
         .buttonStyle(.card)
         .focused($shelfCardFocused, equals: item.Id)
+        // v177：继续播放第 3+ 张卡按上键无落点（Hero 可聚焦按钮集中在左侧）→ 兜底滚回 Hero
+        .onMoveCommand { direction in
+            if direction == .up { onUpToHero() }
+        }
     }
 
     /// ATV 风格中文时长：1小时30分钟 / 42分钟

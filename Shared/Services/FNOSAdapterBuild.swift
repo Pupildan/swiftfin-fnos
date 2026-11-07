@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v176"
+    static let version = "v177"
 
     /// 本版主要变更摘要
-    static let changes = "v176:①修评论弹窗内容不能滚动:ScrollView自身.focusable()(tvOS聚焦ScrollView即整屏滚动,原逐Text.focusable未把滚动视口变焦点目标)。②豆瓣相似推荐行/番剧相关条目行撤外层.focusable(同v172评论根因:整段成一个焦点目标→下键跳过卡片/确认无反应),保留.focusSection,卡片原生可聚焦。③豆瓣影评弹窗全文按影评id缓存,重开即时显示(原首次只出摘要需返回再进)。④弹幕marquee改NSString+实际字体精确测宽,循环复位无缝消停顿。"
+    static let changes = "v177:修继续播放第3+张卡按上键完全不动(用户确认完全不动=上方无落点;Hero可聚焦按钮集中在左侧,右侧卡正上方无Hero落点)。方案A:Hero加onUpToHero回调(照搬onDownToShelf同款,不碰Hero内部焦点判定),播放按钮onMoveCommand(.up)触发;MainView接线滚回Hero顶部+释放海报墙焦点让引擎回落Hero;resume卡.onMoveCommand(.up)兜底透传。另:评论弹窗ScrollView自身focusable修不能滚动;豆瓣相似推荐/番剧相关条目撤外层focusable(焦点进不去按钮);影评全文缓存重开即时显示。"
 }

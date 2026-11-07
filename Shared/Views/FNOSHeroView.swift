@@ -69,6 +69,9 @@ struct FNOSHeroBanner: View {
     let onPlay: (FNOSItem) -> Void
     let onDetail: (FNOSItem) -> Void
     let onDownToShelf: () -> Void
+    /// v177：继续播放第 3+ 张卡按上键无落点（Hero 可聚焦按钮集中在左侧，右侧卡正上方无落点）
+    /// → 外层卡 onMoveCommand(.up) 兜底回调：滚回 Hero 顶部 + 聚焦播放按钮。不碰 Hero 内部焦点判定。
+    let onUpToHero: () -> Void
     /// v166：Hero 焦点状态上报——true=焦点在 Hero 按钮上（推荐行卸载时机），
     /// false=焦点离开 Hero 去海报墙（推荐行挂载时机）。
     /// 比 onChange(shelfCardFocused) 的 nil 计时可靠：LazyHStack 跨行移动的
@@ -358,6 +361,8 @@ struct FNOSHeroBanner: View {
                         pagePrevious()
                     case .down:
                         onDownToShelf()
+                    case .up:
+                        onUpToHero()
                     default:
                         break
                     }

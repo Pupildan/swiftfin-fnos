@@ -124,7 +124,10 @@ struct FNOSBangumiDetailView: View {
                             relatedSection
                                 .padding(.horizontal, 60)
                                 .padding(.bottom, 40)
-                                .focusable()
+                                // v176: 撤 .focusable()——内部按钮焦点进不去（同豆瓣 v172 根因）
+                                #if os(tvOS)
+                                .focusSection()
+                                #endif
                         }
                         // v173: 短评区（1:1 复刻豆瓣评论，置于相关条目之下）
                         if !bgmComments.isEmpty {

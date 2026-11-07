@@ -23,6 +23,8 @@ struct FNOSDoubanDetailView: View {
     @State private var popupReview: FNOSDoubanClient.FNOSDoubanReview?
     /// v174: 弹窗内影评全文（列表 abstract 是摘要截断，弹窗打开后拉 /review/{rid} 全文）
     @State private var popupFullContent: String = ""
+    /// v176: 全文缓存（按影评 id）——重开弹窗即时显示，不再"返回再进才出全文"
+    @State private var fullContentCache: [String: String] = [:]
     /// v167: Hero 横屏高清剧照（frodo photos）；nil 时竖版海报垫底兜底
     @State private var landscapeURL: URL?
     /// v168: 相似推荐 + 点按进详情（与 TMDB similar 同款递归）
@@ -101,7 +103,7 @@ struct FNOSDoubanDetailView: View {
                             similarSection
                                 .padding(.horizontal, 60)
                                 .padding(.bottom, 40)
-                                .focusable()
+                                // v176: 撤 .focusable()——内部按钮焦点进不去（同 v172 评论根因）
                                 #if os(tvOS)
                                 .focusSection()
                                 #endif
@@ -146,22 +148,23 @@ struct FNOSDoubanDetailView: View {
                 inLibraryCheck: inLibraryCheck
             )
         }
-        // v174: 评论弹窗（焦点落卡→确认键→屏幕居中弹窗；先显摘要，后台拉全文替换）
+        // v176: 评论弹窗（焦点落卡→确认键→居中弹窗；全文缓存，重开即时显示）
         .fullScreenCover(item: $popupReview) { review in
             FNOSReviewPopupSheet(
                 author: review.author,
                 ratingText: review.rating.map { String(format: "%.0f", $0) },
                 content: popupFullContent.isEmpty ? review.content : popupFullContent,
-                onClose: {
-                    popupReview = nil
-                    popupFullContent = ""
-                }
+                onClose: { popupReview = nil }
             )
             .task {
-                // 列表 abstract 是摘要截断；弹窗打开后拉 /review/{rid} 全文
-                popupFullContent = ""
+                // 已缓存 → 即时显示全文；否则拉 /review/{rid} 全文并缓存
+                popupFullContent = fullContentCache[review.id] ?? ""
+                guard popupFullContent.isEmpty else { return }
                 let full = await FNOSDoubanClient.frodoReviewContent(id: item.id, reviewId: review.id)
-                if !full.isEmpty { popupFullContent = full }
+                if !full.isEmpty {
+                    popupFullContent = full
+                    fullContentCache[review.id] = full
+                }
             }
         }
     }
@@ -413,7 +416,7 @@ struct FNOSDoubanDetailView: View {
                         // v170: 卡片可聚焦（焦点落卡→确认键→居中弹窗完整显示）
                         Button {
                             popupReview = review
-                            popupFullContent = ""
+                            popupFullContent = fullContentCache[review.id] ?? ""
                         } label: {
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack(spacing: 10) {

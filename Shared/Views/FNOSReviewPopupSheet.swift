@@ -40,16 +40,16 @@ struct FNOSReviewPopupSheet: View {
                 .buttonStyle(.card)
             }
 
-            ScrollView(.vertical, showsIndicators: false) {
+            ScrollView(.vertical, showsIndicators: true) {
                 Text(content)
                     .font(.system(size: 18))
                     .foregroundColor(.white)
                     .lineSpacing(7)
                     .multilineTextAlignment(.leading)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .focusable()   // 焦点进入滚动区，up/down 即可滚动看全文
             }
             .frame(height: 560)   // 有界滚动视口（内容溢出即可滚）
+            .focusable()   // v176: ScrollView 自身可聚焦 → 焦点进入后 up/down 整屏滚动
         }
         .padding(36)
         .frame(width: 960)

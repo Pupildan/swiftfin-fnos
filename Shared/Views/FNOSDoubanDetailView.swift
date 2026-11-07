@@ -19,6 +19,8 @@ struct FNOSDoubanDetailView: View {
     @State private var frodo: FNOSDoubanClient.FNOSDoubanFrodoDetail?
     @State private var celebrities: [FNOSDoubanClient.FNOSDoubanCelebrity] = []
     @State private var reviews: [FNOSDoubanClient.FNOSDoubanReview] = []
+    /// v169: 评论卡展开集合（点按卡片切换全屏阅读）
+    @State private var expandedReviewIds: Set<String> = []
     /// v167: Hero 横屏高清剧照（frodo photos）；nil 时竖版海报垫底兜底
     @State private var landscapeURL: URL?
     /// v168: 相似推荐 + 点按进详情（与 TMDB similar 同款递归）
@@ -86,6 +88,9 @@ struct FNOSDoubanDetailView: View {
                                 .padding(.horizontal, 60)
                                 .padding(.bottom, 40)
                                 .focusable()
+                                #if os(tvOS)
+                                .focusSection()
+                                #endif
                         }
                         // v168: 相似推荐行（TMDB 相关内容同位）
                         if !recItems.isEmpty {
@@ -375,29 +380,49 @@ struct FNOSDoubanDetailView: View {
                     .foregroundColor(.white.opacity(0.92))
                 VStack(alignment: .leading, spacing: 20) {
                     ForEach(reviews) { review in
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack(spacing: 10) {
-                                Text(review.author)
-                                    .font(.system(size: 15, weight: .semibold))
-                                    .foregroundColor(.white.opacity(0.9))
-                                if let rating = review.rating {
-                                    HStack(spacing: 3) {
-                                        Image(systemName: "star.fill").foregroundColor(.yellow)
-                                        Text(String(format: "%.0f", rating))
-                                            .foregroundColor(.yellow.opacity(0.9))
-                                    }
-                                    .font(.system(size: 13))
+                        let expanded = expandedReviewIds.contains(review.id)
+                        // v169: 默认折叠 4 行，点按卡片切换展开/收起（长评右上角提示）
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.2)) {
+                                if expanded {
+                                    expandedReviewIds.remove(review.id)
+                                } else {
+                                    expandedReviewIds.insert(review.id)
                                 }
                             }
-                            Text(review.content)
-                                .font(.system(size: 15))
-                                .foregroundColor(.white.opacity(0.8))
-                                .lineSpacing(5)
-                                .fixedSize(horizontal: false, vertical: true)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack(spacing: 10) {
+                                    Text(review.author)
+                                        .font(.system(size: 15, weight: .semibold))
+                                        .foregroundColor(.white.opacity(0.9))
+                                    if let rating = review.rating {
+                                        HStack(spacing: 3) {
+                                            Image(systemName: "star.fill").foregroundColor(.yellow)
+                                            Text(String(format: "%.0f", rating))
+                                                .foregroundColor(.yellow.opacity(0.9))
+                                        }
+                                        .font(.system(size: 13))
+                                    }
+                                    Spacer()
+                                    if review.content.count > 80 {
+                                        Text(expanded ? "收起" : "展开")
+                                            .font(.system(size: 13, weight: .medium))
+                                            .foregroundColor(.white.opacity(0.6))
+                                    }
+                                }
+                                Text(review.content)
+                                    .font(.system(size: 15))
+                                    .foregroundColor(.white.opacity(0.8))
+                                    .lineSpacing(5)
+                                    .lineLimit(expanded ? nil : 4)
+                                    .multilineTextAlignment(.leading)
+                            }
+                            .padding(20)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.07)))
                         }
-                        .padding(20)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.07)))
+                        .buttonStyle(.plain)
                     }
                 }
             }

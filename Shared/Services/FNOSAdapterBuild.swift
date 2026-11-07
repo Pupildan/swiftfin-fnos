@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v168"
+    static let version = "v169"
 
     /// 本版主要变更摘要
-    static let changes = "v168:修frodoGet签名缺/api/v2前缀(实测缺前缀HTTP400、带前缀200——v129起celebrities/reviews/photos三通道全部静默失效:演员头像退化文字、短评弹幕不出现、Hero横图退回竖版,一个根因三症状;MoviePilot apiv2签名用完整路径,照抄时漏了前缀)。②新增相似推荐行(frodo /recommendations 实测200,电影/剧集同款,160x240海报+标题TMDB同款,点按递归进详情)。③豆瓣弹幕预热prewarmLanes=2:打开即有弹幕在屏,杜绝首几秒空白被误判为没有弹幕;组件默认0,番剧页零改动。"
+    static let changes = "v169:弹幕体验重写(豆瓣+番剧hero共用组件):①字号21→26加大。②弃全部时间判定(删TimelineView/Date逐帧推导,20fps步进=闪烁根因)——每泳道=文本链双拷贝+repeatForever纯线性offset,CoreAnimation只对光栅化整链做transform(60fps零重排);链身.drawingGroup()强制GPU离屏渲染,滚动期文本零重绘;每Text.fixedSize()锁行宽防长短突变;无缝循环=单份链估宽≥屏宽150+行程链宽间距。③豆瓣评论卡折叠:默认4行,lineLimit按需展开,点按卡片切换收起(长评>80字右上角提示),评论区补focusSection。番剧调用点零改动(共享组件字号/闪烁修复自动生效)。"
 }

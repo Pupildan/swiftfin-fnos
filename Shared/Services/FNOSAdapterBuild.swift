@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v172"
+    static let version = "v173"
 
     /// 本版主要变更摘要
-    static let changes = "v172:修豆瓣评论区焦点进不去(用户真机:焦点无法在每条评论间切换/确认无弹窗)。根因=评论区外层.focusable()把整段当成一个焦点目标,焦点跳过所有评论卡直达下一节。撤掉该.focusable(),保留.focusSection()引导引擎进入本节,评论卡自身Button(.card)原生可聚焦→可逐条下移→确认开弹窗(海报墙同款模式)。弹幕/弹窗/评论计数均未动。"
+    static let changes = "v173:①豆瓣评论卡默认折叠3行、卡底改液态玻璃(与弹窗同款glassEffect),文字纯白;确认键弹窗改共享组件FNOSReviewPopupSheet(内容区maxHeight+ScrollView,修v172固定620高导致长评显示不全)。②评论功能1:1复刻到番剧详情页:评论解析升级返回作者+正文,「相关条目」栏下新增短评区(标题+总条数/可聚焦卡片/确认键弹窗),Hero弹幕复用同一批数据。③修KS/MPV播放器弹幕闪烁:FNOSDanmuView弃Canvas每帧全量重绘,改原生Text.position(每条一视图,SwiftUI只做transform合成),引擎时间轴/锚点零改动,仅换渲染层。"
 }

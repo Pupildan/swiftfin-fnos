@@ -189,9 +189,15 @@ enum FNOSBangumiClient {
 
     // MARK: - v167 短评（网页 HTML 解析——官方 API 无评论端点）
 
-    /// 短评正文列表（/subject/{id}/comments，取前 40 条；纯文本单行，供 Hero 弹幕用）
-    /// 结构实测：<p class="comment">正文</p>（外层 <div class="item clearit" data-item-user=...>）
-    static func comments(id: Int) async -> [String] {
+    /// 短评（/subject/{id}/comments，取前 40 条；作者 + 正文，供 Hero 弹幕与评论区共用）
+    /// 结构实测：<p class="comment">正文</p>，同条目内 <a href="/user/.." class="l">作者</a>
+    struct BangumiComment: Identifiable {
+        let id: String          // 序号（加载内稳定）
+        let author: String
+        let content: String
+    }
+
+    static func comments(id: Int) async -> [BangumiComment] {
         guard let url = URL(string: "https://bangumi.tv/subject/\(id)/comments") else { return [] }
         var req = URLRequest(url: url)
         req.timeoutInterval = 15
@@ -202,22 +208,24 @@ enum FNOSBangumiClient {
               let html = String(data: data, encoding: .utf8) else {
             return []
         }
-        let pattern = #"<p class="comment">([\s\S]*?)</p>"#
+        // 作者锚（class="l"）与其后第一条 <p class="comment"> 配对
+        let pattern = #"<a href="/user/[^"]*" class="l">([^<]*)</a>[\s\S]*?<p class="comment">([\s\S]*?)</p>"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
         let range = NSRange(html.startIndex..., in: html)
-        var out: [String] = []
+        var out: [BangumiComment] = []
         regex.enumerateMatches(in: html, options: [], range: range) { match, _, _ in
-            guard let match, match.numberOfRanges >= 2,
-                  let r = Range(match.range(at: 1), in: html) else { return }
-            var text = String(html[r])
-            // 内联标签 → 空格（防词黏连），再解实体、折叠空白成单行
+            guard let match, match.numberOfRanges >= 3,
+                  let authorR = Range(match.range(at: 1), in: html),
+                  let contentR = Range(match.range(at: 2), in: html) else { return }
+            let author = decodeHTMLEntities(String(html[authorR])).trimmingCharacters(in: .whitespacesAndNewlines)
+            var text = String(html[contentR])
             text = text.replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
             text = decodeHTMLEntities(text)
             text = text.components(separatedBy: .whitespacesAndNewlines)
                 .filter { !$0.isEmpty }
                 .joined(separator: " ")
-            text = String(text.prefix(60))   // 弹幕单行长度上限
-            if !text.isEmpty { out.append(text) }
+            guard !text.isEmpty else { return }
+            out.append(BangumiComment(id: String(out.count), author: author.isEmpty ? "匿名" : author, content: text))
         }
         return Array(out.prefix(40))
     }

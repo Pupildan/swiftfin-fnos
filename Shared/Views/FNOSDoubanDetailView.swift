@@ -144,53 +144,14 @@ struct FNOSDoubanDetailView: View {
                 inLibraryCheck: inLibraryCheck
             )
         }
-        // v170: 评论弹窗（焦点落卡→确认键→屏幕居中弹窗完整显示）
-        // fullScreenCover：tvOS 自动把焦点移入弹窗（overlay 不保证），关闭=关闭键或 Menu
+        // v173: 评论弹窗（焦点落卡→确认键→屏幕居中弹窗完整显示；共享组件，豆瓣/番剧同款）
         .fullScreenCover(item: $popupReview) { review in
-            VStack(alignment: .leading, spacing: 16) {
-                HStack(spacing: 10) {
-                    Text(review.author)
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(.white)
-                    if let rating = review.rating {
-                        HStack(spacing: 3) {
-                            Image(systemName: "star.fill").foregroundColor(.yellow)
-                            Text(String(format: "%.0f", rating))
-                                .foregroundColor(.yellow.opacity(0.9))
-                        }
-                        .font(.system(size: 14))
-                    }
-                    Spacer()
-                    Button {
-                        popupReview = nil
-                    } label: {
-                        Text("关闭")
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundColor(.white)
-                    }
-                    .buttonStyle(.card)
-                }
-
-                ScrollView(.vertical, showsIndicators: false) {
-                    Text(review.content)
-                        .font(.system(size: 18))
-                        .foregroundColor(.white)
-                        .lineSpacing(7)
-                        .multilineTextAlignment(.leading)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .focusable()
-            }
-            .frame(width: 960, height: 620)
-            .padding(36)
-            // iOS 26 液态玻璃（与入库按钮同款 API）
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            // v171: 透明呈现——撤掉黑 scrim，详情页内容透在玻璃后（严格 iOS 26 液态玻璃规范）
-            .background(Color.clear)
-            .presentationBackground(.clear)
-            .onExitCommand { popupReview = nil }
+            FNOSReviewPopupSheet(
+                author: review.author,
+                ratingText: review.rating.map { String(format: "%.0f", $0) },
+                content: review.content,
+                onClose: { popupReview = nil }
+            )
         }
     }
 
@@ -458,13 +419,15 @@ struct FNOSDoubanDetailView: View {
                                 }
                                 Text(review.content)
                                     .font(.system(size: 15))
-                                    .foregroundColor(.white.opacity(0.8))
+                                    .foregroundColor(.white)
                                     .lineSpacing(5)
-                                    .fixedSize(horizontal: false, vertical: true)
+                                    .lineLimit(3)
+                                    .multilineTextAlignment(.leading)
                             }
                             .padding(20)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.white.opacity(0.07)))
+                            // v173: 卡片背景改液态玻璃（与弹窗同款），默认折叠 3 行
+                            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                         }
                         .buttonStyle(.card)
                     }

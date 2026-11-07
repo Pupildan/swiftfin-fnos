@@ -51,6 +51,10 @@ struct FNOSBangumiDetailView: View {
     @State private var themeColor: Color?
     /// v167: 短评列表（bangumi.tv 评论页 HTML 解析，Hero 弹幕用）
     @State private var reviewTexts: [String] = []
+    /// v173: 短评富数据（作者+正文，评论区卡片 + 弹窗用）
+    @State private var bgmComments: [FNOSBangumiClient.BangumiComment] = []
+    /// v173: 当前弹窗展示的短评
+    @State private var popupComment: FNOSBangumiClient.BangumiComment?
 
     /// v121：入库按钮状态机（与 TMDB 详情页同构）
     private enum LibState {
@@ -122,6 +126,15 @@ struct FNOSBangumiDetailView: View {
                                 .padding(.bottom, 40)
                                 .focusable()
                         }
+                        // v173: 短评区（1:1 复刻豆瓣评论，置于相关条目之下）
+                        if !bgmComments.isEmpty {
+                            bgmCommentsSection
+                                .padding(.horizontal, 60)
+                                .padding(.bottom, 40)
+                                #if os(tvOS)
+                                .focusSection()
+                                #endif
+                        }
                         // v123: 放送信息卡
                         if !infoboxRows.isEmpty {
                             infoboxSection
@@ -137,8 +150,12 @@ struct FNOSBangumiDetailView: View {
         .ignoresSafeArea()
         .task { await loadDetail() }
         .task { await refreshLibState() }
-        // v167: 短评独立并行拉取（不阻塞详情主体，到位后 Hero 弹幕自动出现）
-        .task { reviewTexts = await FNOSBangumiClient.comments(id: item.id) }
+        // v173: 短评富数据并行拉取（Hero 弹幕 + 评论区共用同一批）
+        .task {
+            let rich = await FNOSBangumiClient.comments(id: item.id)
+            bgmComments = rich
+            reviewTexts = rich.map { String($0.content.prefix(60)) }
+        }
         // v123: 相关条目进详情
         .fullScreenCover(item: $relatedDetailItem) { relItem in
             FNOSBangumiDetailView(
@@ -147,6 +164,15 @@ struct FNOSBangumiDetailView: View {
                 mpBase: mpBase,
                 mpKey: mpKey,
                 inLibraryCheck: inLibraryCheck
+            )
+        }
+        // v173: 短评弹窗（焦点落卡→确认键→屏幕居中弹窗完整显示，与豆瓣 1:1 同款）
+        .fullScreenCover(item: $popupComment) { comment in
+            FNOSReviewPopupSheet(
+                author: comment.author,
+                ratingText: nil,
+                content: comment.content,
+                onClose: { popupComment = nil }
             )
         }
     }
@@ -575,6 +601,44 @@ struct FNOSBangumiDetailView: View {
                         }
                         .buttonStyle(.card)
                     }
+                }
+            }
+        }
+    }
+
+    /// v173: 短评区（1:1 复刻豆瓣评论：标题+总条数 / 卡片折叠 3 行+液态玻璃 / 确认键弹窗）
+    private var bgmCommentsSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 10) {
+                Text("评论")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.92))
+                Text("\(bgmComments.count) 条")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundColor(.white.opacity(0.55))
+            }
+            VStack(alignment: .leading, spacing: 20) {
+                ForEach(bgmComments) { comment in
+                    Button {
+                        popupComment = comment
+                    } label: {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(comment.author)
+                                .font(.system(size: 15, weight: .semibold))
+                                .foregroundColor(.white.opacity(0.9))
+                            Text(comment.content)
+                                .font(.system(size: 15))
+                                .foregroundColor(.white)
+                                .lineSpacing(5)
+                                .lineLimit(3)
+                                .multilineTextAlignment(.leading)
+                        }
+                        .padding(20)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        // 液态玻璃卡底（与弹窗同款），默认折叠 3 行
+                        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    }
+                    .buttonStyle(.card)
                 }
             }
         }

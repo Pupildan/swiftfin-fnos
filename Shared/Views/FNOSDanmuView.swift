@@ -72,10 +72,13 @@ final class FNOSDanmuEngine: ObservableObject {
     /// 底部/顶部固定弹幕停留时间（秒）
     private let fixedDuration: Double = 5
 
-    struct ActiveComment {
+    struct ActiveComment: Identifiable {
         let comment: FNOSDanmuComment
         /// 滚动弹幕所在轨道（0..4），固定弹幕为 -1
         let lane: Int
+        /// 唯一序号（渲染层 ForEach 稳定身份，纯递增不参与时间逻辑）
+        let seq: Int
+        var id: Int { seq }
     }
 
     enum Status: Equatable {
@@ -88,6 +91,8 @@ final class FNOSDanmuEngine: ObservableObject {
     private var comments: [FNOSDanmuComment] = []
     private var nextIndex = 0
     private var laneLastEntry: [Double]
+    /// 激活弹幕唯一序号（渲染层 ForEach 身份用，纯递增）
+    private var nextSeq = 0
     /// 正在画面上的弹幕（Canvas 每帧读取）
     private(set) var active: [ActiveComment] = []
     /// 上一次同步到的媒体时间
@@ -347,7 +352,8 @@ final class FNOSDanmuEngine: ObservableObject {
                 print("FNOSℹ️弹幕: 丢弃重叠固定弹幕「\(comment.text)」")
                 return
             }
-            active.append(ActiveComment(comment: comment, lane: -1))
+            active.append(ActiveComment(comment: comment, lane: -1, seq: nextSeq))
+            nextSeq += 1
             return
         }
 
@@ -355,7 +361,8 @@ final class FNOSDanmuEngine: ObservableObject {
         for lane in 0..<laneCount {
             if mediaTime - laneLastEntry[lane] >= laneGap {
                 laneLastEntry[lane] = mediaTime
-                active.append(ActiveComment(comment: comment, lane: lane))
+                active.append(ActiveComment(comment: comment, lane: lane, seq: nextSeq))
+                nextSeq += 1
                 return
             }
         }
@@ -400,101 +407,56 @@ struct FNOSDanmuView: View {
     private var laneTopInset: CGFloat { 110 + CGFloat(offsetY) }
 
     var body: some View {
+        // v173: 弃 Canvas 每帧全量重绘（闪烁根因），改原生 Text.position ——
+        // 每条弹幕一个视图，SwiftUI 只做 transform 合成，滚动期间文本零重绘。
+        // 引擎（时间轴/锚点/轨道）零改动，仅渲染层换皮。
         TimelineView(.animation) { timeline in
-            Canvas { context, size in
-                draw(in: &context, size: size, at: timeline.date)
+            GeometryReader { geo in
+                let mediaNow = engine.mediaTime(at: timeline.date)
+                ForEach(engine.active) { entry in
+                    if let center = screenPosition(for: entry, mediaNow: mediaNow, size: geo.size) {
+                        Text(entry.comment.text)
+                            .font(.system(size: CGFloat(fontSize), weight: .medium))
+                            .foregroundColor(entry.comment.color)
+                            .opacity(opacity)
+                            .lineLimit(1)
+                            .fixedSize()
+                            .position(x: center.x, y: center.y)
+                    }
+                }
             }
         }
-        .opacity(opacity)
         .allowsHitTesting(false)
         .accessibilityHidden(true)
     }
 
-    private func draw(in context: inout GraphicsContext, size: CGSize, at date: Date) {
-        let mediaNow = engine.mediaTime(at: date)
+    /// 计算单条弹幕当前屏幕位置（纯几何，与旧 Canvas 版逐行对应）
+    private func screenPosition(for entry: ActiveComment, mediaNow: Double, size: CGSize) -> CGPoint? {
+        let comment = entry.comment
 
-        for entry in engine.active {
-            let comment = entry.comment
-
-            if comment.mode == 4 || comment.mode == 5 {
-                // 底部 / 顶部固定弹幕
-                let elapsed = mediaNow - comment.time
-                guard elapsed >= 0, elapsed <= 5 else { continue }
-                let rawY = comment.mode == 4
-                    ? size.height - 80 + CGFloat(offsetY)
-                    : laneTopInset
-                let y = min(max(rawY, 60), size.height - 60)
-                drawText(
-                    &context,
-                    text: comment.text,
-                    color: comment.color,
-                    center: CGPoint(x: size.width / 2, y: y)
-                )
-                continue
-            }
-
-            // 滚动弹幕：右侧进入、匀速向左（speed 为用户设置倍率）
-            let textWidth = estimatedWidth(of: comment.text)
-            let velocity = (size.width + textWidth) / (12 / max(speed, 0.1))
-            let distance = CGFloat(mediaNow - comment.time) * velocity
-            let trailingX = size.width - distance
-            let centerX = trailingX + textWidth / 2
-
-            guard centerX + textWidth / 2 > 0 else { continue }
-            guard centerX - textWidth / 2 < size.width else { continue }
-
-            let y = laneTopInset + CGFloat(entry.lane) * laneHeight
-            drawText(
-                &context,
-                text: comment.text,
-                color: comment.color,
-                center: CGPoint(x: centerX, y: y)
-            )
-        }
-    }
-
-    /// 纯彩色正文（v59 去掉了黑色描边，按用户要求保持清爽），预渲染成 UIImage 缓存（每帧只贴图，消除卡顿）
-    private func drawText(
-        _ context: inout GraphicsContext,
-        text: String,
-        color: Color,
-        center: CGPoint
-    ) {
-        let image = cachedImage(for: text, color: color)
-        let origin = CGPoint(x: center.x - image.size.width / 2, y: center.y - image.size.height / 2)
-        context.draw(Image(uiImage: image), in: CGRect(origin: origin, size: image.size))
-    }
-
-    private static let textImageCache: NSCache<NSString, UIImage> = {
-        let cache = NSCache<NSString, UIImage>()
-        cache.countLimit = 600
-        return cache
-    }()
-
-    private func cachedImage(for text: String, color: Color) -> UIImage {
-        var r: CGFloat = 1, g: CGFloat = 1, b: CGFloat = 1, a: CGFloat = 1
-        UIColor(color).getRed(&r, green: &g, blue: &b, alpha: &a)
-        let key = ("\(text)#\(Int(fontSize))#\(Int(r * 255)),\(Int(g * 255)),\(Int(b * 255))") as NSString
-        if let cached = Self.textImageCache.object(forKey: key) {
-            return cached
+        if comment.mode == 4 || comment.mode == 5 {
+            // 底部 / 顶部固定弹幕
+            let elapsed = mediaNow - comment.time
+            guard elapsed >= 0, elapsed <= 5 else { return nil }
+            let rawY = comment.mode == 4
+                ? size.height - 80 + CGFloat(offsetY)
+                : laneTopInset
+            let y = min(max(rawY, 60), size.height - 60)
+            return CGPoint(x: size.width / 2, y: y)
         }
 
-        let scale = UIScreen.main.scale
-        let font = UIFont.systemFont(ofSize: CGFloat(fontSize), weight: .medium)
-        let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: UIColor(color)]
-        let textSize = (text as NSString).size(withAttributes: attrs)
-        let pad = ceil(font.lineHeight * 0.2)
-        let size = CGSize(width: ceil(textSize.width) + pad * 2, height: ceil(textSize.height) + pad * 2)
+        // 滚动弹幕：右侧进入、匀速向左（speed 为用户设置倍率）
+        let textWidth = estimatedWidth(of: comment.text)
+        let velocity = (size.width + textWidth) / (12 / max(speed, 0.1))
+        let distance = CGFloat(mediaNow - comment.time) * velocity
+        let trailingX = size.width - distance
+        let centerX = trailingX + textWidth / 2
 
-        let format = UIGraphicsImageRendererFormat()
-        format.scale = scale
-        let renderer = UIGraphicsImageRenderer(size: size, format: format)
-        let image = renderer.image { _ in
-            let origin = CGPoint(x: pad, y: pad)
-            (text as NSString).draw(at: origin, withAttributes: attrs)
-        }
-        Self.textImageCache.setObject(image, forKey: key)
-        return image
+        guard centerX + textWidth / 2 > 0 else { return nil }
+        guard centerX - textWidth / 2 < size.width else { return nil }
+
+        let y = laneTopInset + CGFloat(entry.lane) * laneHeight
+        return CGPoint(x: centerX, y: y)
     }
 
     /// CJK 全角估算：每字符 ≈ 1.0 倍字号

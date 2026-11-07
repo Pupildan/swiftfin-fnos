@@ -1,0 +1,62 @@
+//
+// FNOSReviewPopupSheet.swift
+// v173: 评论弹窗（豆瓣 + 番剧详情页共用，1:1 同款）。
+// 焦点落评论卡 → 确认键 → fullScreenCover 呈现本组件：屏幕居中、iOS 26 液态玻璃、
+// 文字纯白零阴影（用户明令）。内容区 maxHeight + ScrollView：短评面板自适应收缩，
+// 长评滚动看全（修 v172 固定 620 高导致内容显示不全）。
+// 承载方式用 fullScreenCover(item:) 而非 overlay：tvOS 上 overlay 不保证焦点移入。
+//
+
+import SwiftUI
+
+struct FNOSReviewPopupSheet: View {
+    let author: String
+    /// 评分文案（如「8」带星）；nil = 不显示（番剧短评无评分）
+    let ratingText: String?
+    let content: String
+    /// 关闭回调（确认键按「关闭」或 Menu）
+    var onClose: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 10) {
+                Text(author)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundColor(.white)
+                if let ratingText, !ratingText.isEmpty {
+                    HStack(spacing: 3) {
+                        Image(systemName: "star.fill").foregroundColor(.yellow)
+                        Text(ratingText).foregroundColor(.yellow.opacity(0.9))
+                    }
+                    .font(.system(size: 14))
+                }
+                Spacer()
+                Button(action: onClose) {
+                    Text("关闭")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
+                }
+                .buttonStyle(.card)
+            }
+
+            ScrollView(.vertical, showsIndicators: false) {
+                Text(content)
+                    .font(.system(size: 18))
+                    .foregroundColor(.white)
+                    .lineSpacing(7)
+                    .multilineTextAlignment(.leading)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .focusable()
+        }
+        .padding(36)
+        .frame(width: 960)
+        .frame(maxHeight: 760)
+        // iOS 26 液态玻璃（与入库按钮同款 API），严格按玻璃材质实现
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // 透明呈现：不垫黑 scrim，详情页内容透在玻璃后（用户否决"灰色背景"）
+        .presentationBackground(.clear)
+        .onExitCommand(perform: onClose)
+    }
+}

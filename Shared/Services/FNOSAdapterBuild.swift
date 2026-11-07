@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v175"
+    static let version = "v176"
 
     /// 本版主要变更摘要
-    static let changes = "v175:①修评论弹窗内容不能滚动:FNOSReviewPopupSheet内容区定高560+内容.focusable(),焦点进入滚动区up/down即可滚看全文。②弹窗外内容高斯模糊:presentationBackground改.ultraThinMaterial(磨砂模糊背后详情页)。③评论卡底增加透明度:撤glassEffect(深色页上偏深)改轻透填充white0.08(豆瓣+番剧)。④修弹幕marquee循环复位轻微停顿:estWidth改NSString+实际字体精确测宽(原1.05em/0.65em估宽误差→复位跳变),循环无缝。"
+    static let changes = "v176:①修评论弹窗内容不能滚动:ScrollView自身.focusable()(tvOS聚焦ScrollView即整屏滚动,原逐Text.focusable未把滚动视口变焦点目标)。②豆瓣相似推荐行/番剧相关条目行撤外层.focusable(同v172评论根因:整段成一个焦点目标→下键跳过卡片/确认无反应),保留.focusSection,卡片原生可聚焦。③豆瓣影评弹窗全文按影评id缓存,重开即时显示(原首次只出摘要需返回再进)。④弹幕marquee改NSString+实际字体精确测宽,循环复位无缝消停顿。"
 }

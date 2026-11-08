@@ -8,18 +8,24 @@
 
 import SwiftUI
 
-/// 人物信息（三个详情页共用；bio 仅 TMDB 侧拉取填充）
+/// 人物信息（三个详情页共用；bio/infoLines 由各页拉取填充）
 struct FNOSPersonInfo: Identifiable {
     let id: String
     let name: String
     let role: String
     let avatarURL: URL?
+    /// 完整信息行（豆瓣 extra.info 键值对 / TMDB 生日·出生地）
+    var infoLines: [String] = []
+    /// 简介（TMDB biography / 番剧 summary）
     var bio: String? = nil
 }
 
 struct FNOSPersonPopupSheet: View {
     let person: FNOSPersonInfo
     var onClose: () -> Void
+
+    /// 完整信息行 = 人物信息键值对（豆瓣 extra.info / TMDB 生日·出生地）+ 简介切行
+    private var allRows: [String] { person.infoLines + bioRows }
 
     /// 简介按段落+长度切行：每行 .focusable()，焦点逐行下移驱动 ScrollView 滚动
     private var bioRows: [String] {
@@ -46,19 +52,11 @@ struct FNOSPersonPopupSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 10) {
-                Text(person.name)
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundColor(.white)
-                Spacer()
-                Button(action: onClose) {
-                    Text("关闭")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(.white)
-                }
-                .buttonStyle(.card)
-            }
+            Text(person.name)
+                .font(.system(size: 22, weight: .bold))
+                .foregroundColor(.white)
 
+            // v182: 无关闭按钮——Menu 关闭；此块为焦点锚点（无简介时 Menu 路由 + 焦点落点）
             HStack(spacing: 20) {
                 if let url = person.avatarURL {
                     FNOSAsyncImage(url: url, headers: [:])
@@ -75,11 +73,13 @@ struct FNOSPersonPopupSheet: View {
                         .foregroundColor(.white.opacity(0.75))
                 }
             }
+            .focusable()
+            .focusEffectDisabled()
 
-            if !bioRows.isEmpty {
+            if !allRows.isEmpty {
                 ScrollView(.vertical, showsIndicators: true) {
                     LazyVStack(alignment: .leading, spacing: 12) {
-                        ForEach(bioRows, id: \.self) { row in
+                        ForEach(allRows, id: \.self) { row in
                             Text(row)
                                 .font(.system(size: 17))
                                 .foregroundColor(.white)

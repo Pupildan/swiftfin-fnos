@@ -187,6 +187,19 @@ struct FNOSBangumiDetailView: View {
         // v180: 人物弹窗（制作人员/主要角色点击查看）
         .fullScreenCover(item: $popupPerson) { person in
             FNOSPersonPopupSheet(person: person, onClose: { popupPerson = nil })
+                // v182: 拉番剧人物/角色官方简介（v0 API summary）
+                .task {
+                    guard person.bio == nil else { return }
+                    var summary = ""
+                    if person.id.hasPrefix("bgm-person-"), let pid = Int(person.id.replacingOccurrences(of: "bgm-person-", with: "")) {
+                        summary = await FNOSBangumiClient.personSummary(id: pid)
+                    } else if person.id.hasPrefix("bgm-char-"), let cid = Int(person.id.replacingOccurrences(of: "bgm-char-", with: "")) {
+                        summary = await FNOSBangumiClient.characterSummary(id: cid)
+                    }
+                    if !summary.isEmpty, popupPerson?.id == person.id {
+                        popupPerson = FNOSPersonInfo(id: person.id, name: person.name, role: person.role, avatarURL: person.avatarURL, bio: summary)
+                    }
+                }
         }
     }
 
@@ -447,6 +460,7 @@ struct FNOSBangumiDetailView: View {
                                 .animation(.easeOut(duration: 0.15), value: isF)
                             }
                             .buttonStyle(.plain)
+                            .focusEffectDisabled()
                             .focused($focusedItemID, equals: "char-\(char.id)")
                         }
                     }
@@ -605,6 +619,7 @@ struct FNOSBangumiDetailView: View {
                             .animation(.easeOut(duration: 0.15), value: isF)
                         }
                         .buttonStyle(.plain)
+                        .focusEffectDisabled()
                         .focused($focusedItemID, equals: "person-\(person.id)")
                     }
                 }
@@ -652,6 +667,7 @@ struct FNOSBangumiDetailView: View {
                             .animation(.easeOut(duration: 0.15), value: isF)
                         }
                         .buttonStyle(.plain)
+                        .focusEffectDisabled()
                         .focused($focusedItemID, equals: "rel-\(rel.id)")
                     }
                 }

@@ -184,13 +184,16 @@ struct FNOSTMDBDetailView: View {
         .fullScreenCover(item: $popupPerson) { person in
             FNOSPersonPopupSheet(person: person, onClose: { popupPerson = nil })
                 .task {
-                    // TMDB 人物拉官方简介，拉到后原位替换弹窗内容（id 不变不重播动画）
-                    guard person.bio == nil,
+                    // v182: TMDB 人物官方完整信息（简介 + 生日/出生地），拉到后原位替换弹窗内容
+                    guard person.bio == nil, person.infoLines.isEmpty,
                           let pid = Int(person.id.replacingOccurrences(of: "tmdb-cast-", with: "")) else { return }
-                    guard let detail = await FNOSTMDBClient.personDetail(id: pid, apiKey: apiKey),
-                          let bio = detail["biography"] as? String, !bio.isEmpty else { return }
-                    if popupPerson?.id == person.id {
-                        popupPerson = FNOSPersonInfo(id: person.id, name: person.name, role: person.role, avatarURL: person.avatarURL, bio: bio)
+                    guard let detail = await FNOSTMDBClient.personDetail(id: pid, apiKey: apiKey) else { return }
+                    var lines: [String] = []
+                    if let b = detail["birthday"] as? String, !b.isEmpty { lines.append("出生日期：\(b)") }
+                    if let p = detail["place_of_birth"] as? String, !p.isEmpty { lines.append("出生地：\(p)") }
+                    let bio = detail["biography"] as? String
+                    if popupPerson?.id == person.id, !lines.isEmpty || !(bio ?? "").isEmpty {
+                        popupPerson = FNOSPersonInfo(id: person.id, name: person.name, role: person.role, avatarURL: person.avatarURL, infoLines: lines, bio: bio)
                     }
                 }
         }
@@ -450,6 +453,7 @@ struct FNOSTMDBDetailView: View {
                                 .animation(.easeOut(duration: 0.15), value: isF)
                             }
                             .buttonStyle(.plain)
+                            .focusEffectDisabled()
                             .focused($focusedItemID, equals: "cast-\(member.id)")
                         }
                     }
@@ -691,6 +695,7 @@ struct FNOSTMDBDetailView: View {
                             .animation(.easeOut(duration: 0.15), value: isF)
                         }
                         .buttonStyle(.plain)
+                        .focusEffectDisabled()
                         .focused($focusedItemID, equals: "trl-\(video.key)")
                     }
                 }
@@ -738,6 +743,7 @@ struct FNOSTMDBDetailView: View {
                             .animation(.easeOut(duration: 0.15), value: isF)
                         }
                         .buttonStyle(.plain)
+                        .focusEffectDisabled()
                         .focused($focusedItemID, equals: "bon-\(video.key)")
                     }
                 }
@@ -774,6 +780,7 @@ struct FNOSTMDBDetailView: View {
                             .animation(.easeOut(duration: 0.15), value: isF)
                         }
                         .buttonStyle(.plain)
+                        .focusEffectDisabled()
                         .focused($focusedItemID, equals: "sim-\(sim.id)")
                     }
                 }

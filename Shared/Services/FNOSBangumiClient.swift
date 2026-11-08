@@ -230,6 +230,28 @@ enum FNOSBangumiClient {
         return Array(out.prefix(40))
     }
 
+    /// v182: 番剧人物简介（/v0/persons/{id} 的 summary，人物弹窗用）
+    static func personSummary(id: Int) async -> String {
+        guard let url = URL(string: "\(baseURL)/v0/persons/\(id)") else { return "" }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 15
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        guard let (data, _) = try? await URLSession.shared.data(for: req),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return "" }
+        return (json["summary"] as? String) ?? ""
+    }
+
+    /// v182: 番剧角色简介（/v0/characters/{id} 的 summary，人物弹窗用）
+    static func characterSummary(id: Int) async -> String {
+        guard let url = URL(string: "\(baseURL)/v0/characters/\(id)") else { return "" }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 15
+        req.setValue("application/json", forHTTPHeaderField: "Accept")
+        guard let (data, _) = try? await URLSession.shared.data(for: req),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return "" }
+        return (json["summary"] as? String) ?? ""
+    }
+
     /// infobox 键值对提取（放送日/原名/集数/时长/制作/官网等）
     static func infobox(from json: [String: Any]) -> [(key: String, value: String)] {
         guard let info = json["infobox"] as? [[String: Any]] else { return [] }

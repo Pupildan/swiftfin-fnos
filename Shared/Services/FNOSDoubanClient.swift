@@ -398,6 +398,22 @@ enum FNOSDoubanClient {
         return text.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
+    /// v182: 人物完整信息（frodo /celebrity/{id} 的 extra.info 键值对 → 「label：value」行）
+    /// 实测字段：性别/出生日期/出生地/中英文名/家人/IMDb 编号（本端点无简介正文）
+    static func frodoCelebrityDetail(id: String) async -> [String] {
+        guard let json = await frodoGet(path: "/celebrity/\(id)") else { return [] }
+        guard let extra = json["extra"] as? [String: Any],
+              let infoArr = extra["info"] as? [Any] else { return [] }
+        var lines: [String] = []
+        for pairAny in infoArr {
+            guard let pair = pairAny as? [Any], pair.count >= 2,
+                  let k = pair[0] as? String,
+                  let v = pair[1] as? String else { continue }
+            lines.append("\(k)：\(v)")
+        }
+        return lines
+    }
+
     /// 解常见 HTML 实体 + 数字实体（frodo 正文里偶发 &amp;/&#xxxx; 等）
     private static func decodeHTMLEntities(_ s: String) -> String {
         var out = s

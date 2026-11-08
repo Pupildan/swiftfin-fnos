@@ -174,6 +174,15 @@ struct FNOSDoubanDetailView: View {
         // v180: 人物弹窗（演员头像点击查看）
         .fullScreenCover(item: $popupPerson) { person in
             FNOSPersonPopupSheet(person: person, onClose: { popupPerson = nil })
+                // v182: 拉豆瓣人物完整信息（frodo extra.info 键值对：性别/生日/出生地/英文名等）
+                .task {
+                    guard person.infoLines.isEmpty else { return }
+                    let cid = person.id.replacingOccurrences(of: "douban-cel-", with: "")
+                    let lines = await FNOSDoubanClient.frodoCelebrityDetail(id: cid)
+                    if !lines.isEmpty, popupPerson?.id == person.id {
+                        popupPerson = FNOSPersonInfo(id: person.id, name: person.name, role: person.role, avatarURL: person.avatarURL, infoLines: lines)
+                    }
+                }
         }
     }
 
@@ -403,6 +412,7 @@ struct FNOSDoubanDetailView: View {
                                 .animation(.easeOut(duration: 0.15), value: isF)
                             }
                             .buttonStyle(.plain)
+                            .focusEffectDisabled()
                             .focused($focusedItemID, equals: "cel-\(person.id)")
                         }
                     }
@@ -515,8 +525,9 @@ struct FNOSDoubanDetailView: View {
                             .scaleEffect(isF ? 1.05 : 1.0)
                             .animation(.easeOut(duration: 0.15), value: isF)
                         }
-                        .buttonStyle(.plain)
-                        .focused($focusedItemID, equals: "rec-\(rec.id)")
+                            .buttonStyle(.plain)
+                            .focusEffectDisabled()
+                            .focused($focusedItemID, equals: "rec-\(rec.id)")
                     }
                 }
             }

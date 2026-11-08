@@ -52,13 +52,7 @@ struct FNOSReviewPopupSheet: View {
                     }
                     .font(.system(size: 14))
                 }
-                Spacer()
-                Button(action: onClose) {
-                    Text("关闭")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(.white)
-                }
-                .buttonStyle(.card)
+                // v182: 关闭按钮已删——Menu 关闭（内容行可聚焦，Menu 正确路由到本弹窗）
             }
 
             ScrollView(.vertical, showsIndicators: true) {

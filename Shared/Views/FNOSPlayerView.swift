@@ -1641,6 +1641,8 @@ struct FNOSDanmuSettingsSheet: View {
     @AppStorage("fnos.danmu.fontSize") private var fontSize: Double = 26
     @AppStorage("fnos.danmu.opacity") private var opacity: Double = 1
     @AppStorage("fnos.danmu.speed") private var speed: Double = 1
+    /// v190: 弹幕显示区域（屏高比例；引擎泳道数与渲染层共用此值）
+    @AppStorage("fnos.danmu.area") private var area: Double = 0.3
 
     /// v189: overlay 承载无 dismiss 环境，关闭由宿主回调
     let onClose: () -> Void
@@ -1649,25 +1651,22 @@ struct FNOSDanmuSettingsSheet: View {
     @FocusState private var focusedControl: String?
 
     var body: some View {
-        VStack(spacing: 30) {
+        VStack(spacing: 24) {
             Text("弹幕设置")
                 .font(.system(size: 26, weight: .bold))
                 .foregroundColor(.white)
 
-            stepRow(id: "size", title: "字号", text: "\(Int(fontSize)) px") {
-                fontSize = max(16, min(44, fontSize - 2))
-            } up: {
-                fontSize = min(44, fontSize + 2)
+            sliderRow(id: "size", title: "字号", value: $fontSize, range: 16...44, step: 1) {
+                "\(Int($0)) px"
             }
-            stepRow(id: "opacity", title: "不透明度", text: "\(Int(opacity * 100)) %") {
-                opacity = max(0.2, opacity - 0.05)
-            } up: {
-                opacity = min(1, opacity + 0.05)
+            sliderRow(id: "opacity", title: "不透明度", value: $opacity, range: 0.2...1.0, step: 0.01) {
+                "\(Int(($0 * 100).rounded())) %"
             }
-            stepRow(id: "speed", title: "速度", text: String(format: "%.1fx", speed)) {
-                speed = max(0.5, speed - 0.1)
-            } up: {
-                speed = min(2.5, speed + 0.1)
+            sliderRow(id: "speed", title: "速度", value: $speed, range: 0.5...2.5, step: 0.05) {
+                String(format: "%.2fx", $0)
+            }
+            sliderRow(id: "area", title: "显示区域", value: $area, range: 0.25...1.0, step: 0.05) {
+                "\(Int(($0 * 100).rounded())) % 屏"
             }
 
             Button {
@@ -1682,7 +1681,7 @@ struct FNOSDanmuSettingsSheet: View {
             .focused($focusedControl, equals: "done")
         }
         .padding(36)
-        .frame(width: 860)
+        .frame(width: 900)
         // v189: iOS 26 官方液态玻璃面板——overlay 层级下直接对播放画面折射
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1690,43 +1689,64 @@ struct FNOSDanmuSettingsSheet: View {
         .onExitCommand(perform: onClose)
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                if focusedControl == nil { focusedControl = "size-down" }
+                if focusedControl == nil { focusedControl = "size" }
             }
         }
     }
 
-    /// tvOS 稳妥步进行：[-] 值 [+]（SwiftUI Slider 在 tvOS 焦点行为不可靠）
-    private func stepRow(
+    /// v190: 无极滑块行（液态玻璃风格）。tvOS 系统 Slider 焦点行为不可靠（历史老坑），
+    /// 复用播放器进度条同款自绘模式：focusable + onMoveCommand 左右步进，长按连发即无极调节。
+    private func sliderRow(
         id: String,
         title: String,
-        text: String,
-        down: @escaping () -> Void,
-        up: @escaping () -> Void
+        value: Binding<Double>,
+        range: ClosedRange<Double>,
+        step: Double,
+        display: @escaping (Double) -> String
     ) -> some View {
-        HStack(spacing: 28) {
+        let isFocused = focusedControl == id
+        let span = range.upperBound - range.lowerBound
+        let fraction = min(max((value.wrappedValue - range.lowerBound) / span, 0), 1)
+        let knob: CGFloat = isFocused ? 28 : 22
+        return HStack(spacing: 24) {
             Text(title)
                 .font(.system(size: 19, weight: .semibold))
                 .foregroundColor(.white)
                 .frame(width: 150, alignment: .leading)
-            Button(action: down) {
-                Image(systemName: "minus")
-                    .font(.system(size: 20, weight: .semibold))
-                    .frame(width: 72, height: 48)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(.white.opacity(0.16))
+                        .frame(height: 10)
+                    Capsule()
+                        .fill(.white.opacity(isFocused ? 1.0 : 0.7))
+                        .frame(width: max(10, geo.size.width * fraction), height: 10)
+                    Circle()
+                        .fill(.white)
+                        .frame(width: knob, height: knob)
+                        .offset(x: max(0, min(geo.size.width - knob, geo.size.width * fraction - knob / 2)))
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            // v189: 官方液态玻璃按钮
-            .buttonStyle(.glass)
-            .focused($focusedControl, equals: "\(id)-down")
-            Text(text)
-                .font(.system(size: 22, weight: .semibold).monospacedDigit())
+            .frame(height: 44)
+            .contentShape(Rectangle())
+            .focusable(true)
+            .focused($focusedControl, equals: id)
+            .focusEffectDisabled()
+            .onMoveCommand { direction in
+                switch direction {
+                case .left:
+                    value.wrappedValue = max(range.lowerBound, value.wrappedValue - step)
+                case .right:
+                    value.wrappedValue = min(range.upperBound, value.wrappedValue + step)
+                default:
+                    break   // 上下交给焦点引擎在行间移动
+                }
+            }
+            Text(display(value.wrappedValue))
+                .font(.system(size: 18, weight: .semibold).monospacedDigit())
                 .foregroundColor(.white)
-                .frame(width: 140)
-            Button(action: up) {
-                Image(systemName: "plus")
-                    .font(.system(size: 20, weight: .semibold))
-                    .frame(width: 72, height: 48)
-            }
-            .buttonStyle(.glass)
-            .focused($focusedControl, equals: "\(id)-up")
+                .frame(width: 130, alignment: .trailing)
         }
     }
 }

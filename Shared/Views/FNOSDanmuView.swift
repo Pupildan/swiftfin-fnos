@@ -64,7 +64,18 @@ final class FNOSDanmuEngine: ObservableObject {
     /// 用户自建弹幕服务（含 Key）
     static let defaultBaseURL = "http://192.168.10.120:9321/199780jjj"
 
-    private let laneCount = 5
+    /// v190: 泳道池上限（laneLastEntry 定长，显示区域变化无需重排）
+    private let maxLanePool = 20
+    /// v190: 滚动泳道数由「显示区域」设置动态决定（安卓 TV 弹幕客户端同款语义：
+    /// 区域 = 弹幕可占屏高比例，默认 30% ≈ 旧版 5 泳道密度）。泳道高 = 字号*1.4、
+    /// 顶部基准 110 与渲染层（FNOSDanmuView）完全一致；屏高按 tvOS 固定 1080 坐标系取值。
+    private var laneCount: Int {
+        let stored = UserDefaults.standard.double(forKey: "fnos.danmu.area")
+        let area = stored > 0.05 ? min(max(stored, 0.2), 1.0) : 0.3
+        let storedFS = UserDefaults.standard.double(forKey: "fnos.danmu.fontSize")
+        let laneH = (storedFS > 8 ? storedFS : 26) * 1.4
+        return max(1, min(maxLanePool, Int((1080.0 * area - 110.0) / laneH)))
+    }
     /// 滚动弹幕全程耗时上限（秒）——按最慢速度 0.5x 估算，快速时绘制端会跳过出屏弹幕
     private let travelDuration: Double = 30
     /// 同轨道两次弹幕的最小间隔（秒）——防重叠核心
@@ -74,7 +85,7 @@ final class FNOSDanmuEngine: ObservableObject {
 
     struct ActiveComment: Identifiable {
         let comment: FNOSDanmuComment
-        /// 滚动弹幕所在轨道（0..4），固定弹幕为 -1
+        /// 滚动弹幕所在轨道（0..<泳道数，由显示区域决定），固定弹幕为 -1
         let lane: Int
         /// 唯一序号（渲染层 ForEach 稳定身份，纯递增不参与时间逻辑）
         let seq: Int
@@ -90,7 +101,7 @@ final class FNOSDanmuEngine: ObservableObject {
 
     private var comments: [FNOSDanmuComment] = []
     private var nextIndex = 0
-    private var laneLastEntry: [Double]
+    private var laneLastEntry: [Double] = []
     /// 激活弹幕唯一序号（渲染层 ForEach 身份用，纯递增）
     private var nextSeq = 0
     /// 正在画面上的弹幕（Canvas 每帧读取）
@@ -107,7 +118,7 @@ final class FNOSDanmuEngine: ObservableObject {
     @Published var commentCount = 0
 
     init() {
-        laneLastEntry = Array(repeating: -999, count: laneCount)
+        laneLastEntry = Array(repeating: -999, count: maxLanePool)
     }
 
     // MARK: 服务端加载
@@ -135,7 +146,7 @@ final class FNOSDanmuEngine: ObservableObject {
             commentCount = comments.count
             nextIndex = 0
             active.removeAll()
-            laneLastEntry = Array(repeating: -999, count: laneCount)
+            laneLastEntry = Array(repeating: -999, count: maxLanePool)
             anchorMediaTime = 0
             anchorWallTime = Date().timeIntervalSinceReferenceDate
             status = .ready
@@ -337,7 +348,7 @@ final class FNOSDanmuEngine: ObservableObject {
     private func reset() {
         active.removeAll()
         nextIndex = 0
-        laneLastEntry = Array(repeating: -999, count: laneCount)
+        laneLastEntry = Array(repeating: -999, count: maxLanePool)
     }
 
     // MARK: 5 轨道防重叠分配
@@ -402,7 +413,11 @@ struct FNOSDanmuView: View {
     @AppStorage("fnos.danmu.opacity") private var opacity: Double = 1
     @AppStorage("fnos.danmu.speed") private var speed: Double = 1
     @AppStorage("fnos.danmu.offsetY") private var offsetY: Double = 0
+    /// v190: 弹幕显示区域（屏高比例，与引擎泳道数共用同一设置）
+    @AppStorage("fnos.danmu.area") private var area: Double = 0.3
     private var laneHeight: CGFloat { CGFloat(fontSize) * 1.4 }
+    /// v190: 有效显示区域（0.2-1.0 兜底，默认 30% ≈ 旧版 5 泳道密度）
+    private var displayArea: Double { area > 0.05 ? min(max(area, 0.2), 1.0) : 0.3 }
     /// 顶部基准线（垂直位置偏移会叠加在这里）
     private var laneTopInset: CGFloat { 110 + CGFloat(offsetY) }
 
@@ -452,6 +467,10 @@ struct FNOSDanmuView: View {
         let velocity = (size.width + textWidth) / (12 / max(speed, 0.1))
         let distance = CGFloat(mediaNow - comment.time) * velocity
         let leadingX = size.width - distance
+
+        // v190: 显示区域保护——引擎泳道数按 1080 基准算，容器实际更矮时裁掉区域外弹幕
+        let visibleLanes = max(1, Int((size.height * CGFloat(displayArea) - laneTopInset) / laneHeight))
+        if entry.lane >= visibleLanes { return nil }
 
         let y = laneTopInset + CGFloat(entry.lane) * laneHeight
         return CGPoint(x: leadingX, y: y - CGFloat(fontSize) * 0.6)

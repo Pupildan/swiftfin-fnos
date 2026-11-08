@@ -95,6 +95,8 @@ struct FNOSHeroBanner: View {
     @State private var previewKSURL: URL?
     @State private var previewKSOptions: KSOptions?
     @State private var previewKSSeeked = false
+    /// v190: 本次预告是否为剧集（KS onReady 的随机起点分支用）
+    @State private var previewIsSeries = false
 
     // Hero 按钮焦点（原生 defaultFocus：启动即锁定「播放」按钮）
     enum HeroButton { case play, plus, detail }
@@ -173,10 +175,10 @@ struct FNOSHeroBanner: View {
                                 previewKSSeeked = true
                                 coord.isMuted = true
                                 coord.isScaleAspectFill = true
-                                // 总时长从 KSPlayer 拿（AVAsset 读不了 MKV）
+                                // 总时长从 KSPlayer 拿（AVAsset 读不了 MKV）；v190: 剧集随机起点
                                 let total = Double(coord.timemodel.totalTime)
                                 if total > 60 {
-                                    coord.seek(time: total / 2)
+                                    coord.seek(time: previewIsSeries ? total * Double.random(in: 0.15...0.75) : total / 2)
                                 }
                                 coord.playerLayer?.play()
                             }
@@ -475,15 +477,24 @@ struct FNOSHeroBanner: View {
 
     @MainActor
     private func startPreview(item: FNOSItem) async {
-        // 仅电影/单集可预告；Series 无单一媒体流
-        guard item.type == "Movie" || item.type == "Episode" else { return }
+        // v190: 取消剧集限制（用户令）——Series 解析第一集后预告（预告默认播第一集随机 30s，
+        // 起点 15%~75% 随机）；电影/单集照旧（电影从正片中间开始）
+        let isSeriesPreview = item.type == "Series"
+        var targetID = item.Id
+        if isSeriesPreview {
+            guard let episode = await firstEpisode(of: item), !Task.isCancelled else { return }
+            targetID = episode.Id
+        } else {
+            guard item.type == "Movie" || item.type == "Episode" else { return }
+        }
+        previewIsSeries = isSeriesPreview
 
         do {
-            let source = try await client.playbackSource(itemID: item.Id, userID: userID)
+            let source = try await client.playbackSource(itemID: targetID, userID: userID)
             // 网络等待期间焦点可能已离开 Hero / 已翻页：任务取消则绝不再起播放
             guard !Task.isCancelled else { return }
             let container = (source.container ?? "").lowercased()
-            guard let url = client.streamURL(itemID: item.Id, mediaSourceID: source.mediaSourceID) else { return }
+            guard let url = client.streamURL(itemID: targetID, mediaSourceID: source.mediaSourceID) else { return }
 
             // MKV/Matroska 等非 AVPlayer 容器 → 第二个独立 KSPlayer 实例（静音预告）
             let avPlayable = ["mp4", "mov", "m4v", "m3u8"].contains { container.contains($0) }
@@ -521,7 +532,7 @@ struct FNOSHeroBanner: View {
             }
 
             let asset = AVURLAsset(url: url, options: [fnosHeroAVHTTPKey: client.mediaHeaders])
-            // 取总时长，定位正片中间
+            // 取总时长；v190: 电影=正片中间，剧集=第一集随机 30s 起点（15%~75% 区间）
             let total = try await asset.load(.duration).seconds
             guard !Task.isCancelled else { return }
             guard total.isFinite, total > 60 else {
@@ -541,11 +552,30 @@ struct FNOSHeroBanner: View {
             withAnimation(.easeIn(duration: 0.6)) {
                 previewVisible = true
             }
-            await player.seek(to: CMTime(seconds: total / 2, preferredTimescale: 600))
+            let startSeconds = isSeriesPreview ? total * Double.random(in: 0.15...0.75) : total / 2
+            await player.seek(to: CMTime(seconds: startSeconds, preferredTimescale: 600))
             player.play()
-            print("FNOSℹ️Hero 预告开始: \(item.Name ?? "?") @\(Int(total / 2))s / 总长 \(Int(total))s")
+            print("FNOSℹ️Hero 预告开始: \(item.Name ?? "?") @\(Int(startSeconds))s / 总长 \(Int(total))s")
         } catch {
             print("FNOS❗️Hero 预告失败: \(error.localizedDescription)")
+        }
+    }
+
+    /// v190: 剧集取第一集（兼容层 Shows/{id}/Episodes，季号+集号升序取首；失败返回 nil 则本页不预告）
+    @MainActor
+    private func firstEpisode(of series: FNOSItem) async -> FNOSItem? {
+        do {
+            let data = try await client.get(
+                path: "Shows/\(series.Id)/Episodes",
+                query: ["UserId": userID, "Fields": "ParentIndexNumber,IndexNumber"]
+            )
+            let items = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items
+            return items.sorted {
+                ($0.ParentIndexNumber ?? 0, $0.IndexNumber ?? 0) < ($1.ParentIndexNumber ?? 0, $1.IndexNumber ?? 0)
+            }.first
+        } catch {
+            print("FNOS❗️Hero 剧集取第一集失败: \(error.localizedDescription)")
+            return nil
         }
     }
 
@@ -557,6 +587,7 @@ struct FNOSHeroBanner: View {
         previewKSCoordinator?.playerLayer?.pause()
         previewKSCoordinator = nil
         previewUsesKS = false
+        previewIsSeries = false
         previewKSURL = nil
         previewKSOptions = nil
         previewItemID = nil

@@ -541,15 +541,16 @@ struct FNOSMainView: View {
         return sections.flatMap(\.items).filter { seen.insert($0.Id).inserted }
     }
 
-    // MARK: - Hero Banner 数据：只抓电影（排除剧集），快照只在加载/刷新时生成一次
+    // MARK: - Hero Banner 数据：v190 起电影+剧集都可上 Hero（取消纯电影限制），快照只在加载/刷新时生成一次
 
     /// 按当日抽选的 id 生成 Hero 快照；取不满时兜底随机（只在此函数内洗牌，body 渲染绝不重抽）
     @MainActor
     private func refreshHeroSnapshot() {
+        // v190: 取消纯电影限制（用户令）——剧集也能进 Hero；仍要求带图片标签
         let movies = sections
             .flatMap(\.items)
             .filter { item in
-                guard item.type == "Movie", let tags = item.ImageTags else { return false }
+                guard item.type == "Movie" || item.type == "Series", let tags = item.ImageTags else { return false }
                 return !tags.isEmpty
             }
         // 关键去重：同一部电影可能出现在多个库视图里，重复 Id 会破坏 ForEach 恒等 → 图文错位
@@ -582,7 +583,7 @@ struct FNOSMainView: View {
         print("FNOSℹ️Hero 快照(\(heroSnapshot.count)): \(summary.joined(separator: " | "))")
     }
 
-    /// 每天首次进入时重新随机抽 6 部电影
+    /// 每天首次进入时重新随机抽 6 部影片（v190: 电影+剧集）
     @MainActor
     private func rollHeroIfNeeded() {
         let formatter = DateFormatter()
@@ -591,10 +592,11 @@ struct FNOSMainView: View {
         guard heroDate != today else { return }
         heroDate = today
 
+        // v190: 抽选池同款解禁——电影+剧集
         let movies = sections
             .flatMap(\.items)
             .filter { item in
-                guard item.type == "Movie", let tags = item.ImageTags else { return false }
+                guard item.type == "Movie" || item.type == "Series", let tags = item.ImageTags else { return false }
                 return !tags.isEmpty
             }
         // 同样去重：抽选池不能有重复 Id

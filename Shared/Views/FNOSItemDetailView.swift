@@ -191,8 +191,6 @@ struct FNOSItemDetailView: View {
                                 .padding(.top, item.type == "Series" ? 24 : 10)
                                 .padding(.bottom, 40)
                                 .id("detail-info")
-
-                            debugSection
                         }
                     }
                     .ignoresSafeArea()
@@ -701,25 +699,8 @@ struct FNOSItemDetailView: View {
         .animation(.easeOut(duration: 0.18), value: isFocused)
     }
 
-    // MARK: - 临时诊断（确认服务端字段与分集端点真实返回后删除）
-
-    @ViewBuilder
-    private var debugSection: some View {
-        if !debugLines.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(debugLines, id: \.self) { line in
-                    Text(line)
-                        .font(.system(size: 13, design: .monospaced))
-                        .foregroundColor(.yellow.opacity(0.7))
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                }
-            }
-            .padding(.horizontal, 60)
-            .padding(.bottom, 40)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
+    // v184: 页面底部调试信息（临时诊断 debugSection）已按需求移除；
+    // debugLines 管道保留为不可见诊断缓冲，不再有任何 UI 呈现。
 
     // MARK: - 下方信息区块
 

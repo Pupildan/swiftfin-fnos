@@ -18,25 +18,14 @@ struct FNOSReviewPopupSheet: View {
     /// 关闭回调（确认键按「关闭」或 Menu）
     var onClose: () -> Void
 
-    /// 把全文按长度切成多行：每行 .focusable()，焦点逐行下移驱动 ScrollView 滚动看全文
-    /// （单个大 Text 非焦点目标，tvOS 焦点引擎在 ScrollView 内无落点→滚不动）
+    /// 按自然段落分行（每段一个 .focusable() 行，段内自然换行——不再 110 字硬切句中）：
+    /// 单个大 Text 非焦点目标，tvOS 焦点引擎在 ScrollView 内无落点→滚不动，故仍需逐段 focusable
     private var contentRows: [String] {
-        let flat = content
-            .replacingOccurrences(of: "\n", with: " ")
-            .components(separatedBy: .whitespacesAndNewlines)
+        content
+            .replacingOccurrences(of: "\r", with: "")
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
-            .joined(separator: " ")
-        guard flat.count > 110 else { return flat.isEmpty ? [] : [flat] }
-        var rows: [String] = []
-        var start = flat.startIndex
-        while start < flat.endIndex {
-            let end = flat.index(start, offsetBy: 110, limitedBy: flat.endIndex) ?? flat.endIndex
-            let chunk = String(flat[start..<end]).trimmingCharacters(in: .whitespaces)
-            if !chunk.isEmpty { rows.append(chunk) }
-            if end >= flat.endIndex { break }
-            start = end
-        }
-        return rows
     }
 
     var body: some View {

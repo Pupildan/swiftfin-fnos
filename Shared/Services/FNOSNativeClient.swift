@@ -536,6 +536,9 @@ extension FNOSNativeClient {
         let episodeNumber: Int?
         /// 同季全部分集（电影为空）
         let episodes: [EpisodeRef]
+        /// v184: 服务器跳过配置（秒）——片头结束点 / 片尾开始点，null = 不跳过
+        var skipOpening: Double? = nil
+        var skipEnding: Double? = nil
     }
 
     /// 解析播放直链。
@@ -574,7 +577,9 @@ extension FNOSNativeClient {
             itemGUID: itemGUID,
             mediaGUID: info.mediaGUID,
             episodeNumber: episodeNumber,
-            episodes: episodes
+            episodes: episodes,
+            skipOpening: info.skipOpening,
+            skipEnding: info.skipEnding
         )
     }
 
@@ -587,7 +592,9 @@ extension FNOSNativeClient {
             itemGUID: itemGUID,
             mediaGUID: info.mediaGUID,
             episodeNumber: nil,
-            episodes: []
+            episodes: [],
+            skipOpening: info.skipOpening,
+            skipEnding: info.skipEnding
         )
     }
 
@@ -598,8 +605,8 @@ extension FNOSNativeClient {
         return URL(string: "\(base)/v/api/v1/media/range/\(mediaGUID)")!
     }
 
-    /// `POST /v/api/v1/play/info` → media_guid + 条目字典（评分等元数据）
-    private func playInfo(itemGUID: String, log: DebugLog) async -> (mediaGUID: String, duration: Int?, itemDict: [String: Any]?)? {
+    /// `POST /v/api/v1/play/info` → media_guid + 条目字典（评分等元数据）+ 跳过配置（v184）
+    private func playInfo(itemGUID: String, log: DebugLog) async -> (mediaGUID: String, duration: Int?, itemDict: [String: Any]?, skipOpening: Double?, skipEnding: Double?)? {
         let body = "{\"item_guid\":\"\(Self.escape(itemGUID))\"}"
         guard let json = try? await post(path: "api/v1/play/info", body: body),
               let data = json["data"] as? [String: Any],
@@ -611,7 +618,14 @@ extension FNOSNativeClient {
         }
         let itemDict = data["item"] as? [String: Any]
         let duration = (itemDict?["duration"] as? NSNumber)?.intValue
-        return (mediaGUID, duration, itemDict)
+        // v184: 服务器跳过配置（秒；null/0 = 不跳过）——片头结束点 / 片尾开始点
+        var skipOpening: Double? = nil
+        var skipEnding: Double? = nil
+        if let pc = data["play_config"] as? [String: Any] {
+            if let n = pc["skip_opening"] as? NSNumber, n.doubleValue > 0 { skipOpening = n.doubleValue }
+            if let n = pc["skip_ending"] as? NSNumber, n.doubleValue > 0 { skipEnding = n.doubleValue }
+        }
+        return (mediaGUID, duration, itemDict, skipOpening, skipEnding)
     }
 
     /// 防御性评分解析：飞牛 play/info 的 item 字典按常见键名找评分。

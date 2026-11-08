@@ -33,6 +33,9 @@ struct FNOSMPVPlayerView: View {
     let range: FNOSNativeClient.MediaRange
     /// 引擎切换时带过来的播放进度（无感续播）
     var initialSeek: Double? = nil
+    /// v184: 服务器跳过配置（秒）——来自 play/info play_config，null = 不跳过
+    var skipOpening: Double? = nil
+    var skipEnding: Double? = nil
     /// 由自动分流选中（而不是用户手动开 mpv）→ 顶部提示一次
     var autoSelected: Bool = false
     /// v86：播放进度回调（ticker 每 ~4s 触发一次；容器做 10s 节流后上报服务端）。
@@ -71,6 +74,9 @@ struct FNOSMPVPlayerView: View {
     @State private var lastPersist: Double = 0
     @State private var lastSeekAt = Date.distantPast
     @State private var seekBurst = 0
+    /// v184: 自动跳过片头/片尾（各单次触发）
+    @State private var introSkipped = false
+    @State private var endingSkipped = false
     /// v119：播放结束只回调一次
     @State private var didFinish = false
 
@@ -100,6 +106,8 @@ struct FNOSMPVPlayerView: View {
         native: FNOSNativeClient,
         range: FNOSNativeClient.MediaRange,
         initialSeek: Double? = nil,
+        skipOpening: Double? = nil,
+        skipEnding: Double? = nil,
         autoSelected: Bool = false,
         onProgress: ((Double, Double) -> Void)? = nil,
         onFinished: (() -> Void)? = nil,
@@ -111,6 +119,8 @@ struct FNOSMPVPlayerView: View {
         self.native = native
         self.range = range
         self.initialSeek = initialSeek
+        self.skipOpening = skipOpening
+        self.skipEnding = skipEnding
         self.autoSelected = autoSelected
         self.onProgress = onProgress
         self.onFinished = onFinished
@@ -760,6 +770,19 @@ struct FNOSMPVPlayerView: View {
                 let position = seconds(player.position)
                 danmu.sync(mediaTime: position)
                 danmu.setRate(player.isPaused ? 0.0 : 1.0)
+
+                // v184: 自动跳过片头/片尾（服务器 play_config 数据，各单次触发）
+                if let so = skipOpening, !introSkipped, position > 0.5, position < so - 0.5 {
+                    introSkipped = true
+                    player.seek(by: .seconds(so - position))
+                }
+                if let se = skipEnding, !endingSkipped, se > 1, position >= se {
+                    let dur = seconds(player.duration)
+                    if dur > 2, position < dur - 2 {
+                        endingSkipped = true
+                        player.seek(by: .seconds((dur - 1.5) - position))
+                    }
+                }
 
                 if abs(position - lastPersist) > 4 {
                     lastPersist = position

@@ -351,6 +351,9 @@ struct FNOSPlayerContainerView: View {
         reporterNative = native
         reporterMediaGUID = range.mediaGUID
         reporterItemGUID = range.itemGUID
+        // v184: 带回服务器跳过配置（片头结束点/片尾开始点）
+        skipOpening = range.skipOpening
+        skipEnding = range.skipEnding
         let startTS = resumeStartSeconds ?? 0
         _ = await native.playRecord(mediaGUID: range.mediaGUID, itemGUID: range.itemGUID, ts: startTS)
         FNOSDiag.shared.add("上报: 起播 ts=\(Int(startTS))（原生协议）")
@@ -362,6 +365,11 @@ struct FNOSPlayerContainerView: View {
     @State private var mpvRange: FNOSNativeClient.MediaRange?
     @State private var mpvClient: FNOSNativeClient?
     @State private var mpvToken: String?
+    /// v184: 自动跳过片头/片尾（服务器 play_config 数据，各单次触发）
+    @State private var skipOpening: Double?
+    @State private var skipEnding: Double?
+    @State private var introSkipped = false
+    @State private var endingSkipped = false
     /// 解析失败 → 自动退回 KSPlayer，避免停在黑屏
     @State private var mpvFailed = false
     @State private var mpvNotice = "准备 mpv…"
@@ -484,6 +492,8 @@ struct FNOSPlayerContainerView: View {
                 native: mpvClient,
                 range: mpvRange,
                 initialSeek: handoffPosition > 1 ? handoffPosition : resumeStartSeconds,
+                skipOpening: mpvRange.skipOpening,
+                skipEnding: mpvRange.skipEnding,
                 autoSelected: !useMPVEngine,
                 onProgress: { position, duration in
                     lastMPVPosition = position
@@ -706,6 +716,20 @@ struct FNOSPlayerContainerView: View {
                             episodeNumber: item.IndexNumber ?? 0,
                             seconds: currentTime
                         )
+                    }
+                }
+                // v184: 自动跳过片头/片尾（服务器 play_config 数据，各单次触发）
+                if let so = skipOpening, !introSkipped, currentTime > 0.5, currentTime < so - 0.5 {
+                    introSkipped = true
+                    coordinator.seek(time: so)
+                    FNOSDiag.shared.add("自动跳过片头 → \(Int(so))s")
+                }
+                if let se = skipEnding, !endingSkipped, se > 1, currentTime >= se {
+                    let total = Double(coordinator.timemodel.totalTime)
+                    if total > 2, currentTime < total - 2 {
+                        endingSkipped = true
+                        coordinator.seek(time: total - 1.5)
+                        FNOSDiag.shared.add("自动跳过片尾 → \(Int(total - 1.5))s")
                     }
                 }
                 throttledProgressReport(currentTime)

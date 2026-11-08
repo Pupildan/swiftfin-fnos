@@ -782,23 +782,30 @@ struct FNOSPlayerContainerView: View {
                 Group {
                     if subtitleSheetPresented {
                         // v185: 内嵌字幕轨选择（与音轨同款交互）；v186 标题区分
+                        // v191: 映射到中性 FNOSTrackOption（KS/MPV 共用同一款玻璃弹窗）
                         FNOSAudioTracksSheet(
                             title: "字幕切换",
-                            tracks: subtitleTracks,
-                            currentID: subtitleTracks.first { $0.isEnabled }?.trackID,
+                            tracks: subtitleTracks.map {
+                                FNOSTrackOption(id: $0.trackID, title: $0.description, isCurrent: $0.isEnabled)
+                            },
                             onClose: { closeSheet() }
-                        ) { track in
-                            coordinator.playerLayer?.player.select(track: track)
+                        ) { option in
+                            if let track = subtitleTracks.first(where: { $0.trackID == option.id }) {
+                                coordinator.playerLayer?.player.select(track: track)
+                            }
                             closeSheet()
                         }
                     } else if audioSheetPresented {
                         FNOSAudioTracksSheet(
                             title: "音轨切换",
-                            tracks: audioTracks,
-                            currentID: audioTracks.first { $0.isEnabled }?.trackID,
+                            tracks: audioTracks.map {
+                                FNOSTrackOption(id: $0.trackID, title: $0.description, isCurrent: $0.isEnabled)
+                            },
                             onClose: { closeSheet() }
-                        ) { track in
-                            coordinator.playerLayer?.player.select(track: track)
+                        ) { option in
+                            if let track = audioTracks.first(where: { $0.trackID == option.id }) {
+                                coordinator.playerLayer?.player.select(track: track)
+                            }
                             closeSheet()
                         }
                     } else {
@@ -1821,15 +1828,21 @@ struct FNOSDanmuSettingsSheet: View {
 
 // MARK: - 音轨/字幕选择面板（v189: overlay 承载 + 官方液态玻璃）
 
+/// v191: KS/MPV 共用的轨道选项中性模型（KS=MediaPlayerTrack / mpv=MPVMediaTrack 都映射到它）
+struct FNOSTrackOption: Identifiable, Hashable {
+    let id: Int32
+    let title: String
+    let isCurrent: Bool
+}
+
 struct FNOSAudioTracksSheet: View {
 
     /// v186: 弹层标题（音轨切换 / 字幕切换）
     let title: String
-    let tracks: [MediaPlayerTrack]
-    let currentID: Int32?
+    let tracks: [FNOSTrackOption]
     /// v189: overlay 承载无 dismiss 环境，关闭由宿主回调
     let onClose: () -> Void
-    let onSelect: (MediaPlayerTrack) -> Void
+    let onSelect: (FNOSTrackOption) -> Void
 
     /// v189: overlay 在 tvOS 不保证焦点自动移入（v173 教训）——appear 后程序化落当前轨
     @FocusState private var focusedRow: Int32?
@@ -1848,14 +1861,14 @@ struct FNOSAudioTracksSheet: View {
             } else {
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 10) {
-                        ForEach(tracks, id: \.trackID) { track in
+                        ForEach(tracks) { track in
                             Button {
                                 onSelect(track)
                             } label: {
                                 HStack(spacing: 10) {
-                                    Image(systemName: track.trackID == currentID ? "checkmark.circle.fill" : "circle")
+                                    Image(systemName: track.isCurrent ? "checkmark.circle.fill" : "circle")
                                         .font(.system(size: 17))
-                                    Text(track.description)
+                                    Text(track.title)
                                         .font(.system(size: 16))
                                         .lineLimit(1)
                                     Spacer()
@@ -1865,7 +1878,7 @@ struct FNOSAudioTracksSheet: View {
                             }
                             // v189: 官方液态玻璃按钮（tvOS 26），焦点态由系统渲染
                             .buttonStyle(.glass)
-                            .focused($focusedRow, equals: track.trackID)
+                            .focused($focusedRow, equals: track.id)
                         }
                     }
                     .padding(.horizontal, 2)

@@ -72,31 +72,34 @@ struct FNOSMPVPlayerView: View {
     @State private var lastActivity = Date()
 
     @State private var lastPersist: Double = 0
-    @State private var lastSeekAt = Date.distantPast
-    @State private var seekBurst = 0
     /// v184: 自动跳过片头/片尾（各单次触发）
     @State private var introSkipped = false
     @State private var endingSkipped = false
     /// v119：播放结束只回调一次
     @State private var didFinish = false
 
-    // 弹幕外观（与 FNOSDanmuView 共用同一批键）
-    @AppStorage("fnos.danmu.fontSize") private var danmuFontSize: Double = 26
-    @AppStorage("fnos.danmu.opacity") private var danmuOpacity: Double = 1
-    @AppStorage("fnos.danmu.speed") private var danmuSpeed: Double = 1
-    @AppStorage("fnos.danmu.offsetY") private var danmuOffsetY: Double = 0
+    // v191: 与 KS 播放器 1:1 对齐的状态（弹窗/续播选择窗/进度梯子/换集条焦点）
+    @State private var showAudioSheet = false
+    @State private var showSubtitleSheet = false
+    @State private var showResumeChoice = false
+    @State private var resumeChoiceTarget: Double = 0
+    @State private var resumeAutoTask: Task<Void, Never>?
+    @State private var scrubActive = false
+    @State private var scrubValue: Double = 0
+    @State private var scrubCommitTask: Task<Void, Never>?
+    @State private var lastScrubMove: Date?
+    @State private var scrubStep: Double = 10
+    @State private var scrubLevel = 0
+    @FocusState private var focusedChip: String?
+
+    private let rateOptions: [Double] = [0.5, 1.0, 1.5, 2.0]
 
     @FocusState private var focus: Control?
-    @FocusState private var danmuFocus: DanmuRow?
 
     private enum Control: Hashable {
         case surface
-        case rewind, playPause, forward, danmuToggle, danmuSettings, episode, info, scrubber
-        case episodeItem(String)
-    }
-
-    private enum DanmuRow: Hashable {
-        case size, speed, opacity, offsetY, toggle
+        case rewind, playPause, forward, rate, danmu, danmuSettings, audio, subtitle, info, scrubber
+        case resumeStartOver, resumeContinue
     }
 
     init(
@@ -161,9 +164,10 @@ struct FNOSMPVPlayerView: View {
                         .transition(.opacity)
                 }
 
-                if showDanmuSettings {
-                    danmuSettingsPanel
-                        .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                // v191: 续播选择窗（与 KS 同款，>30s 记录弹出，3s 未确认自动续播）
+                if showResumeChoice {
+                    resumeChoiceOverlay
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
 
                 if showInfo {
@@ -212,6 +216,53 @@ struct FNOSMPVPlayerView: View {
             if newValue == .surface { return }
             if newValue != nil { bumpActivity() }
         }
+        // v191: 玻璃弹层（与 KS 同款 overlay 承载——锚定右下、玻璃折射播放画面）
+        .overlay(alignment: .bottomTrailing) {
+            if showDanmuSettings {
+                FNOSDanmuSettingsSheet(onClose: { closeSheets() })
+                    .padding(.trailing, 90)
+                    .padding(.bottom, 170)
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+            if showAudioSheet {
+                FNOSAudioTracksSheet(
+                    title: "音轨切换",
+                    tracks: trackOptions(player?.audioTracks ?? []),
+                    onClose: { closeSheets() }
+                ) { option in
+                    if let player {
+                        player.selectTrack(MPVMediaTrackIdentifier(type: .audio, mpvID: Int(option.id)))
+                    }
+                    closeSheets()
+                }
+                .padding(.trailing, 90)
+                .padding(.bottom, 170)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+            if showSubtitleSheet {
+                FNOSAudioTracksSheet(
+                    title: "字幕切换",
+                    tracks: trackOptions(player?.subtitleTracks ?? []),
+                    onClose: { closeSheets() }
+                ) { option in
+                    if let player {
+                        player.selectSubtitle(
+                            MPVMediaTrackIdentifier(type: .subtitle, mpvID: Int(option.id)),
+                            for: .primary
+                        )
+                    }
+                    closeSheets()
+                }
+                .padding(.trailing, 90)
+                .padding(.bottom, 170)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+        }
+        // v191: 触摸板滑动拖动进度的手势宿主（与 KS FNOSPanBridge 同款体验）
+        .background(FNOSMPVPanHostView())
+        .onAppear {
+            attachPanHandler()
+        }
     }
 
     // MARK: - 画面层（唯一的兜底焦点）
@@ -237,121 +288,202 @@ struct FNOSMPVPlayerView: View {
     // MARK: - 字幕
 
     private var subtitleOverlay: some View {
-        VStack {
-            Spacer()
-            Text(subtitleText)
-                .font(.system(size: 42, weight: .semibold))
-                .foregroundColor(.white)
-                .multilineTextAlignment(.center)
-                .shadow(color: .black.opacity(0.9), radius: 6, y: 2)
-                .padding(.horizontal, 120)
-                .padding(.bottom, 170)
-        }
+        // v191: 与 KS 内嵌字幕同款——40pt 白字贴底、无阴影/描边（体验一致）
+        Text(subtitleText)
+            .font(.system(size: 40, weight: .medium))
+            .foregroundColor(.white)
+            .multilineTextAlignment(.center)
+            .lineLimit(2)
+            .padding(.horizontal, 160)
+            .padding(.bottom, 150)
     }
 
     // MARK: - 控制条
 
     private func controlBar(_ player: MPVPlayer) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(spacing: 14) {
             if showEpisodeStrip, !episodes.isEmpty {
                 episodeStrip
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
 
-            HStack(spacing: 18) {
-                controlButton(.rewind, systemImage: "gobackward.10") {
-                    player.seek(by: .seconds(-10))
+            // 主按钮组居中 + 功能按钮靠右（与 KS 同款布局）
+            HStack(spacing: 22) {
+                controlButton(.rewind, icon: "gobackward.15") {
+                    player.seek(by: .seconds(-15))
                 }
-
-                controlButton(
-                    .playPause,
-                    systemImage: player.isPaused ? "play.fill" : "pause.fill",
-                    wide: true
-                ) {
+                controlButton(.playPause, icon: player.isPaused ? "play.fill" : "pause.fill", primary: true) {
                     togglePlayPause()
                 }
-
-                controlButton(.forward, systemImage: "goforward.10") {
-                    player.seek(by: .seconds(10))
+                controlButton(.forward, icon: "goforward.15") {
+                    player.seek(by: .seconds(15))
                 }
-
-                controlButton(
-                    .danmuToggle,
-                    systemImage: showDanmu ? "text.bubble.fill" : "text.bubble",
-                    subtitle: showDanmu ? "弹幕开" : "弹幕关"
-                ) {
-                    showDanmu.toggle()
-                    danmu.setRate(showDanmu ? 1 : 0)
-                }
-
-                controlButton(.danmuSettings, systemImage: "slider.horizontal.3", subtitle: "弹幕设置") {
-                    openDanmuSettings()
-                }
-
-                if episodes.count > 1 {
-                    controlButton(
-                        .episode,
-                        systemImage: "rectangle.stack",
-                        subtitle: showEpisodeStrip ? "收起" : "选集",
-                        wide: showEpisodeStrip
-                    ) {
-                        toggleEpisodeStrip()
+            }
+            .frame(maxWidth: .infinity)
+            .overlay(alignment: .trailing) {
+                HStack(spacing: 14) {
+                    rateButton(player)
+                    controlButton(.danmu, icon: "text.bubble") {
+                        showDanmu.toggle()
+                    }
+                    .opacity(showDanmu ? 1 : 0.35)
+                    controlButton(.danmuSettings, icon: "slider.horizontal.3") {
+                        withAnimation(.easeInOut(duration: 0.22)) {
+                            showDanmuSettings = true
+                            showAudioSheet = false
+                            showSubtitleSheet = false
+                        }
+                    }
+                    if !player.audioTracks.isEmpty {
+                        controlButton(.audio, icon: "waveform") {
+                            withAnimation(.easeInOut(duration: 0.22)) {
+                                showDanmuSettings = false
+                                showAudioSheet = true
+                                showSubtitleSheet = false
+                            }
+                        }
+                    }
+                    if !player.subtitleTracks.isEmpty {
+                        controlButton(.subtitle, icon: "character.textbox") {
+                            withAnimation(.easeInOut(duration: 0.22)) {
+                                showDanmuSettings = false
+                                showAudioSheet = false
+                                showSubtitleSheet = true
+                            }
+                        }
+                    }
+                    controlButton(.info, icon: "info.circle") {
+                        showInfo.toggle()
+                        infoText = infoSummary(player)
                     }
                 }
-
-                controlButton(.info, systemImage: "info.circle") {
-                    showInfo.toggle()
-                    infoText = infoSummary(player)
-                }
-
-                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 52)
+            .foregroundStyle(.white)
             .focusSection()
 
-            HStack(spacing: 16) {
-                Text(timeText(seconds(player.position)))
-                    .font(.system(size: 19, weight: .medium, design: .rounded))
-                    .foregroundColor(.white.opacity(0.8))
-                    .frame(width: 80, alignment: .leading)
-
+            HStack(spacing: 14) {
+                Text(timeText(displayTime(player)))
+                    .font(.caption.monospacedDigit())
+                    .foregroundColor(.white)
                 scrubber(player)
-
                 Text(timeText(seconds(player.duration)))
-                    .font(.system(size: 19, weight: .medium, design: .rounded))
-                    .foregroundColor(.white.opacity(0.8))
-                    .frame(width: 80, alignment: .trailing)
+                    .font(.caption.monospacedDigit())
+                    .foregroundColor(.white)
             }
-            .padding(.horizontal, 52)
-            .focusSection()
         }
+        .padding(.horizontal, 90)
+        .padding(.bottom, 48)
         .padding(.top, 24)
-        .padding(.bottom, 40)
         .background(
             LinearGradient(
-                colors: [.clear, .black.opacity(0.8)],
+                stops: [
+                    .init(color: .black.opacity(0), location: 0),
+                    .init(color: .black.opacity(0.55), location: 1),
+                ],
                 startPoint: .top,
                 endPoint: .bottom
             )
             .ignoresSafeArea()
         )
+        .onChange(of: focus) { _, newValue in
+            if newValue != .scrubber {
+                commitScrubIfNeeded(player)
+                // 焦点离开进度条、又不在换集条上 → 把换集条收起来（KS 同款）
+                if focusedChip == nil { showEpisodeStrip = false }
+            }
+            bumpActivity()
+        }
+        .onChange(of: focusedChip) { _, newValue in
+            // 焦点进入换集条 → 取消自动隐藏；离开 → 重新计时
+            if newValue == nil {
+                bumpActivity()
+            }
+        }
     }
 
-    // MARK: - 选集条
+    // MARK: - 选集条（v191: 与 KS 4 大卡同版式；原生分集无缩略图/简介 → 渐变占位 + 集数）
 
     private var episodeStrip: some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: 12) {
+                LazyHStack(spacing: 14) {
                     ForEach(episodes) { ep in
-                        episodeChip(ep)
-                            .id(ep.guid)
+                        let isCurrent = ep.number == currentNumber
+                        let isFocused = focusedChip == ep.guid
+                        Button {
+                            guard !isCurrent else { return }
+                            switchEpisode(to: ep)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 8) {
+                                ZStack {
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill(
+                                            LinearGradient(
+                                                colors: [Color.white.opacity(0.16), Color.white.opacity(0.05)],
+                                                startPoint: .topLeading,
+                                                endPoint: .bottomTrailing
+                                            )
+                                        )
+                                    Text("\(ep.number)")
+                                        .font(.system(size: 56, weight: .bold, design: .rounded))
+                                        .foregroundColor(.white.opacity(0.9))
+                                }
+                                .frame(width: 424, height: 238)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .stroke(Color.white, lineWidth: isCurrent ? 2.5 : 0)
+                                )
+
+                                HStack(spacing: 10) {
+                                    Text("第 \(ep.number) 集")
+                                        .font(.system(size: 16, weight: .bold))
+                                        .foregroundColor(isCurrent ? .white : .white.opacity(0.75))
+                                    Text("mpv 直连播放")
+                                        .font(.system(size: 16, weight: .semibold))
+                                        .foregroundColor(.white)
+                                        .lineLimit(1)
+                                    Spacer(minLength: 0)
+                                }
+                                Text("原生媒体流 · 倍速/音轨/字幕同 KS 引擎")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(.white.opacity(0.62))
+                                    .lineLimit(1)
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                            }
+                            .padding(10)
+                            .frame(width: 424, height: 324, alignment: .top)
+                            .background(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .fill(isFocused ? Color.white.opacity(0.26) : Color.clear)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    .stroke(Color.white.opacity(isFocused ? 0.9 : 0), lineWidth: 2)
+                            )
+                            .scaleEffect(isFocused ? 1.05 : 1.0)
+                            .shadow(color: .black.opacity(isFocused ? 0.45 : 0), radius: 10, y: 4)
+                            .animation(.easeOut(duration: 0.12), value: isFocused)
+                        }
+                        .buttonStyle(FNOSBareButtonStyle())
+                        .focusEffectDisabled()
+                        .focused($focusedChip, equals: ep.guid)
+                        .onMoveCommand { direction in
+                            // 上键收起换集条并回进度条（KS 同款）
+                            if direction == .up {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    showEpisodeStrip = false
+                                }
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                    focus = .scrubber
+                                }
+                            }
+                        }
+                        .id(ep.guid)
                     }
                 }
-                .padding(.horizontal, 52)
-                .padding(.vertical, 6)
+                .padding(.vertical, 4)
             }
-            .frame(height: 66)
-            .focusSection()
+            .frame(height: 348)
             .onAppear {
                 proxy.scrollTo(currentGUID, anchor: .center)
             }
@@ -359,258 +491,251 @@ struct FNOSMPVPlayerView: View {
                 proxy.scrollTo(guid, anchor: .center)
             }
         }
-    }
-
-    private func episodeChip(_ ep: FNOSNativeClient.EpisodeRef) -> some View {
-        let isFocused = focus == .episodeItem(ep.guid)
-        let isCurrent = ep.number == currentNumber
-
-        return Button {
-            switchEpisode(to: ep)
-        } label: {
-            HStack(spacing: 6) {
-                if isCurrent {
-                    Image(systemName: "play.fill")
-                        .font(.system(size: 13, weight: .bold))
-                }
-                Text("第 \(ep.number) 集")
-                    .font(.system(size: 19, weight: .semibold))
-            }
-            .padding(.horizontal, 18)
-            .padding(.vertical, 10)
-            .background(
-                Capsule()
-                    .fill(
-                        isFocused
-                            ? Color.white
-                            : (isCurrent ? Color.white.opacity(0.30) : Color.white.opacity(0.12))
-                    )
-            )
-            .foregroundColor(isFocused ? .black : .white)
-            .overlay(
-                Capsule().stroke(
-                    isFocused ? Color.clear : Color.white.opacity(isCurrent ? 0.6 : 0.18),
-                    lineWidth: isCurrent ? 2 : 1
-                )
-            )
-            .scaleEffect(isFocused ? 1.08 : 1.0)
-            .shadow(color: .black.opacity(isFocused ? 0.45 : 0), radius: 10, y: 4)
-            .animation(.easeOut(duration: 0.12), value: isFocused)
-        }
-        .buttonStyle(FNOSBareButtonStyle())
-        .focused($focus, equals: .episodeItem(ep.guid))
-    }
-
-    private func toggleEpisodeStrip() {
-        bumpActivity()
-        let next = !showEpisodeStrip
-        withAnimation(.easeInOut(duration: 0.18)) {
-            showEpisodeStrip = next
-        }
-        if next {
-            Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 120_000_000)
-                focus = .episodeItem(currentGUID)
-                bumpActivity()
-            }
-        } else {
-            focus = .episode
+        .onChange(of: focusedChip) { _ in
+            bumpActivity()
         }
     }
 
     // MARK: - 进度条
 
     private func scrubber(_ player: MPVPlayer) -> some View {
-        let total = max(seconds(player.duration), 1)
-        let current = seconds(player.position)
-        let fraction = min(max(current / total, 0), 1)
-
-        return GeometryReader { proxy in
+        GeometryReader { geo in
             ZStack(alignment: .leading) {
-                Capsule().fill(Color.white.opacity(0.25))
                 Capsule()
-                    .fill(Color.white)
-                    .frame(width: max(proxy.size.width * fraction, 4))
+                    .fill(.white.opacity(0.25))
+                Capsule()
+                    .fill(.white)
+                    .frame(width: max(0, geo.size.width * displayFraction(player)))
             }
-            .frame(height: 8)
-            .overlay(alignment: .leading) {
-                Circle()
-                    .fill(Color.white)
-                    .frame(width: 18, height: 18)
-                    .offset(x: max(proxy.size.width * fraction - 9, -9))
-                    .opacity(focus == .scrubber ? 1 : 0.85)
-            }
+            .frame(height: focus == .scrubber ? 14 : 6)
+            .animation(.easeOut(duration: 0.15), value: focus == .scrubber)
             .contentShape(Rectangle())
-            .padding(.vertical, 9)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(focus == .scrubber ? Color.white.opacity(0.14) : Color.clear)
-            )
         }
-        .frame(height: 26)
-        .focusable()
-        .focusEffectDisabled()
+        .frame(height: 40)
+        .focusable(true)
         .focused($focus, equals: .scrubber)
+        .focusEffectDisabled()
         .onMoveCommand { direction in
             switch direction {
             case .left:
-                bumpActivity()
-                quickSeek(player, by: -1)
+                scrub(player, by: -1)
             case .right:
-                bumpActivity()
-                quickSeek(player, by: 1)
-            case .up:
-                focus = .playPause
+                scrub(player, by: 1)
+            case .down:
+                // 第一次按↓：展开换集条并把焦点交给当前集（KS 同款）
+                guard !episodes.isEmpty else { return }
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showEpisodeStrip = true
+                }
+                let target = episodes.first(where: { $0.number == currentNumber })?.guid
+                    ?? episodes.first?.guid
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    focusedChip = target
+                }
             default:
                 break
             }
         }
     }
 
+    /// 与 KS 完全同款的按钮外观（FNOSFocusButtonLabel：黑胶囊→白胶囊+黑图标+放大）
     private func controlButton(
         _ control: Control,
-        systemImage: String,
-        subtitle: String? = nil,
-        wide: Bool = false,
+        icon: String,
+        primary: Bool = false,
         action: @escaping () -> Void
     ) -> some View {
-        let isFocused = focus == control
-        return Button {
-            bumpActivity()
-            action()
-        } label: {
-            HStack(spacing: 8) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 21, weight: .semibold))
-                if let subtitle {
-                    Text(subtitle).font(.system(size: 17, weight: .medium))
-                }
+        Button(action: action) {
+            FNOSFocusButtonLabel(isFocused: focus == control, isPrimary: primary) {
+                Image(systemName: icon)
+                    .font(.system(size: primary ? 26 : 23, weight: .semibold))
             }
-            .modifier(FNOSControlChrome(isFocused: isFocused, wide: wide))
         }
         .buttonStyle(FNOSBareButtonStyle())
         .focused($focus, equals: control)
-    }
-
-    // MARK: - 弹幕设置面板
-
-    private var danmuSettingsPanel: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("弹幕设置")
-                    .font(.system(size: 24, weight: .bold))
-                Spacer()
-                Text("← → 调整　Menu 返回")
-                    .font(.system(size: 15))
-                    .foregroundColor(.white.opacity(0.55))
-            }
-            .padding(.bottom, 2)
-
-            danmuRow(.size, label: "字号", value: "\(Int(danmuFontSize)) pt")
-            danmuRow(.speed, label: "滚动速度", value: String(format: "%.1fx", danmuSpeed))
-            danmuRow(.opacity, label: "不透明度", value: "\(Int((danmuOpacity * 100).rounded()))%")
-            danmuRow(.offsetY, label: "垂直位置", value: offsetLabel)
-            danmuRow(.toggle, label: "显示弹幕", value: showDanmu ? "开" : "关")
-        }
-        .padding(28)
-        .frame(width: 620)
-        // 不用 Material：tvOS 焦点引擎见到材质会在聚焦视图上叠系统高亮板（HANDOVER 红线 5）
-        .background(Color.black.opacity(0.88), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 22, style: .continuous)
-                .stroke(Color.white.opacity(0.18), lineWidth: 1)
-        )
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .trailing)
-        .padding(.trailing, 80)
-        .padding(.bottom, 150)
-        .onExitCommand(perform: closeDanmuSettings)
-    }
-
-    private var offsetLabel: String {
-        if danmuOffsetY == 0 { return "默认" }
-        return danmuOffsetY > 0 ? "下移 \(Int(danmuOffsetY)) pt" : "上移 \(Int(-danmuOffsetY)) pt"
-    }
-
-    private func danmuRow(_ row: DanmuRow, label: String, value: String) -> some View {
-        let isFocused = danmuFocus == row
-        return HStack {
-            Text(label)
-                .font(.system(size: 19, weight: .medium))
-            Spacer()
-            Text(value)
-                .font(.system(size: 19, weight: .semibold, design: .rounded))
-                .monospacedDigit()
-        }
-        .padding(.horizontal, 20)
-        .frame(height: 56)
-        .background(
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .fill(isFocused ? Color.white : Color.white.opacity(0.08))
-        )
-        .foregroundColor(isFocused ? .black : .white)
-        .overlay(
-            RoundedRectangle(cornerRadius: 13, style: .continuous)
-                .stroke(Color.white.opacity(isFocused ? 0 : 0.14), lineWidth: 1)
-        )
-        .scaleEffect(isFocused ? 1.02 : 1.0)
-        .animation(.easeOut(duration: 0.12), value: isFocused)
-        .focusable()
         .focusEffectDisabled()
-        .focused($danmuFocus, equals: row)
         .onMoveCommand { direction in
-            switch direction {
-            case .left:
-                bumpActivity()
-                adjustDanmu(row, delta: -1)
-            case .right:
-                bumpActivity()
-                adjustDanmu(row, delta: 1)
+            // 下键明确落到进度条（KS 同款）
+            if direction == .down { focus = .scrubber }
+        }
+    }
+
+    /// 倍速按钮：0.5 → 1.0 → 1.5 → 2.0 循环（KS 同款）
+    private func rateButton(_ player: MPVPlayer) -> some View {
+        Button {
+            cycleRate(player)
+        } label: {
+            FNOSFocusButtonLabel(isFocused: focus == .rate, isPrimary: true) {
+                Text(String(format: "%.1fx", player.playbackRate))
+                    .font(.system(size: 21, weight: .semibold).monospacedDigit())
+            }
+        }
+        .buttonStyle(FNOSBareButtonStyle())
+        .focused($focus, equals: .rate)
+        .focusEffectDisabled()
+        .onMoveCommand { direction in
+            if direction == .down { focus = .scrubber }
+        }
+    }
+
+    private func cycleRate(_ player: MPVPlayer) {
+        let index = rateOptions.firstIndex(of: player.playbackRate) ?? 1
+        let next = rateOptions[(index + 1) % rateOptions.count]
+        player.setPlaybackRate(next)
+        danmu.setRate(player.isPaused ? 0 : next)
+        bumpActivity()
+    }
+
+    // MARK: 进度梯子/拖动提交（与 KS 同款：0.2s 连按加速 10s→30s→60s→120s，停 1s 提交）
+
+    private func displayTime(_ player: MPVPlayer) -> Double {
+        if scrubActive { return scrubValue }
+        return seconds(player.position)
+    }
+
+    private func displayFraction(_ player: MPVPlayer) -> Double {
+        let total = max(seconds(player.duration), 1)
+        return min(max(displayTime(player) / total, 0), 1)
+    }
+
+    private static let scrubLadder: [Double] = [10, 30, 60, 120]
+
+    private func scrub(_ player: MPVPlayer, by direction: Double) {
+        let now = Date()
+        if let last = lastScrubMove, now.timeIntervalSince(last) < 0.2 {
+            scrubLevel = min(scrubLevel + 1, Self.scrubLadder.count - 1)
+        } else {
+            scrubLevel = 0
+        }
+        lastScrubMove = now
+        scrubStep = Self.scrubLadder[scrubLevel]
+
+        let total = max(seconds(player.duration), 1)
+        let base = scrubActive ? scrubValue : seconds(player.position)
+        scrubActive = true
+        scrubValue = min(max(base + direction * scrubStep, 0), total)
+        scheduleScrubCommit()
+        bumpActivity()
+    }
+
+    private func scheduleScrubCommit() {
+        scrubCommitTask?.cancel()
+        scrubCommitTask = Task {
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            commitScrubIfNeeded(player)
+        }
+    }
+
+    private func commitScrubIfNeeded(_ player: MPVPlayer) {
+        guard scrubActive else { return }
+        scrubActive = false
+        player.seek(to: .seconds(scrubValue))
+    }
+
+    /// v191: MPVMediaTrack → 共享玻璃弹层选项模型（KS/MPV 1:1 同款弹窗）
+    private func trackOptions(_ tracks: [MPVMediaTrack]) -> [FNOSTrackOption] {
+        tracks.map { track in
+            var parts: [String] = []
+            if let title = track.title, !title.isEmpty { parts.append(title) }
+            if let language = track.language, !language.isEmpty { parts.append(language) }
+            if parts.isEmpty, let codec = track.codec, !codec.isEmpty { parts.append(codec) }
+            let name = parts.isEmpty ? "轨道 \(track.mpvID + 1)" : parts.joined(separator: " · ")
+            return FNOSTrackOption(id: Int32(track.mpvID), title: name, isCurrent: track.isSelected)
+        }
+    }
+
+    /// v191: 玻璃弹层关闭（与 KS 同款：回焦点到播放键）
+    private func closeSheets() {
+        withAnimation(.easeInOut(duration: 0.2)) {
+            showDanmuSettings = false
+            showAudioSheet = false
+            showSubtitleSheet = false
+        }
+        DispatchQueue.main.async {
+            focus = .playPause
+        }
+        bumpActivity()
+    }
+
+    // MARK: - 续播选择弹窗（v191: 与 KS 同款——3s 未确认自动续播）
+
+    private var resumeChoiceOverlay: some View {
+        VStack(spacing: 14) {
+            Text("检测到播放记录 · 已看到 \(timeText(resumeChoiceTarget))")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundColor(.white)
+            HStack(spacing: 26) {
+                Button {
+                    finishResumeChoice(startOver: true)
+                } label: {
+                    Text("从头开始")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 26)
+                        .padding(.vertical, 12)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(Color.white.opacity(0.16)))
+                }
+                .buttonStyle(FNOSBareButtonStyle())
+                .focused($focus, equals: .resumeStartOver)
+
+                Button {
+                    finishResumeChoice(startOver: false)
+                } label: {
+                    Text("继续播放")
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 26)
+                        .padding(.vertical, 12)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(Color.white))
+                }
+                .buttonStyle(FNOSBareButtonStyle())
+                .focused($focus, equals: .resumeContinue)
+            }
+        }
+        .padding(.bottom, 220)
+        .frame(maxWidth: .infinity)
+    }
+
+    private func finishResumeChoice(startOver: Bool) {
+        resumeAutoTask?.cancel()
+        withAnimation(.easeInOut(duration: 0.2)) {
+            showResumeChoice = false
+        }
+        if startOver, let player {
+            player.seek(to: .zero)
+        }
+        DispatchQueue.main.async {
+            focus = .playPause
+        }
+        bumpActivity()
+    }
+
+    /// v191: 触摸板滑动拖动进度（与 KS FNOSPanBridge 同款：进度条聚焦时 1px≈0.2s）
+    private func attachPanHandler() {
+        FNOSMPVPanCoordinator.shared.onPan = { gesture in
+            guard let player, controlsVisible, focus == .scrubber,
+                  !showDanmuSettings, !showAudioSheet, !showSubtitleSheet else { return }
+            switch gesture.state {
+            case .began:
+                scrubActive = true
+                scrubValue = seconds(player.position)
+            case .changed:
+                guard scrubActive else { return }
+                let translation = gesture.translation(in: gesture.view)
+                gesture.setTranslation(.zero, in: gesture.view)
+                let delta = Double(translation.x) * 0.2
+                let total = max(seconds(player.duration), 1)
+                scrubValue = min(max(scrubValue + delta, 0), total)
+                scheduleScrubCommit()
+            case .ended, .cancelled:
+                if focus == .scrubber {
+                    commitScrubIfNeeded(player)
+                }
             default:
                 break
             }
         }
-        .onTapGesture {
-            bumpActivity()
-            if row == .toggle {
-                showDanmu.toggle()
-                danmu.setRate(showDanmu ? 1 : 0)
-            }
-        }
-    }
-
-    private func adjustDanmu(_ row: DanmuRow, delta: Double) {
-        switch row {
-        case .size:
-            danmuFontSize = min(max(danmuFontSize + delta * 2, 18), 48)
-        case .speed:
-            let next = ((danmuSpeed + delta * 0.1) * 10).rounded() / 10
-            danmuSpeed = min(max(next, 0.5), 3.0)
-        case .opacity:
-            let next = ((danmuOpacity + delta * 0.05) * 100).rounded() / 100
-            danmuOpacity = min(max(next, 0.2), 1)
-        case .offsetY:
-            danmuOffsetY = min(max(danmuOffsetY + delta * 20, -80), 420)
-        case .toggle:
-            showDanmu.toggle()
-            danmu.setRate(showDanmu ? 1 : 0)
-        }
-    }
-
-    private func openDanmuSettings() {
-        bumpActivity()
-        withAnimation(.easeOut(duration: 0.18)) { showDanmuSettings = true }
-        Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 100_000_000)
-            danmuFocus = .size
-            bumpActivity()
-        }
-    }
-
-    private func closeDanmuSettings() {
-        withAnimation(.easeOut(duration: 0.16)) { showDanmuSettings = false }
-        danmuFocus = nil
-        focus = .danmuSettings
-        bumpActivity()
     }
 
     // MARK: - 诊断面板
@@ -677,14 +802,23 @@ struct FNOSMPVPlayerView: View {
     }
 
     private func handleExitCommand() {
-        bumpActivity()
-        if showDanmuSettings {
-            closeDanmuSettings()
-        } else if showEpisodeStrip {
-            toggleEpisodeStrip()
-        } else {
-            onExit()
+        // v191: 逐层退出——续播窗按 Menu = 继续播放；弹层关闭；换集条收起；最后才是退出播放
+        if showResumeChoice {
+            finishResumeChoice(startOver: false)
+            return
         }
+        if showDanmuSettings || showAudioSheet || showSubtitleSheet {
+            closeSheets()
+            return
+        }
+        if showEpisodeStrip {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showEpisodeStrip = false
+            }
+            focus = .scrubber
+            return
+        }
+        onExit()
     }
 
     // MARK: - 生命周期
@@ -725,6 +859,19 @@ struct FNOSMPVPlayerView: View {
             player.load(currentURL, startTime: .seconds(initialSeek))
         } else if resume > 30 {
             player.load(currentURL, startTime: .seconds(resume))
+            // v191: 与 KS 同款续播选择窗（3s 未确认自动续播）
+            resumeChoiceTarget = resume
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showResumeChoice = true
+            }
+            resumeAutoTask = Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                guard !Task.isCancelled else { return }
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    showResumeChoice = false
+                }
+                focus = .playPause
+            }
         } else {
             player.load(currentURL)
         }
@@ -734,9 +881,10 @@ struct FNOSMPVPlayerView: View {
         startSubtitleStream(player)
 
         // 按钮要等 player 出现后才存在，这里延迟一次把焦点落到播放键
+        // （有续播选择窗时落到「继续播放」键——KS 同款）
         Task { @MainActor in
             try? await Task.sleep(nanoseconds: 300_000_000)
-            focus = .playPause
+            focus = showResumeChoice ? .resumeContinue : .playPause
             bumpActivity()
         }
 
@@ -769,7 +917,8 @@ struct FNOSMPVPlayerView: View {
             while !Task.isCancelled {
                 let position = seconds(player.position)
                 danmu.sync(mediaTime: position)
-                danmu.setRate(player.isPaused ? 0.0 : 1.0)
+                // v191 修复: 之前硬编码 1.0——倍速播放时弹幕速度不同步
+                danmu.setRate(player.isPaused ? 0.0 : player.playbackRate)
 
                 // v184: 自动跳过片头/片尾（服务器 play_config 数据，各单次触发）
                 if let so = skipOpening, !introSkipped, position > 0.5, position < so - 0.5 {
@@ -856,20 +1005,6 @@ struct FNOSMPVPlayerView: View {
     }
 
     /// 连续按左右时自动加速：10s → 30s → 60s
-    private func quickSeek(_ player: MPVPlayer, by direction: Double) {
-        let now = Date()
-        if now.timeIntervalSince(lastSeekAt) < 1.2 {
-            seekBurst = min(seekBurst + 1, 4)
-        } else {
-            seekBurst = 0
-        }
-        lastSeekAt = now
-
-        let step: Double = seekBurst >= 3 ? 60 : (seekBurst >= 1 ? 30 : 10)
-        let target = min(max(seconds(player.position) + direction * step, 0), seconds(player.duration))
-        player.seek(to: .seconds(target))
-    }
-
     private func switchEpisode(to ep: FNOSNativeClient.EpisodeRef) {
         guard !switching, ep.number != currentNumber else { return }
         switching = true
@@ -936,6 +1071,65 @@ struct FNOSMPVPlayerView: View {
 }
 
 // MARK: - 控制按钮外观
+
+// MARK: - v191 mpv 触摸板滑动拖动进度桥（与 KS FNOSPanBridge 同款模式：根视图挂一次手势，门控在闭包）
+
+final class FNOSMPVPanCoordinator: NSObject, UIGestureRecognizerDelegate {
+    static let shared = FNOSMPVPanCoordinator()
+
+    weak private var hostView: UIView?
+    private var recognizer: UIPanGestureRecognizer?
+    var onPan: ((UIPanGestureRecognizer) -> Void)?
+
+    func setHost(_ view: UIView) {
+        guard hostView !== view else { return }
+        hostView = view
+        mountIfNeeded()
+    }
+
+    private func mountIfNeeded() {
+        guard recognizer == nil, let host = hostView else { return }
+        var root = host
+        while let superview = root.superview, !(superview is UIWindow) {
+            root = superview
+        }
+        if let existing = root.gestureRecognizers?.first(where: {
+            ($0 as? UIPanGestureRecognizer)?.name == "fnos.mpv.scrub.pan"
+        }) {
+            recognizer = existing as? UIPanGestureRecognizer
+            return
+        }
+        let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handle(_:)))
+        recognizer.name = "fnos.mpv.scrub.pan"
+        recognizer.cancelsTouchesInView = false
+        recognizer.delegate = self
+        root.addGestureRecognizer(recognizer)
+        self.recognizer = recognizer
+    }
+
+    @objc private func handle(_ gesture: UIPanGestureRecognizer) {
+        onPan?(gesture)
+    }
+
+    /// 门控全部在 onPan 闭包内（挂载即允许开始，state 变化由闭包自行过滤）
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        onPan != nil
+    }
+}
+
+/// 手势宿主（本身不吃触摸），把视图交给协调器爬根挂载
+private struct FNOSMPVPanHostView: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        FNOSMPVPanCoordinator.shared.setHost(uiView)
+    }
+}
 
 private struct FNOSControlChrome: ViewModifier {
 

@@ -178,21 +178,20 @@ struct FNOSTMDBDetailView: View {
                 onDismiss: { similarDetailItem = nil }
             )
         }
-    }
-
-    // v180: 人物弹窗（主要演员点击查看，TMDB 附官方简介）
-    .fullScreenCover(item: $popupPerson) { person in
-        FNOSPersonPopupSheet(person: person, onClose: { popupPerson = nil })
-            .task {
-                // TMDB 人物拉官方简介，拉到后原位替换弹窗内容（id 不变不重播动画）
-                guard person.bio == nil,
-                      let pid = Int(person.id.replacingOccurrences(of: "tmdb-cast-", with: "")) else { return }
-                guard let detail = await FNOSTMDBClient.personDetail(id: pid, apiKey: apiKey),
-                      let bio = detail["biography"] as? String, !bio.isEmpty else { return }
-                if popupPerson?.id == person.id {
-                    popupPerson = FNOSPersonInfo(id: person.id, name: person.name, role: person.role, avatarURL: person.avatarURL, bio: bio)
+        // v180: 人物弹窗（主要演员点击查看，TMDB 附官方简介）
+        .fullScreenCover(item: $popupPerson) { person in
+            FNOSPersonPopupSheet(person: person, onClose: { popupPerson = nil })
+                .task {
+                    // TMDB 人物拉官方简介，拉到后原位替换弹窗内容（id 不变不重播动画）
+                    guard person.bio == nil,
+                          let pid = Int(person.id.replacingOccurrences(of: "tmdb-cast-", with: "")) else { return }
+                    guard let detail = await FNOSTMDBClient.personDetail(id: pid, apiKey: apiKey),
+                          let bio = detail["biography"] as? String, !bio.isEmpty else { return }
+                    if popupPerson?.id == person.id {
+                        popupPerson = FNOSPersonInfo(id: person.id, name: person.name, role: person.role, avatarURL: person.avatarURL, bio: bio)
+                    }
                 }
-            }
+        }
     }
 
     // MARK: - v120 入库状态机

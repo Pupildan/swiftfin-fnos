@@ -169,11 +169,10 @@ struct FNOSDoubanDetailView: View {
                 }
             }
         }
-    }
-
-    // v180: 人物弹窗（演员头像点击查看）
-    .fullScreenCover(item: $popupPerson) { person in
-        FNOSPersonPopupSheet(person: person, onClose: { popupPerson = nil })
+        // v180: 人物弹窗（演员头像点击查看）
+        .fullScreenCover(item: $popupPerson) { person in
+            FNOSPersonPopupSheet(person: person, onClose: { popupPerson = nil })
+        }
     }
 
     // MARK: - Hero（海报 backdrop + 左下文字 + 右下主演导演，同热门影视/番剧详情页）

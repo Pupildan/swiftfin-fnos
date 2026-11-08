@@ -18,5 +18,5 @@ enum FNOSAdapterBuild {
     static let version = "v189"
 
     /// 本版主要变更摘要
-    static let changes = "v189:①播放器三弹窗按用户指令重做:背景presentationBackground(.clear)不再糊视频(视频在播放必须看得见),按钮改官方tvOS26液态玻璃buttonStyle(.glass/.glassProminent),删自绘白胶囊;②内嵌字幕两修:正strokeWidth转负(CoreText正宽度=只描边=空心骨架字,转负=填充+描边同绘,恢复白字黑边本意)+sizeThatFits按文本实际高度布局(修字幕显示在屏幕正中,现贴底);③自动跳过片头片尾定论:服务端12样本skip值全null/缺失=服务端无跳过数据,客户端v184链路无bug;④诊断通道修复(v188已含:FNOSDiag并入FNOSDiagLog.send)。"
+    static let changes = "v189:①播放器三弹窗(弹幕设置/音轨/字幕)承载方式从.sheet改为播放器内overlay——.sheet在tvOS系统自带压暗且玻璃只能对暗背景折射=死灰板无玻璃感(用户实测实锤),overlay与视频同层级glassEffect直接对播放画面折射=真液态玻璃,无压暗不糊视频;按钮全用官方tvOS26液态玻璃.buttonStyle(.glass/.glassProminent);②弹窗焦点:appear后200ms程序化落首行(overlay不保证焦点自动移入,v173教训),Menu键onExitCommand关闭,关闭回控制条播放键;③内嵌字幕两修:正strokeWidth转负(CoreText正宽度=只描边=空心骨架字,转负=填充+描边同绘恢复白字黑边)+sizeThatFits按文本实际高度布局(修字幕居中,现贴底);④自动跳过片头片尾定论:服务端12样本skip值全null/缺失=服务端无跳过数据,客户端v184链路无bug。"
 }

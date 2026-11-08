@@ -680,35 +680,50 @@ struct FNOSPlayerContainerView: View {
             // v119：离开播放器恢复系统屏保策略
             UIApplication.shared.isIdleTimerDisabled = false
         }
-        .sheet(isPresented: $isSheetPresented, onDismiss: {
-            audioSheetPresented = false
-            subtitleSheetPresented = false
-            DispatchQueue.main.async {
-                focus = .playPause
-            }
-            revealControls()
-        }) {
-            if subtitleSheetPresented {
-                // v185: 内嵌字幕轨选择（与音轨同款交互）；v186 标题区分
-                FNOSAudioTracksSheet(
-                    title: "字幕切换",
-                    tracks: subtitleTracks,
-                    currentID: subtitleTracks.first { $0.isEnabled }?.trackID
-                ) { track in
-                    coordinator.playerLayer?.player.select(track: track)
+        // v189: 三弹窗改播放器内 overlay（原 .sheet 在 tvOS 上系统自带压暗+玻璃只能对暗背景折射
+        // = 死灰板无玻璃感）。overlay 与视频同层级，glassEffect 直接对播放画面折射=真液态玻璃
+        .overlay {
+            if isSheetPresented {
+                Group {
+                    if subtitleSheetPresented {
+                        // v185: 内嵌字幕轨选择（与音轨同款交互）；v186 标题区分
+                        FNOSAudioTracksSheet(
+                            title: "字幕切换",
+                            tracks: subtitleTracks,
+                            currentID: subtitleTracks.first { $0.isEnabled }?.trackID,
+                            onClose: { closeSheet() }
+                        ) { track in
+                            coordinator.playerLayer?.player.select(track: track)
+                            closeSheet()
+                        }
+                    } else if audioSheetPresented {
+                        FNOSAudioTracksSheet(
+                            title: "音轨切换",
+                            tracks: audioTracks,
+                            currentID: audioTracks.first { $0.isEnabled }?.trackID,
+                            onClose: { closeSheet() }
+                        ) { track in
+                            coordinator.playerLayer?.player.select(track: track)
+                            closeSheet()
+                        }
+                    } else {
+                        FNOSDanmuSettingsSheet(onClose: { closeSheet() })
+                    }
                 }
-            } else if audioSheetPresented {
-                FNOSAudioTracksSheet(
-                    title: "音轨切换",
-                    tracks: audioTracks,
-                    currentID: audioTracks.first { $0.isEnabled }?.trackID
-                ) { track in
-                    coordinator.playerLayer?.player.select(track: track)
-                }
-            } else {
-                FNOSDanmuSettingsSheet()
+                .transition(.opacity)
             }
         }
+    }
+
+    /// v189: overlay 弹窗关闭（原 .sheet onDismiss 逻辑平移）
+    private func closeSheet() {
+        audioSheetPresented = false
+        subtitleSheetPresented = false
+        isSheetPresented = false
+        DispatchQueue.main.async {
+            focus = .playPause
+        }
+        revealControls()
     }
 
     // MARK: 裸播放视图（无 KSPlayer 内置控制）+ 转盘滑动桥接
@@ -1627,8 +1642,11 @@ struct FNOSDanmuSettingsSheet: View {
     @AppStorage("fnos.danmu.opacity") private var opacity: Double = 1
     @AppStorage("fnos.danmu.speed") private var speed: Double = 1
 
-    @Environment(\.dismiss)
-    private var dismiss
+    /// v189: overlay 承载无 dismiss 环境，关闭由宿主回调
+    let onClose: () -> Void
+
+    /// v189: overlay 在 tvOS 不保证焦点自动移入（v173 教训）——appear 后程序化落首个控件
+    @FocusState private var focusedControl: String?
 
     var body: some View {
         VStack(spacing: 30) {
@@ -1636,24 +1654,24 @@ struct FNOSDanmuSettingsSheet: View {
                 .font(.system(size: 26, weight: .bold))
                 .foregroundColor(.white)
 
-            stepRow(title: "字号", text: "\(Int(fontSize)) px") {
+            stepRow(id: "size", title: "字号", text: "\(Int(fontSize)) px") {
                 fontSize = max(16, min(44, fontSize - 2))
             } up: {
                 fontSize = min(44, fontSize + 2)
             }
-            stepRow(title: "不透明度", text: "\(Int(opacity * 100)) %") {
+            stepRow(id: "opacity", title: "不透明度", text: "\(Int(opacity * 100)) %") {
                 opacity = max(0.2, opacity - 0.05)
             } up: {
                 opacity = min(1, opacity + 0.05)
             }
-            stepRow(title: "速度", text: String(format: "%.1fx", speed)) {
+            stepRow(id: "speed", title: "速度", text: String(format: "%.1fx", speed)) {
                 speed = max(0.5, speed - 0.1)
             } up: {
                 speed = min(2.5, speed + 0.1)
             }
 
             Button {
-                dismiss()
+                onClose()
             } label: {
                 Text("完成")
                     .font(.system(size: 20, weight: .semibold))
@@ -1661,18 +1679,25 @@ struct FNOSDanmuSettingsSheet: View {
             }
             // v189: 官方液态玻璃主按钮（tvOS 26），焦点态由系统渲染
             .buttonStyle(.glassProminent)
+            .focused($focusedControl, equals: "done")
         }
         .padding(36)
         .frame(width: 860)
-        // v188/v189: iOS 26 官方液态玻璃面板（glassEffect API）
+        // v189: iOS 26 官方液态玻璃面板——overlay 层级下直接对播放画面折射
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // v189: 播放器上方严禁糊视频（用户明令：视频在播放）——背景全透明，玻璃感由面板自身呈现
-        .presentationBackground(.clear)
+        // Menu 键关闭（焦点在面板内时路由到此处；FNOSReviewPopupSheet 同款模式）
+        .onExitCommand(perform: onClose)
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                if focusedControl == nil { focusedControl = "size-down" }
+            }
+        }
     }
 
     /// tvOS 稳妥步进行：[-] 值 [+]（SwiftUI Slider 在 tvOS 焦点行为不可靠）
     private func stepRow(
+        id: String,
         title: String,
         text: String,
         down: @escaping () -> Void,
@@ -1690,6 +1715,7 @@ struct FNOSDanmuSettingsSheet: View {
             }
             // v189: 官方液态玻璃按钮
             .buttonStyle(.glass)
+            .focused($focusedControl, equals: "\(id)-down")
             Text(text)
                 .font(.system(size: 22, weight: .semibold).monospacedDigit())
                 .foregroundColor(.white)
@@ -1700,11 +1726,12 @@ struct FNOSDanmuSettingsSheet: View {
                     .frame(width: 72, height: 48)
             }
             .buttonStyle(.glass)
+            .focused($focusedControl, equals: "\(id)-up")
         }
     }
 }
 
-// MARK: - 音轨/字幕选择面板（v188 玻璃化 / v189 按用户指令修正）
+// MARK: - 音轨/字幕选择面板（v189: overlay 承载 + 官方液态玻璃）
 
 struct FNOSAudioTracksSheet: View {
 
@@ -1712,10 +1739,13 @@ struct FNOSAudioTracksSheet: View {
     let title: String
     let tracks: [MediaPlayerTrack]
     let currentID: Int32?
+    /// v189: overlay 承载无 dismiss 环境，关闭由宿主回调
+    let onClose: () -> Void
     let onSelect: (MediaPlayerTrack) -> Void
 
-    @Environment(\.dismiss)
-    private var dismiss
+    /// v189: overlay 在 tvOS 不保证焦点自动移入（v173 教训）——appear 后程序化落当前轨
+    @FocusState private var focusedRow: Int32?
+    @FocusState private var focusedDone: Bool
 
     var body: some View {
         VStack(spacing: 24) {
@@ -1733,7 +1763,6 @@ struct FNOSAudioTracksSheet: View {
                         ForEach(tracks, id: \.trackID) { track in
                             Button {
                                 onSelect(track)
-                                dismiss()
                             } label: {
                                 HStack(spacing: 12) {
                                     Image(systemName: track.trackID == currentID ? "checkmark.circle.fill" : "circle")
@@ -1748,6 +1777,7 @@ struct FNOSAudioTracksSheet: View {
                             }
                             // v189: 官方液态玻璃按钮（tvOS 26），焦点态由系统渲染
                             .buttonStyle(.glass)
+                            .focused($focusedRow, equals: track.trackID)
                         }
                     }
                     .padding(.horizontal, 4)
@@ -1756,20 +1786,32 @@ struct FNOSAudioTracksSheet: View {
             }
 
             Button {
-                dismiss()
+                onClose()
             } label: {
                 Text("完成")
                     .font(.system(size: 20, weight: .semibold))
                     .frame(width: 220, height: 52)
             }
             .buttonStyle(.glassProminent)
+            .focused($focusedDone)
         }
         .padding(36)
         .frame(width: 820)
-        // v188/v189: iOS 26 官方液态玻璃面板（glassEffect API）
+        // v189: iOS 26 官方液态玻璃面板——overlay 层级下直接对播放画面折射
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        // v189: 播放器上方严禁糊视频（用户明令：视频在播放）——背景全透明
-        .presentationBackground(.clear)
+        // Menu 键关闭（焦点在面板内时路由到此处；FNOSReviewPopupSheet 同款模式）
+        .onExitCommand(perform: onClose)
+        .onAppear {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                if !tracks.isEmpty {
+                    if focusedRow == nil {
+                        focusedRow = tracks.first { $0.isEnabled }?.trackID ?? tracks.first?.trackID
+                    }
+                } else {
+                    focusedDone = true
+                }
+            }
+        }
     }
 }

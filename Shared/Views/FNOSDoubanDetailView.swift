@@ -25,6 +25,8 @@ struct FNOSDoubanDetailView: View {
     @State private var popupFullContent: String = ""
     /// v176: 全文缓存（按影评 id）——重开弹窗即时显示，不再"返回再进才出全文"
     @State private var fullContentCache: [String: String] = [:]
+    /// v180: 人物弹窗（演员头像点击查看）
+    @State private var popupPerson: FNOSPersonInfo?
     /// v167: Hero 横屏高清剧照（frodo photos）；nil 时竖版海报垫底兜底
     @State private var landscapeURL: URL?
     /// v168: 相似推荐 + 点按进详情（与 TMDB similar 同款递归）
@@ -167,6 +169,11 @@ struct FNOSDoubanDetailView: View {
                 }
             }
         }
+    }
+
+    // v180: 人物弹窗（演员头像点击查看）
+    .fullScreenCover(item: $popupPerson) { person in
+        FNOSPersonPopupSheet(person: person, onClose: { popupPerson = nil })
     }
 
     // MARK: - Hero（海报 backdrop + 左下文字 + 右下主演导演，同热门影视/番剧详情页）
@@ -340,7 +347,8 @@ struct FNOSDoubanDetailView: View {
             .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.card)
-        .disabled(libState != .idle)
+        // v180: 移除 disabled——按钮是 Hero 唯一焦点锚点，禁用会释放焦点导致下键失效
+        // （action 已有 guard libState == .idle 幂等保护，重复确认不会重复订阅）
     }
 
     // MARK: - 内容区（v167: 严格按 TMDB 详情页版式——主要演员 / 评论 / 制作信息 卡片）
@@ -356,26 +364,37 @@ struct FNOSDoubanDetailView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 20) {
                         ForEach(celebrities) { person in
-                            VStack(spacing: 8) {
-                                if let avatar = person.avatarURL {
-                                    FNOSAsyncImage(url: avatar, headers: ["Referer": "https://movie.douban.com/"])
-                                        .frame(width: 80, height: 80)
-                                        .clipShape(Circle())
-                                } else {
-                                    Circle().fill(Color.white.opacity(0.1)).frame(width: 80, height: 80)
-                                }
-                                Text(person.name)
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundColor(.white.opacity(0.85))
-                                    .lineLimit(1)
-                                if !person.character.isEmpty {
-                                    Text(person.character)
-                                        .font(.system(size: 13))
-                                        .foregroundColor(.white.opacity(0.5))
+                            // v180: 点击演员查看人物弹窗
+                            Button {
+                                popupPerson = FNOSPersonInfo(
+                                    id: "douban-cel-\(person.id)",
+                                    name: person.name,
+                                    role: person.character,
+                                    avatarURL: person.avatarURL
+                                )
+                            } label: {
+                                VStack(spacing: 8) {
+                                    if let avatar = person.avatarURL {
+                                        FNOSAsyncImage(url: avatar, headers: ["Referer": "https://movie.douban.com/"])
+                                            .frame(width: 80, height: 80)
+                                            .clipShape(Circle())
+                                    } else {
+                                        Circle().fill(Color.white.opacity(0.1)).frame(width: 80, height: 80)
+                                    }
+                                    Text(person.name)
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundColor(.white.opacity(0.85))
                                         .lineLimit(1)
+                                    if !person.character.isEmpty {
+                                        Text(person.character)
+                                            .font(.system(size: 13))
+                                            .foregroundColor(.white.opacity(0.5))
+                                            .lineLimit(1)
+                                    }
                                 }
+                                .frame(width: 80)
                             }
-                            .frame(width: 80)
+                            .buttonStyle(.card)
                         }
                     }
                 }

@@ -2,7 +2,7 @@
 
 > 仓库：`Pupildan/swiftfin-fnos`（GitHub 私有仓，CI 构建 unsigned ipa）
 > 本地工作区：`C:\Users\Admin\WorkBuddy\fndanmu-tvos\build-package\swiftfin-fnos`
-> 当前版本：**v166**（焦点战役终结版，commit 6f4ce64；本文档 commit c5cd820），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
+> 当前版本：**v178**（评论弹窗滚动/透明度 + 已入库下键进内容区回滚；commit 9c08b1b），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
 > 交付物命名规则：`output/Swiftfin-FNOS-tvos-unsigned-vXX.ipa`（32MB 左右）
 
 ---

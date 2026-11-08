@@ -140,9 +140,19 @@ enum FNOSTMDBClient {
         return json
     }
 
+    /// v180: TMDB 人物详情（人物弹窗用；biography 官方简介）
+    static func personDetail(id: Int, apiKey: String) async -> [String: Any]? {
+        let urlString = "\(baseURL)/person/\(id)?api_key=\(apiKey)&language=zh-CN"
+        guard let url = URL(string: urlString) else { return nil }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 15
+        guard let (data, _) = try? await URLSession.shared.data(for: req),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        return json
+    }
+
     /// 从 richDetail JSON 提取 logo（优先 zh，退 en/any）
-    static func logoURL(from json: [String: Any]) -> URL? {
-        guard let images = json["images"] as? [String: Any],
+    static func logoURL(from json: [String: Any]) -> URL? {        guard let images = json["images"] as? [String: Any],
               let logos = images["logos"] as? [[String: Any]], !logos.isEmpty else { return nil }
         let path = logos.first?["file_path"] as? String ?? logos.first?["logo_path"] as? String
         guard let path, !path.isEmpty else { return nil }

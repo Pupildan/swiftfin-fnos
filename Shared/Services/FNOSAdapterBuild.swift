@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v178"
+    static let version = "v180"
 
     /// 本版主要变更摘要
-    static let changes = "v178:①修评论弹窗长文不能滚动:弹窗内容按长度切行、每行.focusable()(单个大Text非焦点目标,tvOS焦点引擎在ScrollView内无落点→滚不动),焦点逐行下移驱动ScrollView滚动看全文。②回滚v176:豆瓣相似推荐/番剧相关条目恢复外层.focusable()(v176撤掉后已入库内容下键进不去内容区——内部按钮非原生可聚焦)。"
+    static let changes = "v180:①修入库操作后/已入库内容详情页下键失效(根因:入库按钮是Hero区唯一可聚焦元素,libState!=idle时.disabled禁用→焦点释放且引擎不滚动重落点→焦点nil→下键无起点;与前两轮分区.focusable改动无关)。移除三详情页入库按钮.disabled,action已有幂等守卫不会重复订阅。②演员/角色/制作人员头像全部可点击:新增FNOSPersonPopupSheet人物弹窗(大头像+姓名+角色,TMDB附官方简介按长度切行滚动),豆瓣演员/TMDB演员/番剧角色·制作人员四处接线。③确认死代码:TMDB infoSection从未被body引用(内含重复演员行),待后续清理。"
 }

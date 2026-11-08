@@ -54,6 +54,8 @@ struct FNOSTMDBDetailView: View {
     @State private var productionRows: [(String, String)] = []
     @State private var trailer: FNOSTMDBClient.TMDBVideo?   // 全屏播放的预告（Identifiable）
     @State private var similarDetailItem: FNOSTMDBItem?  // 相似推荐点击进详情
+    /// v180: 人物弹窗（主要演员点击查看，TMDB 附官方简介）
+    @State private var popupPerson: FNOSPersonInfo?
     /// v125：Hero 海报取色（详情页背景高斯模糊用）
     @State private var themeColor: Color?
 
@@ -176,6 +178,21 @@ struct FNOSTMDBDetailView: View {
                 onDismiss: { similarDetailItem = nil }
             )
         }
+    }
+
+    // v180: 人物弹窗（主要演员点击查看，TMDB 附官方简介）
+    .fullScreenCover(item: $popupPerson) { person in
+        FNOSPersonPopupSheet(person: person, onClose: { popupPerson = nil })
+            .task {
+                // TMDB 人物拉官方简介，拉到后原位替换弹窗内容（id 不变不重播动画）
+                guard person.bio == nil,
+                      let pid = Int(person.id.replacingOccurrences(of: "tmdb-cast-", with: "")) else { return }
+                guard let detail = await FNOSTMDBClient.personDetail(id: pid, apiKey: apiKey),
+                      let bio = detail["biography"] as? String, !bio.isEmpty else { return }
+                if popupPerson?.id == person.id {
+                    popupPerson = FNOSPersonInfo(id: person.id, name: person.name, role: person.role, avatarURL: person.avatarURL, bio: bio)
+                }
+            }
     }
 
     // MARK: - v120 入库状态机
@@ -343,7 +360,8 @@ struct FNOSTMDBDetailView: View {
                         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .buttonStyle(.card)
-                    .disabled(libState != .idle)
+                    // v180: 移除 disabled——按钮是 Hero 唯一焦点锚点，禁用会释放焦点导致下键失效
+                    // （action 已有 guard libState == .idle 幂等保护，重复确认不会重复订阅）
 
                     if !mpMessage.isEmpty {
                         Text(mpMessage)
@@ -392,26 +410,40 @@ struct FNOSTMDBDetailView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 20) {
                         ForEach(cast) { member in
-                            VStack(spacing: 8) {
-                                if let profile = member.profileURL {
-                                    FNOSAsyncImage(url: profile, headers: [:])
-                                        .frame(width: 80, height: 80)
-                                        .clipShape(Circle())
-                                } else {
-                                    Circle()
-                                        .fill(Color.white.opacity(0.1))
-                                        .frame(width: 80, height: 80)
+                            // v180: 点击演员查看人物弹窗（TMDB 附官方简介）
+                            Button {
+                                let bigAvatar = member.profileURL.flatMap {
+                                    URL(string: $0.absoluteString.replacingOccurrences(of: "/w185/", with: "/w500/"))
                                 }
-                                Text(member.name)
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundColor(.white.opacity(0.85))
-                                    .lineLimit(1)
-                                Text(member.character)
-                                    .font(.system(size: 13))
-                                    .foregroundColor(.white.opacity(0.5))
-                                    .lineLimit(1)
+                                popupPerson = FNOSPersonInfo(
+                                    id: "tmdb-cast-\(member.id)",
+                                    name: member.name,
+                                    role: member.character,
+                                    avatarURL: bigAvatar
+                                )
+                            } label: {
+                                VStack(spacing: 8) {
+                                    if let profile = member.profileURL {
+                                        FNOSAsyncImage(url: profile, headers: [:])
+                                            .frame(width: 80, height: 80)
+                                            .clipShape(Circle())
+                                    } else {
+                                        Circle()
+                                            .fill(Color.white.opacity(0.1))
+                                            .frame(width: 80, height: 80)
+                                    }
+                                    Text(member.name)
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundColor(.white.opacity(0.85))
+                                        .lineLimit(1)
+                                    Text(member.character)
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.white.opacity(0.5))
+                                        .lineLimit(1)
+                                }
+                                .frame(width: 80)
                             }
-                            .frame(width: 80)
+                            .buttonStyle(.card)
                         }
                     }
                 }

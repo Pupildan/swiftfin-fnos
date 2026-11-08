@@ -55,6 +55,8 @@ struct FNOSBangumiDetailView: View {
     @State private var bgmComments: [FNOSBangumiClient.BangumiComment] = []
     /// v173: 当前弹窗展示的短评
     @State private var popupComment: FNOSBangumiClient.BangumiComment?
+    /// v180: 人物弹窗（制作人员/主要角色点击查看）
+    @State private var popupPerson: FNOSPersonInfo?
 
     /// v121：入库按钮状态机（与 TMDB 详情页同构）
     private enum LibState {
@@ -178,6 +180,10 @@ struct FNOSBangumiDetailView: View {
                 content: comment.content,
                 onClose: { popupComment = nil }
             )
+        }
+        // v180: 人物弹窗（制作人员/主要角色点击查看）
+        .fullScreenCover(item: $popupPerson) { person in
+            FNOSPersonPopupSheet(person: person, onClose: { popupPerson = nil })
         }
     }
 
@@ -343,7 +349,7 @@ struct FNOSBangumiDetailView: View {
                         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                     }
                     .buttonStyle(.card)
-                    .disabled(libState != .idle)
+                    // v180: 移除 disabled——按钮是 Hero 唯一焦点锚点，禁用会释放焦点导致下键失效
 
                     if !mpMessage.isEmpty {
                         Text(mpMessage)
@@ -402,26 +408,37 @@ struct FNOSBangumiDetailView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 20) {
                         ForEach(chars) { char in
-                            VStack(spacing: 8) {
-                                if let img = char.imageURL {
-                                    FNOSAsyncImage(url: img, headers: [:])
-                                        .frame(width: 80, height: 80)
-                                        .clipShape(Circle())
-                                } else {
-                                    Circle()
-                                        .fill(Color.white.opacity(0.1))
-                                        .frame(width: 80, height: 80)
+                            // v180: 点击角色查看人物弹窗
+                            Button {
+                                popupPerson = FNOSPersonInfo(
+                                    id: "bgm-char-\(char.id)",
+                                    name: char.name,
+                                    role: char.role,
+                                    avatarURL: char.imageURL
+                                )
+                            } label: {
+                                VStack(spacing: 8) {
+                                    if let img = char.imageURL {
+                                        FNOSAsyncImage(url: img, headers: [:])
+                                            .frame(width: 80, height: 80)
+                                            .clipShape(Circle())
+                                    } else {
+                                        Circle()
+                                            .fill(Color.white.opacity(0.1))
+                                            .frame(width: 80, height: 80)
+                                    }
+                                    Text(char.name)
+                                        .font(.system(size: 14, weight: .medium))
+                                        .foregroundColor(.white.opacity(0.85))
+                                        .lineLimit(1)
+                                    Text(char.role)
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.white.opacity(0.5))
+                                        .lineLimit(1)
                                 }
-                                Text(char.name)
-                                    .font(.system(size: 14, weight: .medium))
-                                    .foregroundColor(.white.opacity(0.85))
-                                    .lineLimit(1)
-                                Text(char.role)
-                                    .font(.system(size: 13))
-                                    .foregroundColor(.white.opacity(0.5))
-                                    .lineLimit(1)
+                                .frame(width: 80)
                             }
-                            .frame(width: 80)
+                            .buttonStyle(.card)
                         }
                     }
                 }
@@ -540,29 +557,40 @@ struct FNOSBangumiDetailView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 20) {
                     ForEach(persons) { person in
-                        VStack(spacing: 8) {
-                            if let img = person.imageURL {
-                                FNOSAsyncImage(url: img, headers: [:])
-                                    .frame(width: 88, height: 88)
-                                    .clipShape(Circle())
-                            } else {
-                                Circle()
-                                    .fill(Color.white.opacity(0.1))
-                                    .frame(width: 88, height: 88)
-                            }
-                            Text(person.name)
-                                .font(.system(size: 14, weight: .medium))
-                                .foregroundColor(.white.opacity(0.9))
-                                .lineLimit(1)
-                                .frame(width: 100)
-                            if !person.role.isEmpty {
-                                Text(person.role)
-                                    .font(.system(size: 13))
-                                    .foregroundColor(.white.opacity(0.5))
+                        // v180: 点击制作人员查看人物弹窗
+                        Button {
+                            popupPerson = FNOSPersonInfo(
+                                id: "bgm-person-\(person.id)",
+                                name: person.name,
+                                role: person.role,
+                                avatarURL: person.imageURL
+                            )
+                        } label: {
+                            VStack(spacing: 8) {
+                                if let img = person.imageURL {
+                                    FNOSAsyncImage(url: img, headers: [:])
+                                        .frame(width: 88, height: 88)
+                                        .clipShape(Circle())
+                                } else {
+                                    Circle()
+                                        .fill(Color.white.opacity(0.1))
+                                        .frame(width: 88, height: 88)
+                                }
+                                Text(person.name)
+                                    .font(.system(size: 14, weight: .medium))
+                                    .foregroundColor(.white.opacity(0.9))
                                     .lineLimit(1)
                                     .frame(width: 100)
+                                if !person.role.isEmpty {
+                                    Text(person.role)
+                                        .font(.system(size: 13))
+                                        .foregroundColor(.white.opacity(0.5))
+                                        .lineLimit(1)
+                                        .frame(width: 100)
+                                }
                             }
                         }
+                        .buttonStyle(.card)
                     }
                 }
             }

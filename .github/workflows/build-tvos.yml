@@ -22,6 +22,7 @@ jobs:
       # 缓存 DerivedData + SPM（两者都在 -derivedDataPath build 下）
       # 键随 Package.resolved 变化；restore-keys 兜底增量恢复
       - name: Restore build cache
+        id: cache
         uses: actions/cache/restore@v4
         with:
           path: build
@@ -75,9 +76,13 @@ jobs:
           cd ..
           ls -lh Swiftfin-FNOS-tvos-unsigned.ipa
 
-      # 失败也保存缓存：失败轮次里已编译的依赖/模块不浪费
+      # 失败也保存缓存：失败轮次里已编译的依赖/模块不浪费。
+      # 但 GitHub 缓存条目不可变——key 相同的第二次保存必然报
+      # "Unable to reserve cache ... another job may be creating this cache"（历史每次失败的原因）。
+      # 依赖几乎不变 → key 恒定 → restore 精确命中（cache-hit=true）时直接跳过 save，
+      # 省掉白跑的整目录 tar；只有 Package.resolved 变化（key 变新）才存新缓存。
       - name: Save build cache
-        if: always()
+        if: always() && steps.cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: build

@@ -2,7 +2,7 @@
 
 > 仓库：`Pupildan/swiftfin-fnos`（GitHub 私有仓，CI 构建 unsigned ipa）
 > 本地工作区：`C:\Users\Admin\WorkBuddy\fndanmu-tvos\build-package\swiftfin-fnos`
-> 当前版本：**v178**（评论弹窗滚动/透明度 + 已入库下键进内容区回滚；commit 9c08b1b），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
+> 当前版本：**v187**（回滚版：仅保留内嵌字幕显示修复/字幕图标/弹层标题；诊断埋点已就位），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
 > 交付物命名规则：`output/Swiftfin-FNOS-tvos-unsigned-vXX.ipa`（32MB 左右）
 
 ---
@@ -29,6 +29,8 @@ v130 我为了修「KS 轻微左右抖 + mpv 原地抖后重载」，把小漂�
 - **v130**：弹幕「渐进校正」——**严重回归**（见上方警告），已回滚。
 - **v131**：修首页 Hero 焦点跳页（三按钮补全右左导航）+ 豆瓣详情页照搬 TMDB 布局（hero+简介+主演头像+评论+按标题入库）+ 豆瓣海报高清 m_ratio + 弹幕回滚。
 - **v132-v166：首页焦点战役（36 版，详见文末「首页焦点战役」章节）**——轻触跳焦的定位与根除。关键节点：v139/v140 架构（Hero 进 ScrollView 随滚动滑出）；v143 诊断日志+半屏修复；v150 日志实锤根因（轻触漂移被分类为 .down 走 onDownToShelf）；v154-v157 经典模式/逐行掩码对照实验（证明任意一行可见即跳、三行全隐藏即正常）；v158 删 .down 分支（根除）；v161-v166 方案 A（推荐行跟随焦点域动态挂载，触发信号=Hero 焦点状态 onHeroFocusChanged，与 nil 计时无关——瞬态 nil 可超 1500ms，v163/v164 计时方案均败）。v152 上滑翻页/双击下键被用户否决；v146 DragGesture tvOS 不可用；v147 UIPanDetector 严重回归；v155 @AppStorage 观察者假设证伪。
+
+- **v167-v187：详情页评论/人物弹窗 + 播放器弹幕渲染重构 + 内嵌字幕（2026-11-07~09 增量，详见文末「评论弹窗·弹幕渲染·播放器」章节）**。关键节点：v168 frodo 签名缺 `/api/v2` 修复（celebrities/reviews/photos 三通道静默 400，一个根因三症状）；v169-v171 hero 弹幕三次重构（TimelineView 逐帧=闪烁 → .position 布局=抖动 → 双拷贝 marquee+精确测宽定稿）；v172/v176/v178/v181 分区 `.focusable()` 与 `.card` 灰底反复（真根因是入库按钮 `.disabled`，v180 实锤）；v180 人物弹窗 + 入库按钮移除 `.disabled`；v183 聚焦白块真修（`FNOSBareButtonStyle`，v76 已知坑重踩）；v184 评论弹窗段落分行 + 删调试区 + 自动跳片头片尾（play_config）；v185 内嵌字幕切换 + 诊断埋点；v186 内嵌字幕渲染层 + 换集面板重做 + 弹层玻璃化（用户要求回滚，v187 仅保留字幕渲染/图标/弹层标题）。
 
 ---
 
@@ -287,3 +289,54 @@ xcodebuild -project Swiftfin.xcodeproj -scheme "Swiftfin tvOS" \
 - 右滑前翻不可靠 = 硬件限制；若右物理键修好，v98 的 .right→pageNext 接线即可恢复前翻。
 - 推荐行空白 = 查数据层（fetch 失败/cache 空），不是挂载逻辑。
 - 完整症状→原因→解法对照表（10 项）见记忆文件 plan-a-dynamic-mount-known-issues。
+
+---
+
+# 评论弹窗·弹幕渲染·播放器（v167-v187）——铁律、踩坑与未解问题
+
+## 焦点规则（终版，v180/v183 实锤）
+1. **`.disabled()` 焦点陷阱**：正在聚焦的视图被 `.disabled()` → 焦点强制释放，引擎不会滚动找重落点 → 焦点 nil → 方向键全死。入库按钮是详情页 Hero 唯一可聚焦元素——v180 起已移除其 `.disabled`（action 有 `guard libState == .idle` 幂等守卫）。**永远不要 `.disabled()` 一个可能正在聚焦的元素**，状态用文案表达。
+2. **分区外层 `.focusable()`**：含 Button 的分区不带（焦点落分区上进不了内部按钮）；纯展示分区保留。豆瓣评论分区（无包裹）是金标准。注意：v176/v178 的反复是因为当时误判了已入库下键失效的根因（真因=入库按钮 .disabled）。
+3. **聚焦白块**：`.plain`/`.borderless` 在 ScrollView 内仍画系统焦点板（白圆角框），`focusEffectDisabled` 压不住——**自制可聚焦按钮一律 `FNOSBareButtonStyle()`（定义在 FNOSMainView.swift:2122）** + 自绘聚焦视觉（描边/缩放/白底黑字）。
+4. **tvOS 26 `.buttonStyle(.card)` 常驻渲染玻璃底**：内容不铺满按钮就露灰底（海报墙不露是因为海报铺满按钮）。
+
+## 弹幕渲染（v169-v174 血战定稿）
+- **闪烁/抖动根因**：TimelineView 逐帧重建（Canvas 或 Text.position 都犯过）；`.position()` 是布局属性每帧改触发宿主重布局。定稿 = `.offset()` 纯 transform + `.fixedSize()` 锁行宽。
+- **hero 评论弹幕（FNOSReviewDanmaku）**：每泳道「文本链·双拷贝」+ repeatForever 线性 offset；链宽用 NSString+实际字体精确测宽（粗估会让循环复位跳变）；禁 preference 测宽（真机不触发→静止）与 drawingGroup。
+- **播放器弹幕（FNOSDanmuView）**：KS+MPV 共用；弃 Canvas 逐帧重绘，原生 Text.offset；**引擎时间轴/锚点零改动（sync anchor 铁律未碰）**。残留极轻微停顿未根治（需录屏定位）。
+
+## 弹窗组件
+- **FNOSReviewPopupSheet（豆瓣评论）**：内容按自然段落分行（每段 focusable，**禁 110 字硬切**——句中截断被否决）；影评全文走 `/review/{rid}`（列表 abstract 是摘要截断），按影评 id 缓存；关闭按钮已删（Menu 关闭，内容行可聚焦保证 Menu 路由）。
+- **FNOSPersonPopupSheet（人物弹窗）**：豆瓣 frodo `/celebrity/{id}` extra.info 键值对（性别/生日/出生地/中英文名/家人/IMDb；**该端点无简介正文**）；TMDB personDetail（biography+生日+出生地）；番剧 /v0/persons、/v0/characters summary。
+- **播放器弹层（FNOSAudioTracksSheet）**：title 参数区分音轨/字幕；字幕图标 character.textbox。
+- **弹窗关闭按钮删除模式**：内容行可聚焦 → Menu 正确路由到弹窗 onExitCommand。
+
+## 内嵌字幕（未完成——v186 方案被回滚待重做）
+- **真因**：裸 KSVideoPlayer 不含 KSPlayer 字幕 UI——`coordinator.subtitleModel`（public）解码了内嵌字幕但无人渲染。
+- **v186 方案（已回滚）**：进度 tick 读 `subtitleModel.parts`（`text` 是 NSAttributedString，**按字幕原始信息显示、禁加阴影/字号**）叠加 overlay 渲染层；`select(track:)` 后 MEPlayer 置 isSeek 需小 seek 刷新。
+- **MPV 路径**字幕由 mpv 自渲染（v119 tone-mapping 已修），无需处理。
+
+## 自动跳过片头/片尾（未解决——诊断已埋，等真机数据）
+- fnOS `play/info` 原生携带 `play_config.skip_opening`（片头结束秒）/`skip_ending`（片尾开始秒）——形状来自参考项目 fntv-electron types.ts（该项目仅声明类型未消费）。
+- v184 已实现：playInfo 解析 + MediaRange 携带 + KS（resolveReporter 带回 + tick 自动 seek 单次触发）+ MPV（range 直读 + ticker 相对 seek）。
+- **未生效真因未定位**：v185/v186 诊断埋点（play_config 原始内容上报 FNOSDiag）已就位，但诊断日志（output/tvos-client.log，监听器工作正常）**无任何 play_config 行**——用户测试播放时电视上装的包版本存疑（诊断代码 v185 才有）。**装 v187+ 播一集凡人修仙传 → 读日志 → 实锤后修**。
+- 参考项目 fnos_tv_danmu 的跳过时间是本地 SharedPreferences 手动滑条（非服务器下发），仅交互逻辑（READY 时跳片头、tick 判片尾跳下一集）可参考。
+
+## 其他新增结论
+- **豆瓣 frodo 签名必须含 /api/v2**（v168）：celebrities/reviews/photos/celebrity 等全部 frodo GET 通道；frodoGet 统一走 frodoGetAny（数组根响应用它）。
+- **编译坑**（本轮多次首推失败）：成员初始化器实参顺序=声明顺序；嵌套类型跨视图引用需全限定（FNOSDanmuEngine.ActiveComment）；非可选属性不能 if let；fullScreenCover 内容闭包里的 .task 引用 item ✓ 但闭包外引用不到。
+- **8 线程分段并行下载**：`_tmp/v167_probe/get_v186_mt.ps1`（改 run id + ipa 名复用）；必须分段校验+顺序补拉（网络抖动会短段）；Start-Process ArgumentList 带空格参数要手动加引号；勿用 -C - 配 Range。
+- **TMDB infoSection 死代码**（未被 body 引用，内含重复演员行）——已确认待清理。
+- **debugLines 管道**：FNOSItemDetailView 的调试区 UI 已删（v184），debugLines 收集仍后台运行（不可见）。
+- **git 整包回滚**：reset --hard + force push（v179/v186 两次），被回滚的提交仍在 reflog/历史可寻。
+
+## 待解决问题清单（按用户优先级）
+1. 自动跳过片头/片尾未生效（诊断已埋，等 v187 真机播放凡人修仙传后读日志）
+2. 内嵌字幕显示（v186 渲染层被回滚——按字幕原始 NSAttributedString 显示、禁阴影，待重做）
+3. 字幕选择后不加载（select(track:) 后 MEPlayer isSeek 需刷新，与渲染层一起重做）
+4. 继续播放选集失效（分集自拉被回滚，待重做）
+5. 换集面板 4 集/页 + 标题 + 简介（被回滚，待重做）
+6. 播放器弹层液态玻璃化（被回滚，待重做；参照评论弹窗）
+7. 续播卡第 3+ 张上键无落点（方案 A 落设置按钮失败、binding 方案真机不完美——需新思路）
+8. MPV 路径内嵌字幕切换
+9. TMDB infoSection 死代码清理

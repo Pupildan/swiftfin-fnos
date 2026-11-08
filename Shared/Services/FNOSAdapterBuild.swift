@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v188"
+    static let version = "v189"
 
     /// 本版主要变更摘要
-    static let changes = "v188:①选集面板改版(用户指令):4张大卡同屏(424宽大缩略图+集数+标题+两行简介),展开/收起/方向键/点选操作逻辑零改动;②内嵌字幕按原始信息渲染:弃固定24pt字符串,UILabel直出NSAttributedString原文(原始字号/颜色/特效不动,禁阴影;原文无字号时才补38pt基准避免过小);③播放器三弹窗(弹幕设置/音轨切换/字幕切换)液态玻璃重构,参照评论弹窗FNOSReviewPopupSheet(glassEffect+presentationBackground+自绘聚焦白底黑字);④诊断日志通道断裂修复(用户播过仍抓不到的真因):FNOSDiag此前只print+内存30行缓冲从未POST到9999,现统一走FNOSDiagLog.send通道,缓冲扩到200行——装v188播放后play_config必然落盘。"
+    static let changes = "v189:①播放器三弹窗按用户指令重做:背景presentationBackground(.clear)不再糊视频(视频在播放必须看得见),按钮改官方tvOS26液态玻璃buttonStyle(.glass/.glassProminent),删自绘白胶囊;②内嵌字幕两修:正strokeWidth转负(CoreText正宽度=只描边=空心骨架字,转负=填充+描边同绘,恢复白字黑边本意)+sizeThatFits按文本实际高度布局(修字幕显示在屏幕正中,现贴底);③自动跳过片头片尾定论:服务端12样本skip值全null/缺失=服务端无跳过数据,客户端v184链路无bug;④诊断通道修复(v188已含:FNOSDiag并入FNOSDiagLog.send)。"
 }

@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v182"
+    static let version = "v183"
 
     /// 本版主要变更摘要
-    static let changes = "v182:①修聚焦白块:.plain按钮聚焦时tvOS系统自绘白色高亮块,九处内容行按钮加.focusEffectDisabled()关掉系统效果,只留自绘描边+缩放(Hero按钮同款模式)。②人物弹窗显示完整信息:豆瓣新增frodoCelebrityDetail打/celebrity/{id}取extra.info键值对(性别/出生日期/出生地/中英文名/家人/IMDb),TMDB补生日·出生地,番剧新增personSummary/characterSummary拉v0简介;信息行+简介切行逐行focusable滚动。③人物弹窗与豆瓣评论弹窗删除关闭按钮,Menu关闭(弹窗内容行可聚焦,Menu正确路由)。④确认豆瓣frodo人物端点无简介正文(extra.info即全部可得信息)。"
+    static let changes = "v183:修聚焦白色色块(.focusEffectDisabled压不住):FNOSMainView内FNOSBareButtonStyle注释早在v76时代就记录了根因——.plain/.borderless在ScrollView内仍会画系统焦点板(白圆角框),正解=空ButtonStyle让系统无可绘制外观。九处内容行按钮.buttonStyle(.plain)全部换FNOSBareButtonStyle(Hero按钮同款),保留.focusEffectDisabled()+自绘液态玻璃描边+轻微放大(用户指定效果)。聚焦时:头像/海报白描边+1.05-1.08放大,无任何系统底板。"
 }

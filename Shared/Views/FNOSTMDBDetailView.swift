@@ -452,7 +452,7 @@ struct FNOSTMDBDetailView: View {
                                 .scaleEffect(isF ? 1.08 : 1.0)
                                 .animation(.easeOut(duration: 0.15), value: isF)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(FNOSBareButtonStyle())
                             .focusEffectDisabled()
                             .focused($focusedItemID, equals: "cast-\(member.id)")
                         }
@@ -694,7 +694,7 @@ struct FNOSTMDBDetailView: View {
                             .scaleEffect(isF ? 1.04 : 1.0)
                             .animation(.easeOut(duration: 0.15), value: isF)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(FNOSBareButtonStyle())
                         .focusEffectDisabled()
                         .focused($focusedItemID, equals: "trl-\(video.key)")
                     }
@@ -742,7 +742,7 @@ struct FNOSTMDBDetailView: View {
                             .scaleEffect(isF ? 1.04 : 1.0)
                             .animation(.easeOut(duration: 0.15), value: isF)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(FNOSBareButtonStyle())
                         .focusEffectDisabled()
                         .focused($focusedItemID, equals: "bon-\(video.key)")
                     }
@@ -779,7 +779,7 @@ struct FNOSTMDBDetailView: View {
                             .scaleEffect(isF ? 1.05 : 1.0)
                             .animation(.easeOut(duration: 0.15), value: isF)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(FNOSBareButtonStyle())
                         .focusEffectDisabled()
                         .focused($focusedItemID, equals: "sim-\(sim.id)")
                     }

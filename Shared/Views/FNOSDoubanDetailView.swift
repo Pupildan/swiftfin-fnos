@@ -411,7 +411,7 @@ struct FNOSDoubanDetailView: View {
                                 .scaleEffect(isF ? 1.08 : 1.0)
                                 .animation(.easeOut(duration: 0.15), value: isF)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(FNOSBareButtonStyle())
                             .focusEffectDisabled()
                             .focused($focusedItemID, equals: "cel-\(person.id)")
                         }
@@ -525,9 +525,9 @@ struct FNOSDoubanDetailView: View {
                             .scaleEffect(isF ? 1.05 : 1.0)
                             .animation(.easeOut(duration: 0.15), value: isF)
                         }
-                            .buttonStyle(.plain)
-                            .focusEffectDisabled()
-                            .focused($focusedItemID, equals: "rec-\(rec.id)")
+                        .buttonStyle(FNOSBareButtonStyle())
+                        .focusEffectDisabled()
+                        .focused($focusedItemID, equals: "rec-\(rec.id)")
                     }
                 }
             }

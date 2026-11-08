@@ -459,7 +459,7 @@ struct FNOSBangumiDetailView: View {
                                 .scaleEffect(isF ? 1.08 : 1.0)
                                 .animation(.easeOut(duration: 0.15), value: isF)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(FNOSBareButtonStyle())
                             .focusEffectDisabled()
                             .focused($focusedItemID, equals: "char-\(char.id)")
                         }
@@ -618,7 +618,7 @@ struct FNOSBangumiDetailView: View {
                             .scaleEffect(isF ? 1.08 : 1.0)
                             .animation(.easeOut(duration: 0.15), value: isF)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(FNOSBareButtonStyle())
                         .focusEffectDisabled()
                         .focused($focusedItemID, equals: "person-\(person.id)")
                     }
@@ -666,7 +666,7 @@ struct FNOSBangumiDetailView: View {
                             .scaleEffect(isF ? 1.05 : 1.0)
                             .animation(.easeOut(duration: 0.15), value: isF)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(FNOSBareButtonStyle())
                         .focusEffectDisabled()
                         .focused($focusedItemID, equals: "rel-\(rel.id)")
                     }

@@ -57,6 +57,8 @@ struct FNOSBangumiDetailView: View {
     @State private var popupComment: FNOSBangumiClient.BangumiComment?
     /// v180: 人物弹窗（制作人员/主要角色点击查看）
     @State private var popupPerson: FNOSPersonInfo?
+    /// v181: 内容区焦点定位（角色/制作人员/相关条目逐项聚焦，自绘描边替代 .card 灰底）
+    @FocusState private var focusedItemID: String?
 
     /// v121：入库按钮状态机（与 TMDB 详情页同构）
     private enum LibState {
@@ -112,22 +114,23 @@ struct FNOSBangumiDetailView: View {
                             .padding(.horizontal, 60)
                             .padding(.top, 20)
                             .padding(.bottom, 40)
-                            // v117: 信息区可聚焦，否则下键无可落点、ScrollView 不滚动
-                            .focusable()
+                            // v181: 分区内含角色 Button——撤外层 .focusable() 让焦点进入内部卡片
                         // v123: 制作人员行
                         if !persons.isEmpty {
                             personsSection
                                 .padding(.horizontal, 60)
                                 .padding(.bottom, 40)
-                                .focusable()
+                                // v181: 分区内含 Button——撤外层 .focusable() 让焦点进入内部卡片
+                                #if os(tvOS)
+                                .focusSection()
+                                #endif
                         }
                         // v123: 相关条目行
                         if !related.isEmpty {
                             relatedSection
                                 .padding(.horizontal, 60)
                                 .padding(.bottom, 40)
-                                // v178: 回滚 v176——撤 .focusable() 后焦点进不去本节（内部按钮非原生可聚焦）
-                                .focusable()
+                                // v181: 分区内含 Button——撤外层 .focusable() 让焦点进入内部卡片
                                 #if os(tvOS)
                                 .focusSection()
                                 #endif
@@ -408,7 +411,8 @@ struct FNOSBangumiDetailView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 20) {
                         ForEach(chars) { char in
-                            // v180: 点击角色查看人物弹窗
+                            // v180: 点击角色查看人物弹窗；v181 无底样式+聚焦描边（撤 .card 灰底）
+                            let isF = focusedItemID == "char-\(char.id)"
                             Button {
                                 popupPerson = FNOSPersonInfo(
                                     id: "bgm-char-\(char.id)",
@@ -422,10 +426,12 @@ struct FNOSBangumiDetailView: View {
                                         FNOSAsyncImage(url: img, headers: [:])
                                             .frame(width: 80, height: 80)
                                             .clipShape(Circle())
+                                            .overlay(Circle().stroke(Color.white.opacity(isF ? 0.9 : 0), lineWidth: 3))
                                     } else {
                                         Circle()
                                             .fill(Color.white.opacity(0.1))
                                             .frame(width: 80, height: 80)
+                                            .overlay(Circle().stroke(Color.white.opacity(isF ? 0.9 : 0), lineWidth: 3))
                                     }
                                     Text(char.name)
                                         .font(.system(size: 14, weight: .medium))
@@ -437,8 +443,11 @@ struct FNOSBangumiDetailView: View {
                                         .lineLimit(1)
                                 }
                                 .frame(width: 80)
+                                .scaleEffect(isF ? 1.08 : 1.0)
+                                .animation(.easeOut(duration: 0.15), value: isF)
                             }
-                            .buttonStyle(.card)
+                            .buttonStyle(.plain)
+                            .focused($focusedItemID, equals: "char-\(char.id)")
                         }
                     }
                 }
@@ -557,7 +566,8 @@ struct FNOSBangumiDetailView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 20) {
                     ForEach(persons) { person in
-                        // v180: 点击制作人员查看人物弹窗
+                        // v180: 点击制作人员查看人物弹窗；v181 无底样式+聚焦描边（撤 .card 灰底）
+                        let isF = focusedItemID == "person-\(person.id)"
                         Button {
                             popupPerson = FNOSPersonInfo(
                                 id: "bgm-person-\(person.id)",
@@ -571,10 +581,12 @@ struct FNOSBangumiDetailView: View {
                                     FNOSAsyncImage(url: img, headers: [:])
                                         .frame(width: 88, height: 88)
                                         .clipShape(Circle())
+                                        .overlay(Circle().stroke(Color.white.opacity(isF ? 0.9 : 0), lineWidth: 3))
                                 } else {
                                     Circle()
                                         .fill(Color.white.opacity(0.1))
                                         .frame(width: 88, height: 88)
+                                        .overlay(Circle().stroke(Color.white.opacity(isF ? 0.9 : 0), lineWidth: 3))
                                 }
                                 Text(person.name)
                                     .font(.system(size: 14, weight: .medium))
@@ -589,8 +601,11 @@ struct FNOSBangumiDetailView: View {
                                         .frame(width: 100)
                                 }
                             }
+                            .scaleEffect(isF ? 1.08 : 1.0)
+                            .animation(.easeOut(duration: 0.15), value: isF)
                         }
-                        .buttonStyle(.card)
+                        .buttonStyle(.plain)
+                        .focused($focusedItemID, equals: "person-\(person.id)")
                     }
                 }
             }
@@ -606,6 +621,8 @@ struct FNOSBangumiDetailView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 20) {
                     ForEach(related) { rel in
+                        // v181: 无底样式+聚焦描边（撤 .card 灰底）
+                        let isF = focusedItemID == "rel-\(rel.id)"
                         Button {
                             relatedDetailItem = FNOSBangumiItem(
                                 id: rel.id, name: rel.name, nameCN: "",
@@ -617,6 +634,7 @@ struct FNOSBangumiDetailView: View {
                                 FNOSAsyncImage(url: rel.imageURL, headers: [:], usePosterCache: true)
                                     .frame(width: 150, height: 150 * 3 / 2)
                                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.white.opacity(isF ? 0.9 : 0), lineWidth: 3))
                                 Text(rel.name)
                                     .font(.system(size: 14, weight: .medium))
                                     .foregroundColor(.white.opacity(0.9))
@@ -630,8 +648,11 @@ struct FNOSBangumiDetailView: View {
                                         .frame(width: 150, alignment: .leading)
                                 }
                             }
+                            .scaleEffect(isF ? 1.05 : 1.0)
+                            .animation(.easeOut(duration: 0.15), value: isF)
                         }
-                        .buttonStyle(.card)
+                        .buttonStyle(.plain)
+                        .focused($focusedItemID, equals: "rel-\(rel.id)")
                     }
                 }
             }

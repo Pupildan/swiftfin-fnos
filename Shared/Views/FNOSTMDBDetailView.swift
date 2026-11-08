@@ -56,6 +56,8 @@ struct FNOSTMDBDetailView: View {
     @State private var similarDetailItem: FNOSTMDBItem?  // 相似推荐点击进详情
     /// v180: 人物弹窗（主要演员点击查看，TMDB 附官方简介）
     @State private var popupPerson: FNOSPersonInfo?
+    /// v181: 内容区焦点定位（演员/预告/相关内容逐项聚焦，自绘描边替代 .card 灰底）
+    @FocusState private var focusedItemID: String?
     /// v125：Hero 海报取色（详情页背景高斯模糊用）
     @State private var themeColor: Color?
 
@@ -109,7 +111,7 @@ struct FNOSTMDBDetailView: View {
                             castAvatarSection
                                 .padding(.horizontal, 60)
                                 .padding(.bottom, 40)
-                                .focusable()
+                                // v181: 分区内含 Button——撤外层 .focusable() 让焦点进入内部卡片
                                 #if os(tvOS)
                                 .focusSection()
                                 #endif
@@ -119,7 +121,7 @@ struct FNOSTMDBDetailView: View {
                             trailerSection
                                 .padding(.horizontal, 60)
                                 .padding(.bottom, 40)
-                                .focusable()
+                                // v181: 分区内含 Button——撤外层 .focusable()
                                 #if os(tvOS)
                                 .focusSection()
                                 #endif
@@ -129,7 +131,7 @@ struct FNOSTMDBDetailView: View {
                             bonusSection
                                 .padding(.horizontal, 60)
                                 .padding(.bottom, 40)
-                                .focusable()
+                                // v181: 分区内含 Button——撤外层 .focusable()
                                 #if os(tvOS)
                                 .focusSection()
                                 #endif
@@ -139,7 +141,7 @@ struct FNOSTMDBDetailView: View {
                             similarSection
                                 .padding(.horizontal, 60)
                                 .padding(.bottom, 40)
-                                .focusable()
+                                // v181: 分区内含 Button——撤外层 .focusable()
                                 #if os(tvOS)
                                 .focusSection()
                                 #endif
@@ -409,7 +411,8 @@ struct FNOSTMDBDetailView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 20) {
                         ForEach(cast) { member in
-                            // v180: 点击演员查看人物弹窗（TMDB 附官方简介）
+                            // v180: 点击演员查看人物弹窗（TMDB 附官方简介）；v181 无底样式+聚焦描边
+                            let isF = focusedItemID == "cast-\(member.id)"
                             Button {
                                 let bigAvatar = member.profileURL.flatMap {
                                     URL(string: $0.absoluteString.replacingOccurrences(of: "/w185/", with: "/w500/"))
@@ -426,10 +429,12 @@ struct FNOSTMDBDetailView: View {
                                         FNOSAsyncImage(url: profile, headers: [:])
                                             .frame(width: 80, height: 80)
                                             .clipShape(Circle())
+                                            .overlay(Circle().stroke(Color.white.opacity(isF ? 0.9 : 0), lineWidth: 3))
                                     } else {
                                         Circle()
                                             .fill(Color.white.opacity(0.1))
                                             .frame(width: 80, height: 80)
+                                            .overlay(Circle().stroke(Color.white.opacity(isF ? 0.9 : 0), lineWidth: 3))
                                     }
                                     Text(member.name)
                                         .font(.system(size: 14, weight: .medium))
@@ -441,8 +446,11 @@ struct FNOSTMDBDetailView: View {
                                         .lineLimit(1)
                                 }
                                 .frame(width: 80)
+                                .scaleEffect(isF ? 1.08 : 1.0)
+                                .animation(.easeOut(duration: 0.15), value: isF)
                             }
-                            .buttonStyle(.card)
+                            .buttonStyle(.plain)
+                            .focused($focusedItemID, equals: "cast-\(member.id)")
                         }
                     }
                 }
@@ -652,6 +660,8 @@ struct FNOSTMDBDetailView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 20) {
                     ForEach(videos.filter { $0.isTrailer }) { video in
+                        // v181: 无底样式+聚焦描边（撤 .card 灰底）
+                        let isF = focusedItemID == "trl-\(video.key)"
                         Button {
                             trailer = video
                         } label: {
@@ -670,14 +680,18 @@ struct FNOSTMDBDetailView: View {
                                         .font(.system(size: 44))
                                         .foregroundColor(.white.opacity(0.9))
                                 }
+                                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.white.opacity(isF ? 0.9 : 0), lineWidth: 3))
                                 Text(video.name)
                                     .font(.system(size: 15, weight: .medium))
                                     .foregroundColor(.white.opacity(0.9))
                                     .lineLimit(2)
                                     .frame(width: 280, alignment: .leading)
                             }
+                            .scaleEffect(isF ? 1.04 : 1.0)
+                            .animation(.easeOut(duration: 0.15), value: isF)
                         }
-                        .buttonStyle(.card)
+                        .buttonStyle(.plain)
+                        .focused($focusedItemID, equals: "trl-\(video.key)")
                     }
                 }
             }
@@ -693,6 +707,8 @@ struct FNOSTMDBDetailView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 20) {
                     ForEach(videos.filter { $0.isBonus }) { video in
+                        // v181: 无底样式+聚焦描边（撤 .card 灰底）
+                        let isF = focusedItemID == "bon-\(video.key)"
                         Button {
                             trailer = video
                         } label: {
@@ -711,14 +727,18 @@ struct FNOSTMDBDetailView: View {
                                         .font(.system(size: 44))
                                         .foregroundColor(.white.opacity(0.9))
                                 }
+                                .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).stroke(Color.white.opacity(isF ? 0.9 : 0), lineWidth: 3))
                                 Text(video.name)
                                     .font(.system(size: 15, weight: .medium))
                                     .foregroundColor(.white.opacity(0.9))
                                     .lineLimit(2)
                                     .frame(width: 280, alignment: .leading)
                             }
+                            .scaleEffect(isF ? 1.04 : 1.0)
+                            .animation(.easeOut(duration: 0.15), value: isF)
                         }
-                        .buttonStyle(.card)
+                        .buttonStyle(.plain)
+                        .focused($focusedItemID, equals: "bon-\(video.key)")
                     }
                 }
             }
@@ -734,6 +754,8 @@ struct FNOSTMDBDetailView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 20) {
                     ForEach(similar) { sim in
+                        // v181: 无底样式+聚焦描边（撤 .card 灰底）
+                        let isF = focusedItemID == "sim-\(sim.id)"
                         Button {
                             similarDetailItem = sim
                         } label: {
@@ -741,14 +763,18 @@ struct FNOSTMDBDetailView: View {
                                 FNOSAsyncImage(url: sim.posterURL, headers: [:], usePosterCache: true)
                                     .frame(width: 160, height: 240)
                                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.white.opacity(isF ? 0.9 : 0), lineWidth: 3))
                                 Text(sim.title)
                                     .font(.system(size: 15, weight: .medium))
                                     .foregroundColor(.white.opacity(0.9))
                                     .lineLimit(2)
                                     .frame(width: 160, alignment: .leading)
                             }
+                            .scaleEffect(isF ? 1.05 : 1.0)
+                            .animation(.easeOut(duration: 0.15), value: isF)
                         }
-                        .buttonStyle(.card)
+                        .buttonStyle(.plain)
+                        .focused($focusedItemID, equals: "sim-\(sim.id)")
                     }
                 }
             }

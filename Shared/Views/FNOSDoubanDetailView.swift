@@ -27,6 +27,8 @@ struct FNOSDoubanDetailView: View {
     @State private var fullContentCache: [String: String] = [:]
     /// v180: 人物弹窗（演员头像点击查看）
     @State private var popupPerson: FNOSPersonInfo?
+    /// v181: 内容区焦点定位（演员/相似推荐逐项聚焦，自绘描边替代 .card 灰底）
+    @FocusState private var focusedItemID: String?
     /// v167: Hero 横屏高清剧照（frodo photos）；nil 时竖版海报垫底兜底
     @State private var landscapeURL: URL?
     /// v168: 相似推荐 + 点按进详情（与 TMDB similar 同款递归）
@@ -81,13 +83,13 @@ struct FNOSDoubanDetailView: View {
                         // v167: 内容区严格按 TMDB 版式拆段——主要演员 / 评论 / 制作信息，
                         // 每段独立 focusable(+focusSection)，与 FNOSTMDBDetailView 同构
                         if !celebrities.isEmpty || !(frodo?.castNames.isEmpty ?? true) {
-                            celebSection
-                                .padding(.horizontal, 60)
-                                .padding(.bottom, 40)
-                                .focusable()
-                                #if os(tvOS)
-                                .focusSection()
-                                #endif
+                        celebSection
+                            .padding(.horizontal, 60)
+                            .padding(.bottom, 40)
+                            // v181: 分区内含 Button——外层 .focusable() 会挡住焦点进入内部按钮（确认无反应）
+                            #if os(tvOS)
+                            .focusSection()
+                            #endif
                         }
                         if !reviews.isEmpty {
                             reviewsSection
@@ -105,7 +107,7 @@ struct FNOSDoubanDetailView: View {
                             similarSection
                                 .padding(.horizontal, 60)
                                 .padding(.bottom, 40)
-                                .focusable()
+                                // v181: 分区内含 Button——撤外层 .focusable() 让焦点进入内部卡片
                                 #if os(tvOS)
                                 .focusSection()
                                 #endif
@@ -363,7 +365,8 @@ struct FNOSDoubanDetailView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: 20) {
                         ForEach(celebrities) { person in
-                            // v180: 点击演员查看人物弹窗
+                            // v180: 点击演员查看人物弹窗；v181 无底样式+聚焦描边（撤 .card 灰底）
+                            let isF = focusedItemID == "cel-\(person.id)"
                             Button {
                                 popupPerson = FNOSPersonInfo(
                                     id: "douban-cel-\(person.id)",
@@ -377,8 +380,12 @@ struct FNOSDoubanDetailView: View {
                                         FNOSAsyncImage(url: avatar, headers: ["Referer": "https://movie.douban.com/"])
                                             .frame(width: 80, height: 80)
                                             .clipShape(Circle())
+                                            .overlay(Circle().stroke(Color.white.opacity(isF ? 0.9 : 0), lineWidth: 3))
                                     } else {
-                                        Circle().fill(Color.white.opacity(0.1)).frame(width: 80, height: 80)
+                                        Circle()
+                                            .fill(Color.white.opacity(0.1))
+                                            .frame(width: 80, height: 80)
+                                            .overlay(Circle().stroke(Color.white.opacity(isF ? 0.9 : 0), lineWidth: 3))
                                     }
                                     Text(person.name)
                                         .font(.system(size: 14, weight: .medium))
@@ -392,8 +399,11 @@ struct FNOSDoubanDetailView: View {
                                     }
                                 }
                                 .frame(width: 80)
+                                .scaleEffect(isF ? 1.08 : 1.0)
+                                .animation(.easeOut(duration: 0.15), value: isF)
                             }
-                            .buttonStyle(.card)
+                            .buttonStyle(.plain)
+                            .focused($focusedItemID, equals: "cel-\(person.id)")
                         }
                     }
                 }
@@ -478,6 +488,8 @@ struct FNOSDoubanDetailView: View {
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 20) {
                     ForEach(recItems) { rec in
+                        // v181: 无底样式+聚焦描边（撤 .card 灰底）
+                        let isF = focusedItemID == "rec-\(rec.id)"
                         Button {
                             recDetailItem = FNOSDoubanItem(
                                 id: rec.id,
@@ -493,14 +505,18 @@ struct FNOSDoubanDetailView: View {
                                 FNOSAsyncImage(url: rec.posterURL, headers: ["Referer": "https://movie.douban.com/"], usePosterCache: true)
                                     .frame(width: 160, height: 240)
                                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+                                    .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(Color.white.opacity(isF ? 0.9 : 0), lineWidth: 3))
                                 Text(rec.title)
                                     .font(.system(size: 15, weight: .medium))
                                     .foregroundColor(.white.opacity(0.9))
                                     .lineLimit(2)
                                     .frame(width: 160, alignment: .leading)
                             }
+                            .scaleEffect(isF ? 1.05 : 1.0)
+                            .animation(.easeOut(duration: 0.15), value: isF)
                         }
-                        .buttonStyle(.card)
+                        .buttonStyle(.plain)
+                        .focused($focusedItemID, equals: "rec-\(rec.id)")
                     }
                 }
             }

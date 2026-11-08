@@ -235,6 +235,96 @@ final class FNOSPanBridge: NSObject {
     }
 }
 
+// MARK: - v190 弹幕设置面板滑动桥（触摸板/转盘滑动连续调节聚焦滑块）
+
+/// 面板滑动协调器：手势挂在内容根视图（标记防重挂），仅弹幕设置弹窗显示且聚焦滑块时
+/// 消费水平滑动；垂直滑动不接管（留给焦点引擎在行间移动）。
+final class FNOSPanelPanCoordinator: NSObject, UIGestureRecognizerDelegate {
+    static let shared = FNOSPanelPanCoordinator()
+
+    weak private var hostView: UIView?
+    private var recognizer: UIPanGestureRecognizer?
+    var isActive = false
+    var activeSliderID: String?
+
+    /// updateUIView 每次回传宿主视图；爬到 window 直下挂一次手势（按标记防重）
+    func setHost(_ view: UIView) {
+        guard hostView !== view else { return }
+        hostView = view
+        mountIfNeeded()
+    }
+
+    private func mountIfNeeded() {
+        guard recognizer == nil, let host = hostView else { return }
+        var root = host
+        while let superview = root.superview, !(superview is UIWindow) {
+            root = superview
+        }
+        if let existing = root.gestureRecognizers?.first(where: {
+            ($0 as? UIPanGestureRecognizer)?.name == "fnos.danmu.panel.pan"
+        }) {
+            recognizer = existing as? UIPanGestureRecognizer
+            return
+        }
+        let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handle(_:)))
+        recognizer.name = "fnos.danmu.panel.pan"
+        recognizer.cancelsTouchesInView = false
+        recognizer.delegate = self
+        root.addGestureRecognizer(recognizer)
+        self.recognizer = recognizer
+    }
+
+    @objc private func handle(_ gesture: UIPanGestureRecognizer) {
+        guard isActive, let id = activeSliderID else { return }
+        guard gesture.state == .changed else { return }
+        let dx = gesture.translation(in: gesture.view ?? hostView).x
+        gesture.setTranslation(.zero, in: gesture.view)
+        adjust(sliderID: id, delta: Double(dx))
+    }
+
+    /// 直接写 UserDefaults（@AppStorage 随外部写入即时刷新）；灵敏度按行分别调校
+    private func adjust(sliderID: String, delta: Double) {
+        func clamp(_ v: Double, _ lo: Double, _ hi: Double) -> Double { min(hi, max(lo, v)) }
+        switch sliderID {
+        case "size":
+            let current = UserDefaults.standard.double(forKey: "fnos.danmu.fontSize")
+            UserDefaults.standard.set(clamp(current + delta * 0.12, 16, 44), forKey: "fnos.danmu.fontSize")
+        case "opacity":
+            let current = UserDefaults.standard.double(forKey: "fnos.danmu.opacity")
+            UserDefaults.standard.set(clamp(current + delta * 0.003, 0.2, 1.0), forKey: "fnos.danmu.opacity")
+        case "speed":
+            let current = UserDefaults.standard.double(forKey: "fnos.danmu.speed")
+            UserDefaults.standard.set(clamp(current + delta * 0.008, 0.5, 2.5), forKey: "fnos.danmu.speed")
+        case "area":
+            let current = UserDefaults.standard.double(forKey: "fnos.danmu.area")
+            UserDefaults.standard.set(clamp(current + delta * 0.0015, 0.25, 0.75), forKey: "fnos.danmu.area")
+        default:
+            break
+        }
+    }
+
+    /// 仅水平意图才接管；未聚焦滑块时完全不参与（触摸板行为与平时一致）
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard isActive, activeSliderID != nil, let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
+        let translation = pan.translation(in: pan.view)
+        return abs(translation.x) > abs(translation.y)
+    }
+}
+
+/// 面板背景宿主（本身不吃触摸），只负责把视图交给协调器爬根挂手势
+private struct FNOSPanelPanHostView: UIViewRepresentable {
+    func makeUIView(context: Context) -> UIView {
+        let view = UIView()
+        view.backgroundColor = .clear
+        view.isUserInteractionEnabled = false
+        return view
+    }
+
+    func updateUIView(_ uiView: UIView, context: Context) {
+        FNOSPanelPanCoordinator.shared.setHost(uiView)
+    }
+}
+
 // MARK: - 播放容器
 
 struct FNOSPlayerContainerView: View {
@@ -1593,6 +1683,8 @@ struct FNOSDanmuSettingsSheet: View {
     @AppStorage("fnos.danmu.speed") private var speed: Double = 1
     /// v190: 弹幕显示区域（屏高比例；引擎泳道数与渲染层共用此值）
     @AppStorage("fnos.danmu.area") private var area: Double = 0.3
+    /// v190: 隐藏底部固定弹幕（即时生效）
+    @AppStorage("fnos.danmu.hideBottom") private var hideBottom = false
 
     /// v189: overlay 承载无 dismiss 环境，关闭由宿主回调
     let onClose: () -> Void
@@ -1615,33 +1707,59 @@ struct FNOSDanmuSettingsSheet: View {
             sliderRow(id: "speed", title: "速度", value: $speed, range: 0.5...2.5, step: 0.05) {
                 String(format: "%.2fx", $0)
             }
-            sliderRow(id: "area", title: "显示区域", value: $area, range: 0.25...1.0, step: 0.05) {
+            // v190: 显示区域上限 75%——底部 260pt 是字幕保护区（不准显示弹幕，用户死规则）
+            sliderRow(id: "area", title: "显示区域", value: $area, range: 0.25...0.75, step: 0.05) {
                 "\(Int(($0 * 100).rounded())) % 屏"
             }
 
+            // v190: 隐藏底部弹幕开关（即时生效，控制引擎丢弃底部固定弹幕）
             Button {
-                onClose()
+                hideBottom.toggle()
             } label: {
-                Text("完成")
-                    .font(.system(size: 17, weight: .semibold))
-                    .frame(width: 180, height: 46)
+                HStack(spacing: 10) {
+                    Image(systemName: hideBottom ? "checkmark.circle.fill" : "circle")
+                        .font(.system(size: 17))
+                    Text("隐藏底部弹幕")
+                        .font(.system(size: 16))
+                    Spacer()
+                }
+                .padding(.horizontal, 22)
+                .padding(.vertical, 11)
             }
-            // v189: 官方液态玻璃主按钮（tvOS 26），焦点态由系统渲染
-            .buttonStyle(.glassProminent)
-            .focused($focusedControl, equals: "done")
+            .buttonStyle(.glass)
+            .focused($focusedControl, equals: "hideBottom")
         }
         .padding(26)
         .frame(width: 680)
         // v189: iOS 26 官方液态玻璃面板——overlay 层级下直接对播放画面折射
         // v190: 面板随内容自适应（宿主 overlay 锚定在功能按钮上方，不再全屏居中）
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .background(
+            // v190: 触摸板/转盘滑动桥（背景宿主视图，协调器爬根挂手势）
+            FNOSPanelPanHostView()
+        )
         // Menu 键关闭（焦点在面板内时路由到此处；FNOSReviewPopupSheet 同款模式）
         .onExitCommand(perform: onClose)
         .onAppear {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 if focusedControl == nil { focusedControl = "size" }
             }
+            FNOSPanelPanCoordinator.shared.isActive = true
+            FNOSPanelPanCoordinator.shared.activeSliderID = sliderID(from: focusedControl)
         }
+        .onDisappear {
+            FNOSPanelPanCoordinator.shared.isActive = false
+            FNOSPanelPanCoordinator.shared.activeSliderID = nil
+        }
+        .onChange(of: focusedControl) { newValue in
+            FNOSPanelPanCoordinator.shared.activeSliderID = sliderID(from: newValue)
+        }
+    }
+
+    /// v190: 仅四个滑块可被滑动调节；开关行不吃滑动手势
+    private func sliderID(from control: String?) -> String? {
+        guard let control, ["size", "opacity", "speed", "area"].contains(control) else { return nil }
+        return control
     }
 
     /// v190: 无极滑块行（液态玻璃风格）。tvOS 系统 Slider 焦点行为不可靠（历史老坑），

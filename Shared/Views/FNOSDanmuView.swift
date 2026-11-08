@@ -74,7 +74,9 @@ final class FNOSDanmuEngine: ObservableObject {
         let area = stored > 0.05 ? min(max(stored, 0.2), 1.0) : 0.3
         let storedFS = UserDefaults.standard.double(forKey: "fnos.danmu.fontSize")
         let laneH = (storedFS > 8 ? storedFS : 26) * 1.4
-        return max(1, min(maxLanePool, Int((1080.0 * area - 110.0) / laneH)))
+        // v190: 字幕保护区——泳道下限封顶 屏高-260（底部字幕区域严禁弹幕，用户死规则）
+        let cap = min(1080.0 * area, 1080.0 - 260.0)
+        return max(1, min(maxLanePool, Int((cap - 110.0) / laneH)))
     }
     /// 滚动弹幕全程耗时上限（秒）——按最慢速度 0.5x 估算，快速时绘制端会跳过出屏弹幕
     private let travelDuration: Double = 30
@@ -355,6 +357,10 @@ final class FNOSDanmuEngine: ObservableObject {
 
     private func activate(_ comment: FNOSDanmuComment, at mediaTime: Double) {
         if comment.mode == 4 || comment.mode == 5 {
+            // v190: 底部固定弹幕可整体隐藏（弹幕设置开关，即时生效）
+            if comment.mode == 4, UserDefaults.standard.bool(forKey: "fnos.danmu.hideBottom") {
+                return
+            }
             // 底部/顶部固定弹幕：同区同屏最多 1 条
             let occupied = active.contains {
                 $0.comment.mode == comment.mode && (mediaTime - $0.comment.time) < fixedDuration
@@ -455,7 +461,8 @@ struct FNOSDanmuView: View {
             let elapsed = mediaNow - comment.time
             guard elapsed >= 0, elapsed <= 5 else { return nil }
             let rawY = comment.mode == 4
-                ? size.height - 80 + CGFloat(offsetY)
+                // v190: 底部固定弹幕上移到字幕保护区（底部 260pt）之上，禁止压字幕
+                ? size.height - 290 + CGFloat(offsetY)
                 : laneTopInset
             let y = min(max(rawY, 60), size.height - 60)
             let textW = estimatedWidth(of: comment.text)
@@ -468,8 +475,10 @@ struct FNOSDanmuView: View {
         let distance = CGFloat(mediaNow - comment.time) * velocity
         let leadingX = size.width - distance
 
-        // v190: 显示区域保护——引擎泳道数按 1080 基准算，容器实际更矮时裁掉区域外弹幕
-        let visibleLanes = max(1, Int((size.height * CGFloat(displayArea) - laneTopInset) / laneHeight))
+        // v190: 显示区域保护——引擎泳道数按 1080 基准算，容器实际更矮时裁掉区域外弹幕；
+        // 字幕保护区（底部 260pt）同样对滚动弹幕封顶
+        let laneBottom = min(size.height * CGFloat(displayArea), size.height - 260)
+        let visibleLanes = max(1, Int((laneBottom - laneTopInset) / laneHeight))
         if entry.lane >= visibleLanes { return nil }
 
         let y = laneTopInset + CGFloat(entry.lane) * laneHeight

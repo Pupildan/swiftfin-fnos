@@ -60,8 +60,6 @@ struct FNOSMPVPlayerView: View {
     @State private var showDanmu = true
     @State private var showEpisodeStrip = false
     @State private var showDanmuSettings = false
-    @State private var showInfo = false
-    @State private var infoText = ""
     @State private var switching = false
     /// 自动分流提示（只在自动切换时出现一次）
     @State private var engineToast: String?
@@ -168,11 +166,6 @@ struct FNOSMPVPlayerView: View {
                 if showResumeChoice {
                     resumeChoiceOverlay
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
-                }
-
-                if showInfo {
-                    infoPanel
-                        .allowsHitTesting(false)
                 }
 
                 if let engineToast {
@@ -351,10 +344,6 @@ struct FNOSMPVPlayerView: View {
                                 showSubtitleSheet = true
                             }
                         }
-                    }
-                    controlButton(.info, icon: "info.circle") {
-                        showInfo.toggle()
-                        infoText = infoSummary(player)
                     }
                 }
             }
@@ -738,41 +727,6 @@ struct FNOSMPVPlayerView: View {
         }
     }
 
-    // MARK: - 诊断面板
-
-    private var infoPanel: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(infoText)
-                .font(.system(size: 15, design: .monospaced))
-                .foregroundColor(.white)
-        }
-        .padding(16)
-        .background(Color.black.opacity(0.72), in: RoundedRectangle(cornerRadius: 12))
-        .padding(.leading, 52)
-        .padding(.bottom, 180)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomLeading)
-    }
-
-    private func infoSummary(_ player: MPVPlayer) -> String {
-        let diagnostics = player.playbackDiagnostics
-
-        func num(_ value: Int64?) -> String { value.map(String.init) ?? "-" }
-        func fps(_ value: Double?) -> String {
-            guard let value, value.isFinite else { return "-" }
-            return String(format: "%.1f", value)
-        }
-
-        let decoder = diagnostics.decoder.selectedDecoder ?? "-"
-        let hardware = diagnostics.decoder.videoToolboxSessionUsesHardware.map { $0 ? "硬解" : "软解" } ?? "-"
-
-        return """
-        解码 \(decoder) \(hardware)
-        丢帧 解码 \(num(diagnostics.decoderDroppedFrames)) / 输出 \(num(diagnostics.outputDroppedFrames)) / 错时 \(num(diagnostics.mistimedFrames))
-        帧率 容器 \(fps(diagnostics.containerFramesPerSecond)) → 解码 \(fps(diagnostics.estimatedDecodedFramesPerSecond)) / 显示 \(fps(diagnostics.estimatedDisplayFramesPerSecond)) (面板 \(fps(diagnostics.nominalDisplayFramesPerSecond)))
-        色彩 \(shortDV(player))
-        """
-    }
-
     // MARK: - 控制条显隐
 
     private func bumpActivity() {
@@ -953,12 +907,13 @@ struct FNOSMPVPlayerView: View {
                     }
                 }
 
-                // 自动隐藏：播放中、无面板展开、5 秒无操作
+                // 自动隐藏：播放中、无面板/弹层展开、5 秒无操作
                 if controlsVisible,
                    !player.isPaused,
                    !showEpisodeStrip,
                    !showDanmuSettings,
-                   !showInfo,
+                   !showAudioSheet,
+                   !showSubtitleSheet,
                    Date().timeIntervalSince(lastActivity) > 5 {
                     hideControls()
                 }

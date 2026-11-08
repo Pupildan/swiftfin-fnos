@@ -291,9 +291,13 @@ final class FNOSDiag {
             seen.insert(key)
         }
         lines.append(entry)
-        if lines.count > 30 { lines.removeFirst(lines.count - 30) }
+        if lines.count > 200 { lines.removeFirst(lines.count - 200) }
         lock.unlock()
         print("FNOSDiag \(entry)")
+        // v188 修复：FNOSDiag 此前只 print + 内存缓冲（仅设置面板可见，30 行很快被冲掉），
+        // 从未 POST 到开发机 9999 监听器——播放器侧全部诊断（play_config/上报/续播/自动跳过）
+        // 自埋点起就没落过盘。统一走 FNOSDiagLog.send（焦点战役日志同款通道，真机已验证可达）。
+        FNOSDiagLog.send(entry)
     }
 
     func snapshot() -> [String] {

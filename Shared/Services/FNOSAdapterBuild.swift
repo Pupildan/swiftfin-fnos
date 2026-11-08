@@ -18,5 +18,5 @@ enum FNOSAdapterBuild {
     static let version = "v188"
 
     /// 本版主要变更摘要
-    static let changes = "v188:①选集面板改版(用户指令):4张大卡同屏(424宽大缩略图+集数+标题+两行简介),展开/收起/方向键/点选操作逻辑零改动;②内嵌字幕按原始信息渲染:弃固定24pt字符串,UILabel直出NSAttributedString原文(原始字号/颜色/特效不动,禁阴影;原文无字号时才补38pt基准避免过小);③播放器三弹窗(弹幕设置/音轨切换/字幕切换)液态玻璃重构,参照评论弹窗FNOSReviewPopupSheet(glassEffect+presentationBackground+自绘聚焦白底黑字);④自动跳过片头片尾诊断埋点保留(play_config上报),等待真机播放抓取。"
+    static let changes = "v188:①选集面板改版(用户指令):4张大卡同屏(424宽大缩略图+集数+标题+两行简介),展开/收起/方向键/点选操作逻辑零改动;②内嵌字幕按原始信息渲染:弃固定24pt字符串,UILabel直出NSAttributedString原文(原始字号/颜色/特效不动,禁阴影;原文无字号时才补38pt基准避免过小);③播放器三弹窗(弹幕设置/音轨切换/字幕切换)液态玻璃重构,参照评论弹窗FNOSReviewPopupSheet(glassEffect+presentationBackground+自绘聚焦白底黑字);④诊断日志通道断裂修复(用户播过仍抓不到的真因):FNOSDiag此前只print+内存30行缓冲从未POST到9999,现统一走FNOSDiagLog.send通道,缓冲扩到200行——装v188播放后play_config必然落盘。"
 }

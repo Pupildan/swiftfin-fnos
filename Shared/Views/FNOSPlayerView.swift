@@ -393,8 +393,9 @@ struct FNOSPlayerContainerView: View {
     // 换集条：默认不展开（一上来就渲染 24 张缩略图会跟弹幕争内存，拖动进度条容易闪退）
     @State private var showEpisodeStrip = false
     @FocusState private var focusedChip: String?
-    /// v188: KS 内嵌字幕当前文本（NSAttributedString 原文直出，原始字号/颜色/特效不动）
-    @State private var embeddedSubtitleAttr: NSAttributedString?
+    /// v190: KS 内嵌字幕当前文本（纯文本 + 软件默认字体渲染，不要描边/阴影——
+    /// 用户实测：字幕自带的 ASS 描边样式渲染出来是线条骨架字，弃用原样式）
+    @State private var embeddedSubtitleText = ""
 
     private enum Control: Hashable {
         case rewind, playPause, forward, rate, danmu, danmuSettings, audio, subtitle, scrubber
@@ -414,11 +415,15 @@ struct FNOSPlayerContainerView: View {
         // 无感探测：KS 正常起播，同时后台问一次飞牛"这片子是什么格式"，
         // 只有 P5/P7（KS 必然偏色）才在几百毫秒内切到 mpv 并带进度续播。
         .overlay(alignment: .bottom) {
-            // v188: 内嵌字幕渲染层（KS 路径）——UILabel 直出 NSAttributedString 原文：
-            // 字幕自带的字号/颜色/特效原样呈现，组件自身不加阴影等任何特效（用户明令）
-            if let sub = embeddedSubtitleAttr {
-                FNOSAttributedSubtitleView(text: sub)
-                    .padding(.horizontal, 120)
+            // v190: 内嵌字幕渲染层（KS 路径）——软件默认字体直出纯文本，无描边/无阴影；
+            // SwiftUI Text 自适配内容尺寸，overlay 贴底对齐（v189 居中 bug 不会复发）
+            if !embeddedSubtitleText.isEmpty {
+                Text(embeddedSubtitleText)
+                    .font(.system(size: 40, weight: .medium))
+                    .foregroundColor(.white)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .padding(.horizontal, 160)
                     .padding(.bottom, 150)
                     .allowsHitTesting(false)
             }
@@ -680,9 +685,9 @@ struct FNOSPlayerContainerView: View {
             // v119：离开播放器恢复系统屏保策略
             UIApplication.shared.isIdleTimerDisabled = false
         }
-        // v189: 三弹窗改播放器内 overlay（原 .sheet 在 tvOS 上系统自带压暗+玻璃只能对暗背景折射
-        // = 死灰板无玻璃感）。overlay 与视频同层级，glassEffect 直接对播放画面折射=真液态玻璃
-        .overlay {
+        // v189/v190: 三弹窗播放器内 overlay——玻璃直接折射播放画面（.sheet 系统压暗+死灰板已否决）。
+        // v190: 面板缩小并锚定在控制条功能按钮上方（不在屏幕正中），出现/消失带过渡动画
+        .overlay(alignment: .bottomTrailing) {
             if isSheetPresented {
                 Group {
                     if subtitleSheetPresented {
@@ -710,16 +715,20 @@ struct FNOSPlayerContainerView: View {
                         FNOSDanmuSettingsSheet(onClose: { closeSheet() })
                     }
                 }
-                .transition(.opacity)
+                .padding(.trailing, 90)
+                .padding(.bottom, 170)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
     }
 
-    /// v189: overlay 弹窗关闭（原 .sheet onDismiss 逻辑平移）
+    /// v189: overlay 弹窗关闭（原 .sheet onDismiss 逻辑平移；v190 带过渡动画）
     private func closeSheet() {
-        audioSheetPresented = false
-        subtitleSheetPresented = false
-        isSheetPresented = false
+        withAnimation(.easeInOut(duration: 0.2)) {
+            audioSheetPresented = false
+            subtitleSheetPresented = false
+            isSheetPresented = false
+        }
         DispatchQueue.main.async {
             focus = .playPause
         }
@@ -774,24 +783,13 @@ struct FNOSPlayerContainerView: View {
                         FNOSDiag.shared.add("自动跳过片尾 → \(Int(total - 1.5))s")
                     }
                 }
-                // v188: 渲染 KSPlayer 内嵌字幕（裸播放视图不含 KSPlayer 字幕 UI，需自行显示）。
-                // parts[].text 是 NSAttributedString——原文直出；仅当原文完全无字号时
-                // 才补基准字号（避免 UILabel 默认 17pt 过小），禁阴影/禁加工
-                let subParts = coordinator.subtitleModel.parts.compactMap { $0.text }.filter { $0.length > 0 }
-                let subAttr: NSAttributedString?
-                if subParts.isEmpty {
-                    subAttr = nil
-                } else if subParts.count == 1 {
-                    subAttr = normalizeSubtitleAttr(subParts[0])
-                } else {
-                    let joined = NSMutableAttributedString()
-                    for (index, part) in subParts.enumerated() {
-                        if index > 0 { joined.append(NSAttributedString(string: "\n")) }
-                        joined.append(part)
-                    }
-                    subAttr = normalizeSubtitleAttr(joined)
-                }
-                if embeddedSubtitleAttr != subAttr { embeddedSubtitleAttr = subAttr }
+                // v190: 渲染 KSPlayer 内嵌字幕（裸播放视图不含 KSPlayer 字幕 UI，需自行显示）。
+                // 只取纯文本、软件默认字体渲染——原文的描边/字体样式全部弃用（线条骨架字）
+                let subText = coordinator.subtitleModel.parts
+                    .compactMap { $0.text?.string }
+                    .filter { !$0.isEmpty }
+                    .joined(separator: "\n")
+                if embeddedSubtitleText != subText { embeddedSubtitleText = subText }
                 throttledProgressReport(currentTime)
                 danmuEngine.sync(mediaTime: currentTime)
             }
@@ -979,23 +977,29 @@ struct FNOSPlayerContainerView: View {
                     }
                     .opacity(showDanmu ? 1 : 0.35)
                     controlButton(.danmuSettings, icon: "slider.horizontal.3") {
-                        audioSheetPresented = false
-                        subtitleSheetPresented = false
-                        isSheetPresented = true
+                        withAnimation(.easeInOut(duration: 0.22)) {
+                            audioSheetPresented = false
+                            subtitleSheetPresented = false
+                            isSheetPresented = true
+                        }
                     }
                     if !audioTracks.isEmpty {
                         controlButton(.audio, icon: "waveform") {
-                            subtitleSheetPresented = false
-                            audioSheetPresented = true
-                            isSheetPresented = true
+                            withAnimation(.easeInOut(duration: 0.22)) {
+                                subtitleSheetPresented = false
+                                audioSheetPresented = true
+                                isSheetPresented = true
+                            }
                         }
                     }
                     // v185: 内嵌字幕轨切换（与音轨同款 sheet）
                     if !subtitleTracks.isEmpty {
                         controlButton(.subtitle, icon: "character.textbox") {
-                            audioSheetPresented = false
-                            subtitleSheetPresented = true
-                            isSheetPresented = true
+                            withAnimation(.easeInOut(duration: 0.22)) {
+                                audioSheetPresented = false
+                                subtitleSheetPresented = true
+                                isSheetPresented = true
+                            }
                         }
                     }
                 }
@@ -1580,61 +1584,7 @@ final class FNOSPlayerOptions: KSOptions {
 
 // MARK: - 弹幕设置面板
 
-// MARK: - v188 内嵌字幕原文渲染（KS 路径）
-
-/// UILabel 直出 NSAttributedString：字幕自带的字号/颜色/特效按原文呈现，
-/// 组件自身不添加阴影/描边等任何特效（用户明令：不准改变原始字幕的大小和特效）。
-private struct FNOSAttributedSubtitleView: UIViewRepresentable {
-    let text: NSAttributedString
-
-    func makeUIView(context: Context) -> UILabel {
-        let label = UILabel()
-        label.numberOfLines = 0
-        label.textAlignment = .center
-        label.backgroundColor = .clear
-        label.isUserInteractionEnabled = false
-        return label
-    }
-
-    func updateUIView(_ label: UILabel, context: Context) {
-        if label.attributedText != text {
-            label.attributedText = text
-        }
-    }
-
-    // v189 修复「字幕显示在屏幕正中」：UIViewRepresentable 默认吞掉 overlay 的全部提案尺寸，
-    // UILabel 在全幅 bounds 内垂直居中 → 文本跑到屏幕中心。改为按文本实际高度返回，
-    // overlay(alignment: .bottom) 才能贴底放置。
-    func sizeThatFits(_ proposal: ProposedViewSize, uiView: UILabel, context: Context) -> CGSize? {
-        let width = proposal.width ?? 0
-        guard width.isFinite, width > 1 else { return nil }
-        let fit = uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude))
-        return CGSize(width: width, height: min(fit.height, 360))
-    }
-}
-
-/// 原文完全无字号属性时（如无样式 SRT）补基准字号，避免 UILabel 默认 17pt 在电视上过小；
-/// 原文已带字号/颜色（ASS 样式解析）则一字不动。
-/// v189 修复「空心骨架字」：正 strokeWidth 在 CoreText 语义 = 只描边不填充（UILabel 依此渲染），
-/// 而字幕本意是「填充+描边」（ASS 白字黑边）→ 转负宽度即填充与描边同绘，颜色/大小/描边色全保留。
-private func normalizeSubtitleAttr(_ attr: NSAttributedString) -> NSAttributedString {
-    var hasFont = false
-    var hasFill = false
-    attr.enumerateAttributes(in: NSRange(location: 0, length: attr.length)) { attrs, _, _ in
-        if attrs[.font] != nil { hasFont = true }
-        if attrs[.foregroundColor] != nil { hasFill = true }
-    }
-    let merged = NSMutableAttributedString(attributedString: attr)
-    let full = NSRange(location: 0, length: merged.length)
-    merged.enumerateAttributes(in: full) { attrs, range, _ in
-        if let width = (attrs[.strokeWidth] as? NSNumber)?.doubleValue, width > 0 {
-            merged.addAttribute(.strokeWidth, value: NSNumber(value: -width), range: range)
-        }
-    }
-    if !hasFill { merged.addAttribute(.foregroundColor, value: UIColor.white, range: full) }
-    if !hasFont { merged.addAttribute(.font, value: UIFont.systemFont(ofSize: 38, weight: .medium), range: full) }
-    return merged
-}
+// MARK: - v190 内嵌字幕：纯文本 + 软件默认字体（原 ASS 样式描边渲染为线条骨架字，用户令弃用）
 
 struct FNOSDanmuSettingsSheet: View {
 
@@ -1651,9 +1601,9 @@ struct FNOSDanmuSettingsSheet: View {
     @FocusState private var focusedControl: String?
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 16) {
             Text("弹幕设置")
-                .font(.system(size: 26, weight: .bold))
+                .font(.system(size: 22, weight: .bold))
                 .foregroundColor(.white)
 
             sliderRow(id: "size", title: "字号", value: $fontSize, range: 16...44, step: 1) {
@@ -1673,18 +1623,18 @@ struct FNOSDanmuSettingsSheet: View {
                 onClose()
             } label: {
                 Text("完成")
-                    .font(.system(size: 20, weight: .semibold))
-                    .frame(width: 220, height: 52)
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: 180, height: 46)
             }
             // v189: 官方液态玻璃主按钮（tvOS 26），焦点态由系统渲染
             .buttonStyle(.glassProminent)
             .focused($focusedControl, equals: "done")
         }
-        .padding(36)
-        .frame(width: 900)
+        .padding(26)
+        .frame(width: 680)
         // v189: iOS 26 官方液态玻璃面板——overlay 层级下直接对播放画面折射
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // v190: 面板随内容自适应（宿主 overlay 锚定在功能按钮上方，不再全屏居中）
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         // Menu 键关闭（焦点在面板内时路由到此处；FNOSReviewPopupSheet 同款模式）
         .onExitCommand(perform: onClose)
         .onAppear {
@@ -1707,20 +1657,20 @@ struct FNOSDanmuSettingsSheet: View {
         let isFocused = focusedControl == id
         let span = range.upperBound - range.lowerBound
         let fraction = min(max((value.wrappedValue - range.lowerBound) / span, 0), 1)
-        let knob: CGFloat = isFocused ? 28 : 22
-        return HStack(spacing: 24) {
+        let knob: CGFloat = isFocused ? 24 : 18
+        return HStack(spacing: 18) {
             Text(title)
-                .font(.system(size: 19, weight: .semibold))
+                .font(.system(size: 17, weight: .semibold))
                 .foregroundColor(.white)
-                .frame(width: 150, alignment: .leading)
+                .frame(width: 130, alignment: .leading)
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule()
                         .fill(.white.opacity(0.16))
-                        .frame(height: 10)
+                        .frame(height: 8)
                     Capsule()
                         .fill(.white.opacity(isFocused ? 1.0 : 0.7))
-                        .frame(width: max(10, geo.size.width * fraction), height: 10)
+                        .frame(width: max(8, geo.size.width * fraction), height: 8)
                     Circle()
                         .fill(.white)
                         .frame(width: knob, height: knob)
@@ -1728,7 +1678,7 @@ struct FNOSDanmuSettingsSheet: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .frame(height: 44)
+            .frame(height: 38)
             .contentShape(Rectangle())
             .focusable(true)
             .focused($focusedControl, equals: id)
@@ -1744,9 +1694,9 @@ struct FNOSDanmuSettingsSheet: View {
                 }
             }
             Text(display(value.wrappedValue))
-                .font(.system(size: 18, weight: .semibold).monospacedDigit())
+                .font(.system(size: 16, weight: .semibold).monospacedDigit())
                 .foregroundColor(.white)
-                .frame(width: 130, alignment: .trailing)
+                .frame(width: 110, alignment: .trailing)
         }
     }
 }
@@ -1768,58 +1718,58 @@ struct FNOSAudioTracksSheet: View {
     @FocusState private var focusedDone: Bool
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 16) {
             Text(title)
-                .font(.system(size: 26, weight: .bold))
+                .font(.system(size: 22, weight: .bold))
                 .foregroundColor(.white)
 
             if tracks.isEmpty {
                 Text("没有可切换的选项")
-                    .font(.system(size: 18))
+                    .font(.system(size: 16))
                     .foregroundColor(.white.opacity(0.7))
             } else {
                 ScrollView(showsIndicators: false) {
-                    VStack(spacing: 14) {
+                    VStack(spacing: 10) {
                         ForEach(tracks, id: \.trackID) { track in
                             Button {
                                 onSelect(track)
                             } label: {
-                                HStack(spacing: 12) {
+                                HStack(spacing: 10) {
                                     Image(systemName: track.trackID == currentID ? "checkmark.circle.fill" : "circle")
-                                        .font(.system(size: 20))
+                                        .font(.system(size: 17))
                                     Text(track.description)
-                                        .font(.system(size: 18))
+                                        .font(.system(size: 16))
                                         .lineLimit(1)
                                     Spacer()
                                 }
-                                .padding(.horizontal, 28)
-                                .padding(.vertical, 14)
+                                .padding(.horizontal, 22)
+                                .padding(.vertical, 11)
                             }
                             // v189: 官方液态玻璃按钮（tvOS 26），焦点态由系统渲染
                             .buttonStyle(.glass)
                             .focused($focusedRow, equals: track.trackID)
                         }
                     }
-                    .padding(.horizontal, 4)
+                    .padding(.horizontal, 2)
                 }
-                .frame(maxHeight: 560)
+                .frame(maxHeight: 420)
             }
 
             Button {
                 onClose()
             } label: {
                 Text("完成")
-                    .font(.system(size: 20, weight: .semibold))
-                    .frame(width: 220, height: 52)
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: 180, height: 46)
             }
             .buttonStyle(.glassProminent)
             .focused($focusedDone)
         }
-        .padding(36)
-        .frame(width: 820)
+        .padding(26)
+        .frame(width: 600)
         // v189: iOS 26 官方液态玻璃面板——overlay 层级下直接对播放画面折射
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // v190: 面板随内容自适应（宿主 overlay 锚定在功能按钮上方，不再全屏居中）
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         // Menu 键关闭（焦点在面板内时路由到此处；FNOSReviewPopupSheet 同款模式）
         .onExitCommand(perform: onClose)
         .onAppear {

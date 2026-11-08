@@ -1907,7 +1907,7 @@ struct FNOSAudioTracksSheet: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 if !tracks.isEmpty {
                     if focusedRow == nil {
-                        focusedRow = tracks.first { $0.isEnabled }?.trackID ?? tracks.first?.trackID
+                        focusedRow = tracks.first(where: { $0.isCurrent })?.id ?? tracks.first?.id
                     }
                 } else {
                     focusedDone = true

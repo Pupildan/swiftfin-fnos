@@ -612,6 +612,7 @@ struct FNOSMPVPlayerView: View {
         scrubCommitTask = Task {
             try? await Task.sleep(nanoseconds: 1_000_000_000)
             guard !Task.isCancelled else { return }
+            guard let player else { return }
             commitScrubIfNeeded(player)
         }
     }

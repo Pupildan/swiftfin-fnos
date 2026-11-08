@@ -433,7 +433,7 @@ struct FNOSPlayerContainerView: View {
         }
         // v186: 从继续播放直进播放器时没有分集数据 → 自行补拉整季（含简介，供换集面板）
         .task {
-            guard episodes.isEmpty, item.type == "Episode", let client = client else { return }
+            guard episodes.isEmpty, item.type == "Episode" else { return }
             let seriesId = item.SeriesId ?? item.Id
             do {
                 let data = try await client.get(

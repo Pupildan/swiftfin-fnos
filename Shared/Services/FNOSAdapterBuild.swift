@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v187"
+    static let version = "v188"
 
     /// 本版主要变更摘要
-    static let changes = "v187:按用户指令回滚v186——仅保留:①内嵌字幕显示修复(裸播放视图渲染subtitleModel)②字幕切换按钮图标(character.textbox)③弹层标题区分(音轨切换/字幕切换)。回滚:换集面板网格重做、继续播放补拉分集、音轨/字幕弹层玻璃化(全部还原为v185状态)。自动跳过片头片尾诊断保留(play_config原始内容上报)——等待真机播放凡人修仙传抓取数据定位真因。"
+    static let changes = "v188:①选集面板改版(用户指令):4张大卡同屏(424宽大缩略图+集数+标题+两行简介),展开/收起/方向键/点选操作逻辑零改动;②内嵌字幕按原始信息渲染:弃固定24pt字符串,UILabel直出NSAttributedString原文(原始字号/颜色/特效不动,禁阴影;原文无字号时才补38pt基准避免过小);③播放器三弹窗(弹幕设置/音轨切换/字幕切换)液态玻璃重构,参照评论弹窗FNOSReviewPopupSheet(glassEffect+presentationBackground+自绘聚焦白底黑字);④自动跳过片头片尾诊断埋点保留(play_config上报),等待真机播放抓取。"
 }

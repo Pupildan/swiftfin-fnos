@@ -393,8 +393,8 @@ struct FNOSPlayerContainerView: View {
     // 换集条：默认不展开（一上来就渲染 24 张缩略图会跟弹幕争内存，拖动进度条容易闪退）
     @State private var showEpisodeStrip = false
     @FocusState private var focusedChip: String?
-    /// v186: KS 内嵌字幕当前文本（裸播放视图需自行渲染 KSPlayer 字幕）
-    @State private var embeddedSubtitleText = ""
+    /// v188: KS 内嵌字幕当前文本（NSAttributedString 原文直出，原始字号/颜色/特效不动）
+    @State private var embeddedSubtitleAttr: NSAttributedString?
 
     private enum Control: Hashable {
         case rewind, playPause, forward, rate, danmu, danmuSettings, audio, subtitle, scrubber
@@ -414,15 +414,12 @@ struct FNOSPlayerContainerView: View {
         // 无感探测：KS 正常起播，同时后台问一次飞牛"这片子是什么格式"，
         // 只有 P5/P7（KS 必然偏色）才在几百毫秒内切到 mpv 并带进度续播。
         .overlay(alignment: .bottom) {
-            // v186: 内嵌字幕渲染层（KS 路径）
-            if !embeddedSubtitleText.isEmpty {
-                Text(embeddedSubtitleText)
-                    .font(.system(size: 24, weight: .medium))
-                    .foregroundColor(.white)
-                    .multilineTextAlignment(.center)
+            // v188: 内嵌字幕渲染层（KS 路径）——UILabel 直出 NSAttributedString 原文：
+            // 字幕自带的字号/颜色/特效原样呈现，组件自身不加阴影等任何特效（用户明令）
+            if let sub = embeddedSubtitleAttr {
+                FNOSAttributedSubtitleView(text: sub)
                     .padding(.horizontal, 120)
                     .padding(.bottom, 150)
-                    .shadow(color: .black.opacity(0.85), radius: 3, y: 1)
                     .allowsHitTesting(false)
             }
         }
@@ -762,12 +759,24 @@ struct FNOSPlayerContainerView: View {
                         FNOSDiag.shared.add("自动跳过片尾 → \(Int(total - 1.5))s")
                     }
                 }
-                // v186: 渲染 KSPlayer 内嵌字幕（裸播放视图不含 KSPlayer 字幕 UI，需自行显示）
-                let subText = coordinator.subtitleModel.parts
-                    .compactMap { $0.text?.string }
-                    .filter { !$0.isEmpty }
-                    .joined(separator: "\n")
-                if embeddedSubtitleText != subText { embeddedSubtitleText = subText }
+                // v188: 渲染 KSPlayer 内嵌字幕（裸播放视图不含 KSPlayer 字幕 UI，需自行显示）。
+                // parts[].text 是 NSAttributedString——原文直出；仅当原文完全无字号时
+                // 才补基准字号（避免 UILabel 默认 17pt 过小），禁阴影/禁加工
+                let subParts = coordinator.subtitleModel.parts.compactMap { $0.text }.filter { $0.length > 0 }
+                let subAttr: NSAttributedString?
+                if subParts.isEmpty {
+                    subAttr = nil
+                } else if subParts.count == 1 {
+                    subAttr = normalizeSubtitleAttr(subParts[0])
+                } else {
+                    let joined = NSMutableAttributedString()
+                    for (index, part) in subParts.enumerated() {
+                        if index > 0 { joined.append(NSAttributedString(string: "\n")) }
+                        joined.append(part)
+                    }
+                    subAttr = normalizeSubtitleAttr(joined)
+                }
+                if embeddedSubtitleAttr != subAttr { embeddedSubtitleAttr = subAttr }
                 throttledProgressReport(currentTime)
                 danmuEngine.sync(mediaTime: currentTime)
             }
@@ -1043,34 +1052,51 @@ struct FNOSPlayerContainerView: View {
                             print("FNOSℹ️换集点击 → 第 \(ep.IndexNumber ?? 0) 集《\(ep.Name ?? "?")》 id=\(ep.Id)")
                             onSelectEpisode?(ep)
                         } label: {
-                            VStack(spacing: 6) {
+                            VStack(alignment: .leading, spacing: 8) {
                                 FNOSAsyncImage(
-                                    url: client.episodeStillURL(item: ep, maxWidth: 320),
+                                    url: client.episodeStillURL(item: ep, maxWidth: 640),
                                     headers: client.mediaHeaders,
                                     contentMode: .fill
                                 )
-                                .frame(width: 168, height: 94)
+                                .frame(width: 424, height: 238)
                                 .clipped()
-                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                        .stroke(Color.white, lineWidth: isCurrent ? 2 : 0)
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .stroke(Color.white, lineWidth: isCurrent ? 2.5 : 0)
                                 )
 
-                                Text("第 \(ep.IndexNumber ?? 0) 集")
-                                    .font(.system(size: 13, weight: isCurrent ? .bold : .medium))
-                                    .foregroundColor(isCurrent ? .white : .white.opacity(0.7))
+                                // v188: 集数 + 标题
+                                HStack(spacing: 10) {
+                                    Text("第 \(ep.IndexNumber ?? 0) 集")
+                                        .font(.system(size: 16, weight: .bold))
+                                        .foregroundColor(isCurrent ? .white : .white.opacity(0.75))
+                                    Text(ep.Name ?? "")
+                                        .font(.system(size: 16, weight: .semibold))
+                                        .foregroundColor(.white)
+                                        .lineLimit(1)
+                                    Spacer(minLength: 0)
+                                }
+                                // v188: 简介（最多两行，固定占位等高）
+                                Text(ep.Overview ?? "")
+                                    .font(.system(size: 13))
+                                    .foregroundColor(.white.opacity(0.62))
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+                                    .lineSpacing(3)
+                                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                             }
-                            .padding(7)
+                            .padding(10)
+                            .frame(width: 424, height: 324, alignment: .top)
                             .background(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
                                     .fill(isFocused ? Color.white.opacity(0.26) : Color.clear)
                             )
                             .overlay(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                RoundedRectangle(cornerRadius: 14, style: .continuous)
                                     .stroke(Color.white.opacity(isFocused ? 0.9 : 0), lineWidth: 2)
                             )
-                            .scaleEffect(isFocused ? 1.06 : 1.0)
+                            .scaleEffect(isFocused ? 1.05 : 1.0)
                             .shadow(color: .black.opacity(isFocused ? 0.45 : 0), radius: 10, y: 4)
                             .animation(.easeOut(duration: 0.12), value: isFocused)
                         }
@@ -1091,7 +1117,7 @@ struct FNOSPlayerContainerView: View {
                 }
                 .padding(.vertical, 4)
             }
-            .frame(height: 146)
+            .frame(height: 348)
             .onAppear {
                 proxy.scrollTo(item.Id, anchor: .center)
             }
@@ -1539,6 +1565,47 @@ final class FNOSPlayerOptions: KSOptions {
 
 // MARK: - 弹幕设置面板
 
+// MARK: - v188 内嵌字幕原文渲染（KS 路径）
+
+/// UILabel 直出 NSAttributedString：字幕自带的字号/颜色/特效按原文呈现，
+/// 组件自身不添加阴影/描边等任何特效（用户明令：不准改变原始字幕的大小和特效）。
+private struct FNOSAttributedSubtitleView: UIViewRepresentable {
+    let text: NSAttributedString
+
+    func makeUIView(context: Context) -> UILabel {
+        let label = UILabel()
+        label.numberOfLines = 0
+        label.textAlignment = .center
+        label.backgroundColor = .clear
+        label.isUserInteractionEnabled = false
+        return label
+    }
+
+    func updateUIView(_ label: UILabel, context: Context) {
+        if label.attributedText != text {
+            label.attributedText = text
+        }
+    }
+}
+
+/// 原文完全无字号属性时（如无样式 SRT）补基准字号，避免 UILabel 默认 17pt 在电视上过小；
+/// 原文已带字号/颜色（ASS 样式解析）则一字不动。
+private func normalizeSubtitleAttr(_ attr: NSAttributedString) -> NSAttributedString {
+    var hasFont = false
+    var hasColor = false
+    attr.enumerateAttributes(in: NSRange(location: 0, length: attr.length)) { attrs, _, _ in
+        if attrs[.font] != nil { hasFont = true }
+        if attrs[.foregroundColor] != nil { hasColor = true }
+    }
+    guard !hasFont || !hasColor else { return attr }
+    var base: [NSAttributedString.Key: Any] = [:]
+    if !hasFont { base[.font] = UIFont.systemFont(ofSize: 38, weight: .medium) }
+    if !hasColor { base[.foregroundColor] = UIColor.white }
+    let merged = NSMutableAttributedString(attributedString: attr)
+    merged.addAttributes(base, range: NSRange(location: 0, length: merged.length))
+    return merged
+}
+
 struct FNOSDanmuSettingsSheet: View {
 
     @AppStorage("fnos.danmu.fontSize") private var fontSize: Double = 26
@@ -1547,73 +1614,101 @@ struct FNOSDanmuSettingsSheet: View {
 
     @Environment(\.dismiss)
     private var dismiss
+    /// v188: 自绘聚焦（FNOSBareButtonStyle + 白底黑字，禁系统焦点板）
+    @FocusState private var focusedElement: String?
 
     var body: some View {
         VStack(spacing: 32) {
             Text("弹幕设置")
-                .font(.title2.bold())
+                .font(.system(size: 26, weight: .bold))
+                .foregroundColor(.white)
 
-            stepRow(title: "字号", text: "\(Int(fontSize)) px") {
+            stepRow(id: "size", title: "字号", text: "\(Int(fontSize)) px") {
                 fontSize = max(16, min(44, fontSize - 2))
             } up: {
                 fontSize = min(44, fontSize + 2)
             }
-            stepRow(title: "不透明度", text: "\(Int(opacity * 100)) %") {
+            stepRow(id: "opacity", title: "不透明度", text: "\(Int(opacity * 100)) %") {
                 opacity = max(0.2, opacity - 0.05)
             } up: {
                 opacity = min(1, opacity + 0.05)
             }
-            stepRow(title: "速度", text: String(format: "%.1fx", speed)) {
+            stepRow(id: "speed", title: "速度", text: String(format: "%.1fx", speed)) {
                 speed = max(0.5, speed - 0.1)
             } up: {
                 speed = min(2.5, speed + 0.1)
             }
 
-            Button {
-                dismiss()
-            } label: {
-                Text("完成")
-                    .frame(width: 260, height: 56)
-            }
-            .buttonStyle(.plain)
-            .background(Color.black.opacity(0.4), in: Capsule())
+            doneButton
         }
-        .padding(60)
+        .padding(40)
+        .frame(width: 900)
+        // v188: iOS 26 液态玻璃（与评论弹窗 FNOSReviewPopupSheet 同款配方）
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black.opacity(0.85).ignoresSafeArea())
+        .presentationBackground(.ultraThinMaterial)
+    }
+
+    private var doneButton: some View {
+        let isFocused = focusedElement == "done"
+        return Button {
+            dismiss()
+        } label: {
+            Text("完成")
+                .font(.system(size: 20, weight: .semibold))
+                .frame(width: 260, height: 56)
+                .foregroundColor(isFocused ? .black : .white)
+                .background(Capsule().fill(isFocused ? Color.white : Color.white.opacity(0.12)))
+        }
+        .buttonStyle(FNOSBareButtonStyle())
+        .focusEffectDisabled()
+        .focused($focusedElement, equals: "done")
     }
 
     /// tvOS 稳妥步进行：[-] 值 [+]（SwiftUI Slider 在 tvOS 焦点行为不可靠）
     private func stepRow(
+        id: String,
         title: String,
         text: String,
         down: @escaping () -> Void,
         up: @escaping () -> Void
     ) -> some View {
-        HStack(spacing: 28) {
+        let downFocused = focusedElement == "\(id)-down"
+        let upFocused = focusedElement == "\(id)-up"
+        return HStack(spacing: 28) {
             Text(title)
                 .font(.headline)
-                .frame(width: 140, alignment: .leading)
+                .foregroundColor(.white)
+                .frame(width: 150, alignment: .leading)
             Button(action: down) {
                 Image(systemName: "minus")
+                    .font(.system(size: 20, weight: .semibold))
                     .frame(width: 72, height: 48)
+                    .foregroundColor(downFocused ? .black : .white)
+                    .background(Capsule().fill(downFocused ? Color.white : Color.white.opacity(0.12)))
             }
-            .buttonStyle(.plain)
-            .background(Color.black.opacity(0.4), in: Capsule())
+            .buttonStyle(FNOSBareButtonStyle())
+            .focusEffectDisabled()
+            .focused($focusedElement, equals: "\(id)-down")
             Text(text)
-                .font(.title3.monospacedDigit())
+                .font(.system(size: 22, weight: .semibold).monospacedDigit())
+                .foregroundColor(.white)
                 .frame(width: 140)
             Button(action: up) {
                 Image(systemName: "plus")
+                    .font(.system(size: 20, weight: .semibold))
                     .frame(width: 72, height: 48)
+                    .foregroundColor(upFocused ? .black : .white)
+                    .background(Capsule().fill(upFocused ? Color.white : Color.white.opacity(0.12)))
             }
-            .buttonStyle(.plain)
-            .background(Color.black.opacity(0.4), in: Capsule())
+            .buttonStyle(FNOSBareButtonStyle())
+            .focusEffectDisabled()
+            .focused($focusedElement, equals: "\(id)-up")
         }
     }
 }
 
-// MARK: - 音轨选择面板
+// MARK: - 音轨/字幕选择面板（v188: 液态玻璃重构，参照评论弹窗 FNOSReviewPopupSheet）
 
 struct FNOSAudioTracksSheet: View {
 
@@ -1625,51 +1720,77 @@ struct FNOSAudioTracksSheet: View {
 
     @Environment(\.dismiss)
     private var dismiss
+    /// v188: 自绘聚焦（FNOSBareButtonStyle + 白底黑字，禁系统焦点板）
+    @FocusState private var focusedElement: String?
 
     var body: some View {
-        VStack(spacing: 24) {
+        VStack(spacing: 28) {
             Text(title)
-                .font(.title2.bold())
+                .font(.system(size: 26, weight: .bold))
+                .foregroundColor(.white)
 
             if tracks.isEmpty {
                 Text("没有可切换的选项")
-                    .foregroundColor(.secondary)
+                    .font(.system(size: 18))
+                    .foregroundColor(.white.opacity(0.6))
             } else {
-                ScrollView {
-                    VStack(spacing: 16) {
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 14) {
                         ForEach(tracks, id: \.trackID) { track in
+                            let isFocused = focusedElement == "track-\(track.trackID)"
                             Button {
                                 onSelect(track)
                                 dismiss()
                             } label: {
-                                HStack {
+                                HStack(spacing: 12) {
                                     Image(systemName: track.trackID == currentID ? "checkmark.circle.fill" : "circle")
+                                        .font(.system(size: 20))
                                     Text(track.description)
+                                        .font(.system(size: 18))
                                         .lineLimit(1)
                                     Spacer()
                                 }
                                 .padding(.horizontal, 28)
                                 .padding(.vertical, 16)
+                                .foregroundColor(isFocused ? .black : .white)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 16, style: .continuous)
+                                        .fill(isFocused ? Color.white : Color.white.opacity(0.12))
+                                )
                             }
-                            .buttonStyle(.plain)
-                            .background(Color.black.opacity(0.4), in: Capsule())
+                            .buttonStyle(FNOSBareButtonStyle())
+                            .focusEffectDisabled()
+                            .focused($focusedElement, equals: "track-\(track.trackID)")
                         }
                     }
-                    .padding(.horizontal, 60)
+                    .padding(.horizontal, 8)
                 }
+                .frame(maxHeight: 560)
             }
 
-            Button {
-                dismiss()
-            } label: {
-                Text("完成")
-                    .frame(width: 260, height: 56)
-            }
-            .buttonStyle(.plain)
-            .background(Color.black.opacity(0.4), in: Capsule())
+            doneButton
         }
-        .padding(60)
+        .padding(40)
+        .frame(width: 860)
+        // v188: iOS 26 液态玻璃（与评论弹窗同款配方）
+        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Color.black.opacity(0.85).ignoresSafeArea())
+        .presentationBackground(.ultraThinMaterial)
+    }
+
+    private var doneButton: some View {
+        let isFocused = focusedElement == "done"
+        return Button {
+            dismiss()
+        } label: {
+            Text("完成")
+                .font(.system(size: 20, weight: .semibold))
+                .frame(width: 260, height: 56)
+                .foregroundColor(isFocused ? .black : .white)
+                .background(Capsule().fill(isFocused ? Color.white : Color.white.opacity(0.12)))
+        }
+        .buttonStyle(FNOSBareButtonStyle())
+        .focusEffectDisabled()
+        .focused($focusedElement, equals: "done")
     }
 }

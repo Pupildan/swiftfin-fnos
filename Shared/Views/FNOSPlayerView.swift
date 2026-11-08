@@ -393,11 +393,6 @@ struct FNOSPlayerContainerView: View {
     // 换集条：默认不展开（一上来就渲染 24 张缩略图会跟弹幕争内存，拖动进度条容易闪退）
     @State private var showEpisodeStrip = false
     @FocusState private var focusedChip: String?
-    /// v186: 换集面板分页 + 继续播放直进时自行补拉的分集
-    @State private var episodePage = 0
-    @FocusState private var prevPageFocused: Bool
-    @FocusState private var nextPageFocused: Bool
-    @State private var fetchedEpisodes: [FNOSItem] = []
     /// v186: KS 内嵌字幕当前文本（裸播放视图需自行渲染 KSPlayer 字幕）
     @State private var embeddedSubtitleText = ""
 
@@ -429,23 +424,6 @@ struct FNOSPlayerContainerView: View {
                     .padding(.bottom, 150)
                     .shadow(color: .black.opacity(0.85), radius: 3, y: 1)
                     .allowsHitTesting(false)
-            }
-        }
-        // v186: 从继续播放直进播放器时没有分集数据 → 自行补拉整季（含简介，供换集面板）
-        .task {
-            guard episodes.isEmpty, item.type == "Episode" else { return }
-            let seriesId = item.SeriesId ?? item.Id
-            do {
-                let data = try await client.get(
-                    path: "Shows/\(seriesId)/Episodes",
-                    query: [
-                        "UserId": userID,
-                        "Fields": "Overview,RunTimeTicks,IndexNumber,SeriesName",
-                    ]
-                )
-                fetchedEpisodes = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items
-            } catch {
-                print("FNOS⚠️ 换集面板补拉分集失败: \(error.localizedDescription)")
             }
         }
         .task { await probeProfile() }
@@ -1049,146 +1027,75 @@ struct FNOSPlayerContainerView: View {
         }
     }
 
-    /// v186: 选集数据 = 详情页传入的整季；继续播放直进时为空 → 自行补拉
-    private var effectiveEpisodes: [FNOSItem] {
-        episodes.isEmpty ? fetchedEpisodes : episodes
-    }
-
-    private var pageEpisodes: [FNOSItem] {
-        let start = episodePage * 4
-        return Array(effectiveEpisodes.dropFirst(start).prefix(4))
-    }
-
-    /// v186: 换集面板——每页 4 集大卡（缩略图+集数+标题+简介），玻璃底，分页浏览
+    /// 进度条下方的换集条：缩略图横排，当前集描边高亮，点选即切集（v187: 回滚 v186 网格面板）
     private var episodeStrip: some View {
-        VStack(spacing: 14) {
-            HStack {
-                Text("选集")
-                    .font(.system(size: 19, weight: .semibold))
-                    .foregroundColor(.white)
-                Spacer()
-                Text("第 \(episodePage + 1) / \(max(1, (effectiveEpisodes.count + 3) / 4)) 页")
-                    .font(.system(size: 13))
-                    .foregroundColor(.white.opacity(0.6))
-            }
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 14) {
+                    ForEach(episodes) { ep in
+                        let isCurrent = ep.Id == item.Id
+                        let isFocused = focusedChip == ep.Id
+                        Button {
+                            guard !isCurrent else {
+                                print("FNOSℹ️换集: 已是当前集，忽略")
+                                return
+                            }
+                            print("FNOSℹ️换集点击 → 第 \(ep.IndexNumber ?? 0) 集《\(ep.Name ?? "?")》 id=\(ep.Id)")
+                            onSelectEpisode?(ep)
+                        } label: {
+                            VStack(spacing: 6) {
+                                FNOSAsyncImage(
+                                    url: client.episodeStillURL(item: ep, maxWidth: 320),
+                                    headers: client.mediaHeaders,
+                                    contentMode: .fill
+                                )
+                                .frame(width: 168, height: 94)
+                                .clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                        .stroke(Color.white, lineWidth: isCurrent ? 2 : 0)
+                                )
 
-            LazyVGrid(columns: [GridItem(.flexible(), spacing: 22), GridItem(.flexible(), spacing: 22)], spacing: 16) {
-                ForEach(pageEpisodes) { ep in
-                    let isCurrent = ep.Id == item.Id
-                    let isFocused = focusedChip == ep.Id
-                    Button {
-                        guard !isCurrent else {
-                            print("FNOSℹ️换集: 已是当前集，忽略")
-                            return
-                        }
-                        print("FNOSℹ️换集点击 → 第 \(ep.IndexNumber ?? 0) 集《\(ep.Name ?? "?")》 id=\(ep.Id)")
-                        onSelectEpisode?(ep)
-                    } label: {
-                        HStack(spacing: 14) {
-                            FNOSAsyncImage(
-                                url: client.episodeStillURL(item: ep, maxWidth: 320),
-                                headers: client.mediaHeaders,
-                                contentMode: .fill
+                                Text("第 \(ep.IndexNumber ?? 0) 集")
+                                    .font(.system(size: 13, weight: isCurrent ? .bold : .medium))
+                                    .foregroundColor(isCurrent ? .white : .white.opacity(0.7))
+                            }
+                            .padding(7)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(isFocused ? Color.white.opacity(0.26) : Color.clear)
                             )
-                            .frame(width: 148, height: 84)
-                            .clipped()
-                            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                             .overlay(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .stroke(Color.white, lineWidth: isCurrent ? 2 : 0)
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(Color.white.opacity(isFocused ? 0.9 : 0), lineWidth: 2)
                             )
-
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text("第 \(ep.IndexNumber ?? 0) 集  \(ep.Name ?? "")")
-                                    .font(.system(size: 15, weight: isCurrent ? .bold : .semibold))
-                                    .foregroundColor(.white)
-                                    .lineLimit(1)
-                                if let ov = ep.Overview, !ov.isEmpty {
-                                    Text(ov)
-                                        .font(.system(size: 13))
-                                        .foregroundColor(.white.opacity(0.65))
-                                        .lineLimit(2)
-                                        .multilineTextAlignment(.leading)
-                                } else {
-                                    Text(" ")
-                                        .font(.system(size: 13))
-                                        .lineLimit(2)
+                            .scaleEffect(isFocused ? 1.06 : 1.0)
+                            .shadow(color: .black.opacity(isFocused ? 0.45 : 0), radius: 10, y: 4)
+                            .animation(.easeOut(duration: 0.12), value: isFocused)
+                        }
+                        .buttonStyle(FNOSBareButtonStyle())
+                        .focusEffectDisabled()
+                        .focused($focusedChip, equals: ep.Id)
+                        .onMoveCommand { direction in
+                            // 上键收起换集条并回进度条
+                            if direction == .up {
+                                showEpisodeStrip = false
+                                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                                    focus = .scrubber
                                 }
                             }
                         }
-                        .padding(14)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .fill(isFocused ? Color.white.opacity(0.22) : Color.white.opacity(0.06))
-                        )
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(Color.white.opacity(isFocused ? 0.9 : 0), lineWidth: 2)
-                        )
-                        .scaleEffect(isFocused ? 1.03 : 1.0)
-                        .animation(.easeOut(duration: 0.12), value: isFocused)
+                        .id(ep.Id)
                     }
-                    .buttonStyle(FNOSBareButtonStyle())
-                    .focusEffectDisabled()
-                    .focused($focusedChip, equals: ep.Id)
-                    .onMoveCommand { direction in
-                        // 上键收起换集面板并回进度条
-                        if direction == .up {
-                            showEpisodeStrip = false
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
-                                focus = .scrubber
-                            }
-                        }
-                    }
-                    .id(ep.Id)
                 }
+                .padding(.vertical, 4)
             }
-
-            HStack(spacing: 20) {
-                Button {
-                    if episodePage > 0 { episodePage -= 1 }
-                } label: {
-                    Label("上一页", systemImage: "chevron.left")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.white)
-                }
-                .buttonStyle(FNOSBareButtonStyle())
-                .focusEffectDisabled()
-                .focused($prevPageFocused)
-                .background(Capsule().fill(Color.white.opacity(prevPageFocused ? 0.25 : 0.08)))
-                .padding(.horizontal, 18)
-                .padding(.vertical, 10)
-                .opacity(episodePage == 0 ? 0.35 : 1)
-
-                Spacer()
-
-                Button {
-                    if episodePage < max(0, (effectiveEpisodes.count - 1) / 4) { episodePage += 1 }
-                } label: {
-                    Label("下一页", systemImage: "chevron.right")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.white)
-                }
-                .buttonStyle(FNOSBareButtonStyle())
-                .focusEffectDisabled()
-                .focused($nextPageFocused)
-                .background(Capsule().fill(Color.white.opacity(nextPageFocused ? 0.25 : 0.08)))
-                .padding(.horizontal, 18)
-                .padding(.vertical, 10)
-                .opacity(episodePage >= (effectiveEpisodes.count - 1) / 4 ? 0.35 : 1)
+            .frame(height: 146)
+            .onAppear {
+                proxy.scrollTo(item.Id, anchor: .center)
             }
         }
-        .padding(28)
-        .frame(maxWidth: .infinity)
-        .background(
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(Color.black.opacity(0.55))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .stroke(Color.white.opacity(0.12), lineWidth: 1)
-                )
-        )
         .onChange(of: focusedChip) { _ in
             revealControls()
         }
@@ -1719,14 +1626,10 @@ struct FNOSAudioTracksSheet: View {
     @Environment(\.dismiss)
     private var dismiss
 
-    @FocusState private var focusedTrackID: Int32?
-    @FocusState private var doneFocused: Bool
-
     var body: some View {
         VStack(spacing: 24) {
             Text(title)
                 .font(.title2.bold())
-                .foregroundColor(.white)
 
             if tracks.isEmpty {
                 Text("没有可切换的选项")
@@ -1735,54 +1638,38 @@ struct FNOSAudioTracksSheet: View {
                 ScrollView {
                     VStack(spacing: 16) {
                         ForEach(tracks, id: \.trackID) { track in
-                            let isFocused = focusedTrackID == track.trackID
                             Button {
                                 onSelect(track)
                                 dismiss()
                             } label: {
                                 HStack {
                                     Image(systemName: track.trackID == currentID ? "checkmark.circle.fill" : "circle")
-                                        .foregroundColor(isFocused ? .black : .white)
                                     Text(track.description)
                                         .lineLimit(1)
-                                        .foregroundColor(isFocused ? .black : .white)
                                     Spacer()
                                 }
                                 .padding(.horizontal, 28)
                                 .padding(.vertical, 16)
                             }
                             .buttonStyle(.plain)
-                            .focusEffectDisabled()
-                            .focused($focusedTrackID, equals: track.trackID)
-                            .background(
-                                Capsule().fill(isFocused ? Color.white : Color.white.opacity(0.08))
-                            )
-                            .scaleEffect(isFocused ? 1.03 : 1.0)
-                            .animation(.easeOut(duration: 0.12), value: isFocused)
+                            .background(Color.black.opacity(0.4), in: Capsule())
                         }
                     }
-                    .padding(.horizontal, 40)
+                    .padding(.horizontal, 60)
                 }
-                .frame(maxHeight: 520)
             }
 
             Button {
                 dismiss()
             } label: {
                 Text("完成")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundColor(doneFocused ? .black : .white)
                     .frame(width: 260, height: 56)
             }
             .buttonStyle(.plain)
-            .focusEffectDisabled()
-            .focused($doneFocused)
-            .background(Capsule().fill(doneFocused ? Color.white : Color.white.opacity(0.12)))
+            .background(Color.black.opacity(0.4), in: Capsule())
         }
-        .padding(44)
-        .frame(width: 780)
-        .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+        .padding(60)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .presentationBackground(.ultraThinMaterial)
+        .background(Color.black.opacity(0.85).ignoresSafeArea())
     }
 }

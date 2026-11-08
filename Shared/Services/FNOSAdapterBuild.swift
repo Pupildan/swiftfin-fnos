@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v186"
+    static let version = "v187"
 
     /// 本版主要变更摘要
-    static let changes = "v186:①修内嵌字幕不显示:裸KSVideoPlayer不含KSPlayer字幕UI,subtitleModel已解码但无人渲染——进度tick读subtitleModel.parts自行叠加字幕渲染层,选择轨道后即可显示。②修继续播放直进播放器选集失效:分集数据由详情页传入,直进时为空——新增自行补拉(Shows/{SeriesId}/Episodes带Overview)。③换集面板重做:每页4集大卡(缩略图+集数+标题+简介2行),玻璃底分页(上一页/下一页)。④音轨/字幕弹层改液态玻璃+标题区分(音轨切换/字幕切换)+自绘聚焦(白底黑字),字幕图标改character.textbox与弹幕区分。⑤聚焦白块已由v183 FNOSBareButtonStyle根修。"
+    static let changes = "v187:按用户指令回滚v186——仅保留:①内嵌字幕显示修复(裸播放视图渲染subtitleModel)②字幕切换按钮图标(character.textbox)③弹层标题区分(音轨切换/字幕切换)。回滚:换集面板网格重做、继续播放补拉分集、音轨/字幕弹层玻璃化(全部还原为v185状态)。自动跳过片头片尾诊断保留(play_config原始内容上报)——等待真机播放凡人修仙传抓取数据定位真因。"
 }

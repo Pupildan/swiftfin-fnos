@@ -354,6 +354,8 @@ struct FNOSPlayerContainerView: View {
         // v184: 带回服务器跳过配置（片头结束点/片尾开始点）
         skipOpening = range.skipOpening
         skipEnding = range.skipEnding
+        // v185 诊断: 跳过配置解析结果（自动跳过片头片尾排查）
+        FNOSDiag.shared.add("play_config 解析: intro=\(range.skipOpening.map { "\(Int($0))s" } ?? "无") ending=\(range.skipEnding.map { "\(Int($0))s" } ?? "无")", dedupeKey: "rep.skip")
         let startTS = resumeStartSeconds ?? 0
         _ = await native.playRecord(mediaGUID: range.mediaGUID, itemGUID: range.itemGUID, ts: startTS)
         FNOSDiag.shared.add("上报: 起播 ts=\(Int(startTS))（原生协议）")
@@ -385,13 +387,15 @@ struct FNOSPlayerContainerView: View {
     @State private var lastScrubMove: Date?
     @State private var isSheetPresented = false
     @State private var audioSheetPresented = false
+    /// v185: 内嵌字幕轨选择弹层
+    @State private var subtitleSheetPresented = false
     @FocusState private var focus: Control?
     // 换集条：默认不展开（一上来就渲染 24 张缩略图会跟弹幕争内存，拖动进度条容易闪退）
     @State private var showEpisodeStrip = false
     @FocusState private var focusedChip: String?
 
     private enum Control: Hashable {
-        case rewind, playPause, forward, rate, danmu, danmuSettings, audio, scrubber
+        case rewind, playPause, forward, rate, danmu, danmuSettings, audio, subtitle, scrubber
         case resumeStartOver, resumeContinue
     }
 
@@ -666,12 +670,21 @@ struct FNOSPlayerContainerView: View {
         }
         .sheet(isPresented: $isSheetPresented, onDismiss: {
             audioSheetPresented = false
+            subtitleSheetPresented = false
             DispatchQueue.main.async {
                 focus = .playPause
             }
             revealControls()
         }) {
-            if audioSheetPresented {
+            if subtitleSheetPresented {
+                // v185: 内嵌字幕轨选择（与音轨同款交互）
+                FNOSAudioTracksSheet(
+                    tracks: subtitleTracks,
+                    currentID: subtitleTracks.first { $0.isEnabled }?.trackID
+                ) { track in
+                    coordinator.playerLayer?.player.select(track: track)
+                }
+            } else if audioSheetPresented {
                 FNOSAudioTracksSheet(
                     tracks: audioTracks,
                     currentID: audioTracks.first { $0.isEnabled }?.trackID
@@ -920,11 +933,21 @@ struct FNOSPlayerContainerView: View {
                     .opacity(showDanmu ? 1 : 0.35)
                     controlButton(.danmuSettings, icon: "slider.horizontal.3") {
                         audioSheetPresented = false
+                        subtitleSheetPresented = false
                         isSheetPresented = true
                     }
                     if !audioTracks.isEmpty {
                         controlButton(.audio, icon: "waveform") {
+                            subtitleSheetPresented = false
                             audioSheetPresented = true
+                            isSheetPresented = true
+                        }
+                    }
+                    // v185: 内嵌字幕轨切换（与音轨同款 sheet）
+                    if !subtitleTracks.isEmpty {
+                        controlButton(.subtitle, icon: "captions.bubble") {
+                            audioSheetPresented = false
+                            subtitleSheetPresented = true
                             isSheetPresented = true
                         }
                     }
@@ -1287,6 +1310,11 @@ struct FNOSPlayerContainerView: View {
 
     private var audioTracks: [MediaPlayerTrack] {
         coordinator.playerLayer?.player.tracks(mediaType: .audio) ?? []
+    }
+
+    /// v185: 内嵌字幕轨（MKV 内封 ASS/SRT 等，KSPlayer 解码）
+    private var subtitleTracks: [MediaPlayerTrack] {
+        coordinator.playerLayer?.player.tracks(mediaType: .subtitle) ?? []
     }
 
     private func timeString(_ seconds: Double) -> String {

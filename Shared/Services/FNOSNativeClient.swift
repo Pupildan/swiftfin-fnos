@@ -618,6 +618,12 @@ extension FNOSNativeClient {
         }
         let itemDict = data["item"] as? [String: Any]
         let duration = (itemDict?["duration"] as? NSNumber)?.intValue
+        // v185 诊断: play_config 原始内容（自动跳过片头片尾排查）
+        if let pc = data["play_config"] {
+            FNOSDiag.shared.add("play/info play_config: \(pc)", dedupeKey: "pi.pc")
+        } else {
+            FNOSDiag.shared.add("play/info 无 play_config 字段", dedupeKey: "pi.pc0")
+        }
         // v184: 服务器跳过配置（秒；null/0 = 不跳过）——片头结束点 / 片尾开始点
         var skipOpening: Double? = nil
         var skipEnding: Double? = nil

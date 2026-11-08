@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v184"
+    static let version = "v185"
 
     /// 本版主要变更摘要
-    static let changes = "v184:①评论弹窗改按自然段落分行(每段一个focusable行,段内自然换行,不再110字句中硬切)。②删飞牛媒体库详情页底部临时诊断区(debugSection+body引用;debugLines管道保留为不可见缓冲)。③播放器自动跳过片头/片尾,数据与服务器同步:fnOS play/info响应原生携带play_config.skip_opening(片头结束秒)/skip_ending(片尾开始秒)(端点形状实测于参考项目fntv-electron types.ts),NativeClient.playInfo解析+MediaRange携带;KS路径resolveReporter带回后onChange自动seek(各单次触发),MPV原生路径经range直读ticker自动seek(相对seek到目标)。跳片尾后自然进入既有连播链路。"
+    static let changes = "v185:①播放器控制条新增内嵌字幕轨切换(KS):tracks(mediaType:.subtitle)列出MKV内封字幕,复用音轨同款选择弹层,captions.bubble按钮(有内嵌字幕轨才显示)。②自动跳过片头片尾诊断增强:playInfo打印play_config原始内容(有无/形状),resolveReporter打印解析结果——配合诊断日志监听器定位不生效真因。③同轮保留v184全部机制。"
 }

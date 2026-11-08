@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v185"
+    static let version = "v186"
 
     /// 本版主要变更摘要
-    static let changes = "v185:①播放器控制条新增内嵌字幕轨切换(KS):tracks(mediaType:.subtitle)列出MKV内封字幕,复用音轨同款选择弹层,captions.bubble按钮(有内嵌字幕轨才显示)。②自动跳过片头片尾诊断增强:playInfo打印play_config原始内容(有无/形状),resolveReporter打印解析结果——配合诊断日志监听器定位不生效真因。③同轮保留v184全部机制。"
+    static let changes = "v186:①修内嵌字幕不显示:裸KSVideoPlayer不含KSPlayer字幕UI,subtitleModel已解码但无人渲染——进度tick读subtitleModel.parts自行叠加字幕渲染层,选择轨道后即可显示。②修继续播放直进播放器选集失效:分集数据由详情页传入,直进时为空——新增自行补拉(Shows/{SeriesId}/Episodes带Overview)。③换集面板重做:每页4集大卡(缩略图+集数+标题+简介2行),玻璃底分页(上一页/下一页)。④音轨/字幕弹层改液态玻璃+标题区分(音轨切换/字幕切换)+自绘聚焦(白底黑字),字幕图标改character.textbox与弹幕区分。⑤聚焦白块已由v183 FNOSBareButtonStyle根修。"
 }

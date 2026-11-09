@@ -805,6 +805,12 @@ struct FNOSMPVPlayerView: View {
             ],
             autoPlay: true,
             hardwareDecoding: .videoToolbox,
+            // v202: HDR 输出策略改为 .disabled——之前默认 .automatic 时杜比视界内容
+            // 以 HDR 直出（Metal 层 EDR），电视切到 HDR 显示模式，系统把 App 的
+            // SDR 浮层（弹幕/字幕/控制条）整体压暗 → 白色弹幕变灰（用户实测）。
+            // 改 .disabled 后 Metal 层为 SDR，mpv 用上方 bt.2390 把 HDR 色调映射到 SDR，
+            // 显示模式留在 SDR，弹幕/字幕/控制条恢复真实白色与准确色彩。
+            hdrPolicy: .disabled,
             initialBufferSeconds: .seconds(2),
             logLevel: .warning,
             networkCacheSeconds: .seconds(15),

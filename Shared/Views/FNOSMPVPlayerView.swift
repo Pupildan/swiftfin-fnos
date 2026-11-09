@@ -819,6 +819,11 @@ struct FNOSMPVPlayerView: View {
             initialBufferSeconds: .seconds(2),
             logLevel: .warning,
             networkCacheSeconds: .seconds(15),
+            // v205: SDR 输出层降级为 8-bit sRGB——之前是 linear float16 P3 层（MPVKit 默认），
+            // 白色 UI 浮层（弹幕/字幕/控制条）在这类层上的合成亮度与 KS 的普通 sRGB 视频层
+            // 不一致（用户实测弹幕白变灰）。改 .compatibility8Bit 后输出层与 KS 视频层同类，
+            // UI 合成路径一致，弹幕恢复与 KS 相同的白色。
+            sdrOutput: .compatibility8Bit,
             videoOutput: .metal
         )
 

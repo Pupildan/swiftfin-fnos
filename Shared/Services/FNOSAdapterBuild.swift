@@ -15,7 +15,7 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v204"
+    static let version = "v205"
 
     /// 本版主要变更摘要
     static let changes = "v204:MPV 弹幕白变灰根因闭环(诊断日志实锤)——日志证实:弹幕数据纯白(77119条中98%白色/样本ffffff/不透明度100%)+渲染层已是 SDR(configuredDynamicRange:.sdr)+颜色解析正确,灰只能来自显示模式;漏网之鱼=displayMatching .automatic 仍按杜比视界片源把电视切进 HDR 显示模式,HDR 模式下系统把 SDR 浮层压暗到 203 尼特参考白;修复=displayMatching:.disabled(官方现成档位,detach 显示匹配协调器,电视留在 SDR 模式)+保留 hdrPolicy:.disabled(渲染层 SDR)。两者皆关后 mpv 全链路 SDR,弹幕/字幕/控制条恢复真实白色。"

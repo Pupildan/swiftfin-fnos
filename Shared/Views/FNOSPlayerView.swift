@@ -235,93 +235,70 @@ final class FNOSPanBridge: NSObject {
     }
 }
 
-// MARK: - v190 弹幕设置面板滑动桥（触摸板/转盘滑动连续调节聚焦滑块）
+// MARK: - v190/v192 弹幕设置面板滑动桥（触摸板/转盘滑动连续调节聚焦滑块）
 
-/// 面板滑动协调器：手势挂在内容根视图（标记防重挂），仅弹幕设置弹窗显示且聚焦滑块时
-/// 消费水平滑动；垂直滑动不接管（留给焦点引擎在行间移动）。
-final class FNOSPanelPanCoordinator: NSObject, UIGestureRecognizerDelegate {
-    static let shared = FNOSPanelPanCoordinator()
-
-    weak private var hostView: UIView?
-    private var recognizer: UIPanGestureRecognizer?
-    var isActive = false
-    var activeSliderID: String?
-
-    /// updateUIView 每次回传宿主视图；爬到 window 直下挂一次手势（按标记防重）
-    func setHost(_ view: UIView) {
-        guard hostView !== view else { return }
-        hostView = view
-        mountIfNeeded()
-    }
-
-    private func mountIfNeeded() {
-        guard recognizer == nil, let host = hostView else { return }
-        var root = host
-        while let superview = root.superview, !(superview is UIWindow) {
-            root = superview
-        }
-        if let existing = root.gestureRecognizers?.first(where: {
-            ($0 as? UIPanGestureRecognizer)?.name == "fnos.danmu.panel.pan"
-        }) {
-            recognizer = existing as? UIPanGestureRecognizer
-            return
-        }
-        let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handle(_:)))
-        recognizer.name = "fnos.danmu.panel.pan"
-        recognizer.cancelsTouchesInView = false
-        recognizer.delegate = self
-        root.addGestureRecognizer(recognizer)
-        self.recognizer = recognizer
-    }
-
-    @objc private func handle(_ gesture: UIPanGestureRecognizer) {
-        guard isActive, let id = activeSliderID else { return }
-        guard gesture.state == .changed else { return }
-        let dx = gesture.translation(in: gesture.view ?? hostView).x
-        gesture.setTranslation(.zero, in: gesture.view)
-        adjust(sliderID: id, delta: Double(dx))
-    }
-
-    /// 直接写 UserDefaults（@AppStorage 随外部写入即时刷新）；灵敏度按行分别调校
-    private func adjust(sliderID: String, delta: Double) {
-        func clamp(_ v: Double, _ lo: Double, _ hi: Double) -> Double { min(hi, max(lo, v)) }
-        switch sliderID {
-        case "size":
-            let current = UserDefaults.standard.double(forKey: "fnos.danmu.fontSize")
-            UserDefaults.standard.set(clamp(current + delta * 0.12, 16, 44), forKey: "fnos.danmu.fontSize")
-        case "opacity":
-            let current = UserDefaults.standard.double(forKey: "fnos.danmu.opacity")
-            UserDefaults.standard.set(clamp(current + delta * 0.003, 0.2, 1.0), forKey: "fnos.danmu.opacity")
-        case "speed":
-            let current = UserDefaults.standard.double(forKey: "fnos.danmu.speed")
-            UserDefaults.standard.set(clamp(current + delta * 0.008, 0.5, 2.5), forKey: "fnos.danmu.speed")
-        case "area":
-            let current = UserDefaults.standard.double(forKey: "fnos.danmu.area")
-            UserDefaults.standard.set(clamp(current + delta * 0.0015, 0.25, 0.75), forKey: "fnos.danmu.area")
-        default:
-            break
-        }
-    }
-
-    /// 仅水平意图才接管；未聚焦滑块时完全不参与（触摸板行为与平时一致）
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
-        guard isActive, activeSliderID != nil, let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
-        let translation = pan.translation(in: pan.view)
-        return abs(translation.x) > abs(translation.y)
-    }
-}
-
-/// 面板背景宿主（本身不吃触摸），只负责把视图交给协调器爬根挂手势
+/// 面板背景宿主（本身不吃触摸）：把手势挂在内容根视图上，滑动增量直接回调给面板绑定——
+/// v192 修正: 旧版把增量写 UserDefaults 再靠 @AppStorage 回读，滑块填充/数值不即时跟随（用户实测
+/// 「滑很多次才动一点点」）；现在宿主持有回调闭包（闭包直接改 @AppStorage 属性），滑块随滑动即时进退。
 private struct FNOSPanelPanHostView: UIViewRepresentable {
+    /// 是否允许接管滑动（弹幕设置弹窗显示且焦点在某个滑块行上）
+    let isEnabled: () -> Bool
+    /// 滑动增量回调（points，按事件消费；正=向右）
+    let onPanDelta: (CGFloat) -> Void
+
+    final class Coordinator: NSObject, UIGestureRecognizerDelegate {
+        weak var hostView: UIView?
+        var isEnabled: () -> Bool = { false }
+        var onPanDelta: (CGFloat) -> Void = { _ in }
+
+        func attach() {
+            guard let host = hostView else { return }
+            var root = host
+            while let superview = root.superview, !(superview is UIWindow) {
+                root = superview
+            }
+            if root.gestureRecognizers?.contains(where: {
+                ($0 as? UIPanGestureRecognizer)?.name == "fnos.danmu.panel.pan"
+            }) == true {
+                return
+            }
+            let recognizer = UIPanGestureRecognizer(target: self, action: #selector(handle(_:)))
+            recognizer.name = "fnos.danmu.panel.pan"
+            recognizer.cancelsTouchesInView = false
+            recognizer.delegate = self
+            root.addGestureRecognizer(recognizer)
+        }
+
+        @objc func handle(_ gesture: UIPanGestureRecognizer) {
+            guard gesture.state == .changed else { return }
+            let dx = gesture.translation(in: gesture.view).x
+            gesture.setTranslation(.zero, in: gesture.view)
+            onPanDelta(dx)
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            guard isEnabled(), let pan = gestureRecognizer as? UIPanGestureRecognizer else { return false }
+            let translation = pan.translation(in: pan.view)
+            // 仅水平意图才接管；垂直滑动留给焦点引擎在行间移动
+            return abs(translation.x) > abs(translation.y)
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeUIView(context: Context) -> UIView {
         let view = UIView()
         view.backgroundColor = .clear
         view.isUserInteractionEnabled = false
+        context.coordinator.hostView = view
+        // 视图入树后再爬根挂手势（此时 superview 链才完整）
+        DispatchQueue.main.async { context.coordinator.attach() }
         return view
     }
 
     func updateUIView(_ uiView: UIView, context: Context) {
-        FNOSPanelPanCoordinator.shared.setHost(uiView)
+        context.coordinator.isEnabled = isEnabled
+        context.coordinator.onPanDelta = onPanDelta
     }
 }
 
@@ -1742,8 +1719,21 @@ struct FNOSDanmuSettingsSheet: View {
         // v190: 面板随内容自适应（宿主 overlay 锚定在功能按钮上方，不再全屏居中）
         .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
         .background(
-            // v190: 触摸板/转盘滑动桥（背景宿主视图，协调器爬根挂手势）
-            FNOSPanelPanHostView()
+            // v190/v192: 触摸板/转盘滑动桥——滑动增量直接回调面板绑定（滑块即时跟随）
+            FNOSPanelPanHostView(
+                isEnabled: { sliderID(from: focusedControl) != nil },
+                onPanDelta: { dx in
+                    func clamp(_ v: Double, _ lo: Double, _ hi: Double) -> Double { min(hi, max(lo, v)) }
+                    let d = Double(dx)
+                    switch focusedControl {
+                    case "size":    fontSize = clamp(fontSize + d * 0.3, 16, 44)
+                    case "opacity": opacity = clamp(opacity + d * 0.006, 0.2, 1.0)
+                    case "speed":   speed = clamp(speed + d * 0.015, 0.5, 2.5)
+                    case "area":    area = clamp(area + d * 0.003, 0.25, 0.75)
+                    default: break
+                    }
+                }
+            )
         )
         // Menu 键关闭（焦点在面板内时路由到此处；FNOSReviewPopupSheet 同款模式）
         .onExitCommand(perform: onClose)
@@ -1751,15 +1741,6 @@ struct FNOSDanmuSettingsSheet: View {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                 if focusedControl == nil { focusedControl = "size" }
             }
-            FNOSPanelPanCoordinator.shared.isActive = true
-            FNOSPanelPanCoordinator.shared.activeSliderID = sliderID(from: focusedControl)
-        }
-        .onDisappear {
-            FNOSPanelPanCoordinator.shared.isActive = false
-            FNOSPanelPanCoordinator.shared.activeSliderID = nil
-        }
-        .onChange(of: focusedControl) { newValue in
-            FNOSPanelPanCoordinator.shared.activeSliderID = sliderID(from: newValue)
         }
     }
 

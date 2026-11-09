@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v192"
+    static let version = "v193"
 
     /// 本版主要变更摘要
-    static let changes = "v192:mpv 色彩还原修正(用户实测 hable 偏亮+饱和色发灰)——tone-mapping 从 hable 换 BT.2390 EETF(行业标准,对比更准亮度更中性),色域映射从 clip 硬裁剪改 per-channel 逐通道(饱和色还原更好);hdr-compute-peak 保留。同包含 v191 全部内容:弹幕设置无极滑块+触摸板滑动+隐藏底部弹幕开关+字幕保护区+MPV与KS完全1:1对齐。"
+    static let changes = "v193:①弹幕设置无极滑块滑动调节手感修复(用户实测滑很多次才动一点点)——滑动桥改每实例协调器+滑动增量直接回调面板绑定(旧版写UserDefaults再靠@AppStorage回读,滑块不即时跟随),灵敏度提升(字号0.3/不透明度0.006/速度0.015/区域0.003 每px),滑块填充与数值随滑动即时进退;②mpv弹窗焦点修复(用户实测焦点进不去弹层、自动回退到播放键)——ticker每250ms的焦点兜底在弹层打开时不再把焦点拽回播放键;关闭弹层后焦点回到打开它的那个按钮(音轨/字幕/弹幕设置各自对应),不再一律回播放键。"
 }

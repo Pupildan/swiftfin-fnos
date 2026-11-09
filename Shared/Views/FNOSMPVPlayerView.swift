@@ -61,6 +61,8 @@ struct FNOSMPVPlayerView: View {
     @State private var showEpisodeStrip = false
     @State private var showDanmuSettings = false
     @State private var switching = false
+    /// v192: 关闭弹层后焦点回到「打开该弹层的那个按钮」（用户令：不回播放键）
+    @State private var sheetReturnFocus: Control? = nil
     /// 自动分流提示（只在自动切换时出现一次）
     @State private var engineToast: String?
 
@@ -325,6 +327,7 @@ struct FNOSMPVPlayerView: View {
                             showDanmuSettings = true
                             showAudioSheet = false
                             showSubtitleSheet = false
+                            sheetReturnFocus = .danmuSettings
                         }
                     }
                     if !player.audioTracks.isEmpty {
@@ -333,6 +336,7 @@ struct FNOSMPVPlayerView: View {
                                 showDanmuSettings = false
                                 showAudioSheet = true
                                 showSubtitleSheet = false
+                                sheetReturnFocus = .audio
                             }
                         }
                     }
@@ -342,6 +346,7 @@ struct FNOSMPVPlayerView: View {
                                 showDanmuSettings = false
                                 showAudioSheet = false
                                 showSubtitleSheet = true
+                                sheetReturnFocus = .subtitle
                             }
                         }
                     }
@@ -643,7 +648,8 @@ struct FNOSMPVPlayerView: View {
             showSubtitleSheet = false
         }
         DispatchQueue.main.async {
-            focus = .playPause
+            // v192: 关闭后焦点回到「打开该弹层的那个按钮」上，而不是播放键（用户令）
+            focus = sheetReturnFocus ?? .playPause
         }
         bumpActivity()
     }
@@ -921,8 +927,14 @@ struct FNOSMPVPlayerView: View {
                 }
 
                 // 焦点兜底：任何原因导致焦点丢失都重新落到有效对象上
+                // v192 修复: 弹层打开时焦点在弹层内（弹层自己的 FocusState 管理）——
+                // 不能每 250ms 把焦点拽回播放键（表现为弹层焦点移不进/自动回退到播放键）
                 if focus == nil {
-                    focus = controlsVisible ? .playPause : .surface
+                    if showDanmuSettings || showAudioSheet || showSubtitleSheet {
+                        // 保持现状：焦点留在弹层内
+                    } else {
+                        focus = controlsVisible ? .playPause : .surface
+                    }
                 }
 
                 try? await Task.sleep(nanoseconds: 250_000_000)

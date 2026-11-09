@@ -479,7 +479,11 @@ struct FNOSPlayerContainerView: View {
     private let rateOptions: [Float] = [0.5, 1.0, 1.5, 2.0]
 
     var body: some View {
-        Group {
+        // v200: 容器必须用 ZStack 而不是 Group——Group 会把修饰符分发给每个子视图，
+        // 导致下面的 onAppear/onDisappear 在内核切换（KS↔MPV）时各自触发：
+        // MPV onAppear(true) 先、KS onDisappear(false) 后 → 最终 false → MPV 播放中进系统屏保。
+        // ZStack 让修饰符归属容器本身，只在播放器开/关时各触发一次。
+        ZStack {
             if useMPVEngine || forceMPV || nativeItemGUID != nil {
                 mpvLayer
             } else {

@@ -881,6 +881,10 @@ struct FNOSMPVPlayerView: View {
                 danmu.sync(mediaTime: position)
                 // v191 修复: 之前硬编码 1.0——倍速播放时弹幕速度不同步
                 danmu.setRate(player.isPaused ? 0.0 : player.playbackRate)
+                // v200: 每 tick 重申禁屏保（250ms 一次）——双保险，即使任何代码路径
+                // 把 isIdleTimerDisabled 重置（如 Group 修饰符分发导致的内核切换残留），
+                // 也在 250ms 内恢复为 true，播放中永不进系统屏保（用户实测两轮未修好）
+                UIApplication.shared.isIdleTimerDisabled = true
 
                 // v184: 自动跳过片头/片尾（服务器 play_config 数据，各单次触发）
                 if let so = skipOpening, !introSkipped, position > 0.5, position < so - 0.5 {

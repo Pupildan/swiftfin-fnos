@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v200"
+    static let version = "v201"
 
     /// 本版主要变更摘要
-    static let changes = "v199:搜索框改用官方 searchable 系统搜索框(用户指令:放弃自绘,用官方试试)——输入框/键盘/聚焦外观全部由系统绘制,App 不再画任何背景(自绘胶囊填充+系统聚焦效果叠加=灰块,自绘方案已彻底移除);实时防抖搜索(450ms 停止输入自动触发,取消上次未完成);焦点自动落在系统搜索框(onAppear searchFocused),结果区布局不变(媒体库优先→TMDB兜底→详情页/入库);注意:系统搜索框外观为 tvOS 官方样式,若键盘面板底色仍不满意属系统绘制范围。"
+    static let changes = "v201:MPV 播放中进系统屏保真根因修复(用户实测 v197 容器方案仍无效)——根因=SwiftUI Group 会把修饰符分发给每个子视图,容器上的 onAppear(true)/onDisappear(false) 在内核自动切换(KS→MPV)时各自触发且 KS 的 onDisappear(false) 后触发,最终 false → MPV 播放中进屏保;修复=①容器 Group 改 ZStack(修饰符归属容器本身,只在播放器开/关各触发一次)②MPV ticker 每 250ms 重申 isIdleTimerDisabled=true(双保险,任何路径重置都会被即刻恢复)。同含 v195-v200 全部内容(官方 searchable 搜索/滑块手感/屏保容器所有权/搜索灰块根除)。"
 }

@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v202"
+    static let version = "v203"
 
     /// 本版主要变更摘要
-    static let changes = "v202:MPV 弹幕颜色还原修复(用户实测白色弹幕变灰、颜色不准确)——根因=MPVUI 的 HDRPolicy 默认 .automatic,杜比视界内容以 HDR 直出(Metal 层 EDR),电视切 HDR 显示模式后系统把 App 的 SDR 浮层(弹幕/字幕/控制条)整体压暗,纯白变灰白;修复=hdrPolicy 改 .disabled,Metal 层强制 SDR,mpv 用 bt.2390 把 HDR 色调映射到 SDR,显示模式留在 SDR,弹幕/字幕/控制条恢复真实白色。代价:mpv 路径不再 HDR 直出(亮度峰值降至 SDR),色彩准确性优先(与 v192 用户选型一致)。同含 v201 屏保双保险修复。"
+    static let changes = "v203:MPV 弹幕白变灰诊断版(用户实测 v202 hdrPolicy .disabled 仍不白,静态分析到极限)——新增两路诊断日志落 9999:①弹幕数据层=加载时上报总条数/白色条数/前5个颜色原始值/用户不透明度设置(验证数据层是否纯白)②MPV渲染管线=起播3秒后上报 renderColorStatus/hdr 元数据/DV 状态(验证 EDR 是否真被 .disabled 关掉);日志在 output/tvos-client.log,实锤后精准修。"
 }

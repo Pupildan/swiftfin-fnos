@@ -287,18 +287,28 @@ final class FNOSDanmuEngine: ObservableObject {
         let decoded = try Self.decode(FNOSDanmuCommentEnvelope.self, from: data)
 
         var result: [FNOSDanmuComment] = []
+        var colorSamples: [UInt32] = []
         for raw in decoded.comments ?? [] {
             guard let text = raw.m, !text.isEmpty, let p = raw.p else { continue }
             let fields = p.split(separator: ",").map(String.init)
             guard let time = Double(fields.count > 0 ? fields[0] : "") else { continue }
             let mode = Int(fields.count > 1 ? fields[1] : "") ?? 1
             let colorValue = UInt32(fields.count > 2 ? fields[2] : "") ?? 0xFFFFFF
+            colorSamples.append(colorValue)
             let color = Color(
                 red: Double((colorValue >> 16) & 0xFF) / 255.0,
                 green: Double((colorValue >> 8) & 0xFF) / 255.0,
                 blue: Double(colorValue & 0xFF) / 255.0
             )
             result.append(FNOSDanmuComment(time: time, text: text, mode: mode, color: color))
+        }
+        // v203 诊断: 弹幕数据层的真实颜色分布 + 用户不透明度设置（落 9999 日志，
+        // 用于定位 MPV 路径白弹幕发灰——数据层 or 渲染合成层）
+        if !result.isEmpty {
+            let whites = colorSamples.filter { $0 == 0xFFFFFF }.count
+            let samples = colorSamples.prefix(5).map { String($0, radix: 16) }.joined(separator: "/")
+            let opacityPct = Int((UserDefaults.standard.double(forKey: "fnos.danmu.opacity") * 100).rounded())
+            FNOSDiagLog.send("弹幕诊断: 共\(result.count)条 白色\(whites)条 样本色[\(samples)] 不透明度\(opacityPct)%")
         }
         return result
     }

@@ -844,9 +844,17 @@ struct FNOSMPVPlayerView: View {
             player.load(currentURL)
         }
 
-        loadDanmu()
-        startTicker(player)
-        startSubtitleStream(player)
+            loadDanmu()
+            startTicker(player)
+            startSubtitleStream(player)
+
+            // v203 诊断: 3 秒后上报 mpv 渲染管线状态（EDR/色彩空间/HDR 元数据/DV 状态），
+            // 落 9999 日志——用于定位弹幕白变灰是渲染层还是显示合成层
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                FNOSDiagLog.send("mpv渲染诊断: hdrPolicy=\(configuration.hdrPolicy) 颜色=\(String(describing: player.renderColorStatus))")
+                FNOSDiagLog.send("mpv渲染诊断: hdr=\(String(describing: player.mediaInformation.hdr)) DV=\(String(describing: player.dolbyVisionStatus))")
+            }
 
         // 按钮要等 player 出现后才存在，这里延迟一次把焦点落到播放键
         // （有续播选择窗时落到「继续播放」键——KS 同款）

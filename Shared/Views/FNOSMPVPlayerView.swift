@@ -804,6 +804,11 @@ struct FNOSMPVPlayerView: View {
                 "sub-ass-override": "force",
             ],
             autoPlay: true,
+            // v204: 显示匹配也必须关掉——诊断日志实锤（弹幕数据纯白 100% 不透明 +
+            // 渲染层已是 SDR，灰只能来自显示模式）：displayMatching .automatic 仍按
+            // 杜比视界片源把电视切进 HDR 显示模式，HDR 模式下系统把 SDR 浮层压暗到
+            // 203 尼特参考白 → 白弹幕变灰。关掉后电视留在 SDR 模式，弹幕恢复纯白。
+            displayMatching: .disabled,
             hardwareDecoding: .videoToolbox,
             // v202: HDR 输出策略改为 .disabled——之前默认 .automatic 时杜比视界内容
             // 以 HDR 直出（Metal 层 EDR），电视切到 HDR 显示模式，系统把 App 的

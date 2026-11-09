@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v196"
+    static let version = "v197"
 
     /// 本版主要变更摘要
-    static let changes = "v196:①KS 弹幕无极滑块滑动失效修复(用户实测KS上滑不动/不如MPV)——根因=KS视频层FNOSPanBridge手势与面板滑动桥竞争抢走滑动手势,加delegate shouldBegin:弹层打开时视频层手势让位给面板桥,KS滑动与MPV一致;②滑块步进降低(用户实测步进太快)——滑动灵敏度减半(字号0.15/不透明度0.003/区域0.0015每px),速度单独0.0025每px(限制步进≤0.5),按键步进减半(字号1/不透明度0.025/速度0.05/区域0.025)+连按加速上限×2;③同含v195全部内容(搜索框去灰底/设置搜索按钮对调)。"
+    static let changes = "v197:①KS 弹幕滑块滑动失效真根因修复(用户实测v196仍不行)——上轮v196漏了给FNOSPanBridge的recognizer挂delegate,导致shouldBegin让位逻辑是死代码;现已补上recognizer.delegate=FNOSPanBridge.shared,弹层打开时视频层手势让位给面板滑动桥,KS滑动与MPV一致;②搜索框灰底彻底去除——TextField加focusEffectDisabled()去掉tvOS系统聚焦效果(之前.plain只去样式未去聚焦遮盖),改自绘白色描边(聚焦变亮,无灰底灰盖);③屏保所有权归播放器容器(用户实测MPV播放中进系统屏保)——容器onAppear置true/onDisappear置false,KS销毁与MPV onDisappear不再各自置false(之前DoVi自动切换KS→MPV会把isIdleTimerDisabled重置false导致MPV播放中进屏保)。"
 }

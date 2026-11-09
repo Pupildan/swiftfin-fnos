@@ -507,6 +507,11 @@ struct FNOSPlayerContainerView: View {
         .task { await resolveReporter() }
         // v94：原生上报上下文解析 + 起播上报（多端同步写通道）
         .task { await resolveReporter() }
+        // v197: 屏保所有权归容器——整个播放会话（KS/MPV 及引擎自动切换）期间一律禁止屏保。
+        // 之前内核切换时 KS 的 onDisappear 把 isIdleTimerDisabled 重置 false、MPV 的 onAppear 又设 true，
+        // 顺序不定 → MPV 播放中会进系统屏保（用户实测）。容器统一持有，内核只设 true、不再设 false。
+        .onAppear { UIApplication.shared.isIdleTimerDisabled = true }
+        .onDisappear { UIApplication.shared.isIdleTimerDisabled = false }
     }
 
     // MARK: 片源格式探测（无感切换的核心）
@@ -757,7 +762,8 @@ struct FNOSPlayerContainerView: View {
                 Task { _ = await native.playRecord(mediaGUID: mg, itemGUID: ig, ts: Double(coordinator.timemodel.currentTime)) }
             }
             // v119：离开播放器恢复系统屏保策略
-            UIApplication.shared.isIdleTimerDisabled = false
+            // v197: 屏保开关改由播放器容器统一持有（整个会话内禁屏保），此处不再置 false——
+            // 否则 DoVi 自动切到 mpv 时会把 isIdleTimerDisabled 重置 false，MPV 播放中进系统屏保
         }
         // v189/v190: 三弹窗播放器内 overlay——玻璃直接折射播放画面（.sheet 系统压暗+死灰板已否决）。
         // v190: 面板缩小并锚定在控制条功能按钮上方（不在屏幕正中），出现/消失带过渡动画
@@ -980,6 +986,7 @@ struct FNOSPlayerContainerView: View {
             }
             let recognizer = UIPanGestureRecognizer(target: FNOSPanBridge.shared, action: #selector(FNOSPanBridge.handle(_:)))
             recognizer.cancelsTouchesInView = false
+            recognizer.delegate = FNOSPanBridge.shared
             videoView.addGestureRecognizer(recognizer)
             print("FNOSℹ️滑动手势已挂载")
 

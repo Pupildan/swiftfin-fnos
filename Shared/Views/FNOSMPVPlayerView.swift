@@ -197,7 +197,7 @@ struct FNOSMPVPlayerView: View {
                 startIfNeeded()
             }
             .onDisappear {
-                UIApplication.shared.isIdleTimerDisabled = false
+                // v197: 屏保开关改由播放器容器统一持有（整个会话内禁屏保），此处不再置 false
                 teardown()
             }
         .onExitCommand(perform: handleExitCommand)

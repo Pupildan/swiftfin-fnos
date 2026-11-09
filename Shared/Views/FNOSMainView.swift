@@ -3052,11 +3052,23 @@ private struct FNOSMainSearchView: View {
                 HStack(spacing: 16) {
                     TextField("输入片名或剧名", text: $query)
                         .textFieldStyle(.plain)
+                        // v198: 去掉 tvOS 系统聚焦效果（聚焦时系统会盖一层灰底，用户实测）；
+                        // 改用自绘白色描边表示聚焦，不再有任何灰底/灰盖
+                        .focusEffectDisabled()
                         .font(.system(size: 22))
                         .foregroundColor(.white)
                         .padding(.horizontal, 26)
                         .padding(.vertical, 16)
-                        .background(Capsule().fill(Color.white.opacity(0.1)))
+                        .background(
+                            Capsule()
+                                .fill(Color.white.opacity(fieldFocused ? 0.14 : 0.06))
+                                .overlay(
+                                    Capsule().stroke(
+                                        Color.white.opacity(fieldFocused ? 0.85 : 0.22),
+                                        lineWidth: fieldFocused ? 2 : 1
+                                    )
+                                )
+                        )
                         .focused($fieldFocused)
                         .onSubmit {
                             Task { await runSearch() }

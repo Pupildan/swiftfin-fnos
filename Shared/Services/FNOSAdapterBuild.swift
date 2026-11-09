@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v194"
+    static let version = "v195"
 
     /// 本版主要变更摘要
-    static let changes = "v194:①KS/MPV 共用的弹幕无极滑块步进加大(字号2/不透明度0.05/速度0.1/区域0.05 每步)+连按连滑加速(0.2s内翻倍最多×4)——两个内核同步生效;②首页新增搜索功能(设置按钮旁放大镜):输入片名/剧名→媒体库优先匹配(媒体库结果带✓标)→TMDB 兜底(可入库),结果点击直接进对应详情页(库内详情/TMDB详情含入库按钮),全部官方液态玻璃风格;③mpv色彩(tone-mapping bt.2390+色域per-channel)。"
+    static let changes = "v195:①搜索输入框灰色遮盖修复(用户实测焦点在输入框上时被系统TextField默认灰底盖住)——加textFieldStyle(.plain)去掉系统底,保留自定义玻璃胶囊;②首页左上角设置/搜索按钮位置对调(设置在左、搜索在右)。同包含v194全部内容:滑块步进加大+连按加速(KS/MPV同步)+首页搜索(媒体库优先→TMDB兜底→详情页/入库)+mpv色彩bt.2390。"
 }

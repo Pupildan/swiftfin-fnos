@@ -304,9 +304,22 @@ struct FNOSMainView: View {
                     // dismiss 时焦点引擎才有合法落点（返回高概率丢焦点的根因）。
                     .disabled(flight != nil)
 
-                    // 左上角：搜索 + 设置按钮（刷新/退出集成在设置面板里）
+                    // 左上角：设置 + 搜索按钮（刷新/退出集成在设置面板里）
                     VStack {
                         HStack(spacing: 14) {
+                            Button {
+                                showSettings = true
+                            } label: {
+                                FNOSFocusButtonLabel(
+                                    isFocused: settingsButtonFocused,
+                                    isPrimary: false
+                                ) {
+                                    Image(systemName: "gearshape.fill")
+                                        .font(.system(size: 22, weight: .semibold))
+                                }
+                            }
+                            .buttonStyle(FNOSBareButtonStyle())
+                            .focused($settingsButtonFocused)
                             // v194: 搜索入口（媒体库优先 → TMDB 兜底）
                             Button {
                                 showSearch = true
@@ -321,19 +334,6 @@ struct FNOSMainView: View {
                             }
                             .buttonStyle(FNOSBareButtonStyle())
                             .focused($searchButtonFocused)
-                            Button {
-                                showSettings = true
-                            } label: {
-                                FNOSFocusButtonLabel(
-                                    isFocused: settingsButtonFocused,
-                                    isPrimary: false
-                                ) {
-                                    Image(systemName: "gearshape.fill")
-                                        .font(.system(size: 22, weight: .semibold))
-                                }
-                            }
-                            .buttonStyle(FNOSBareButtonStyle())
-                            .focused($settingsButtonFocused)
                             Spacer()
                         }
                         .padding(.leading, 36)
@@ -3051,6 +3051,7 @@ private struct FNOSMainSearchView: View {
 
                 HStack(spacing: 16) {
                     TextField("输入片名或剧名", text: $query)
+                        .textFieldStyle(.plain)
                         .font(.system(size: 22))
                         .foregroundColor(.white)
                         .padding(.horizontal, 26)

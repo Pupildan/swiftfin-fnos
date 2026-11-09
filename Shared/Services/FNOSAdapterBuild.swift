@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v197"
+    static let version = "v198"
 
     /// 本版主要变更摘要
-    static let changes = "v197:①KS 弹幕滑块滑动失效真根因修复(用户实测v196仍不行)——上轮v196漏了给FNOSPanBridge的recognizer挂delegate,导致shouldBegin让位逻辑是死代码;现已补上recognizer.delegate=FNOSPanBridge.shared,弹层打开时视频层手势让位给面板滑动桥,KS滑动与MPV一致;②搜索框灰底彻底去除——TextField加focusEffectDisabled()去掉tvOS系统聚焦效果(之前.plain只去样式未去聚焦遮盖),改自绘白色描边(聚焦变亮,无灰底灰盖);③屏保所有权归播放器容器(用户实测MPV播放中进系统屏保)——容器onAppear置true/onDisappear置false,KS销毁与MPV onDisappear不再各自置false(之前DoVi自动切换KS→MPV会把isIdleTimerDisabled重置false导致MPV播放中进屏保)。"
+    static let changes = "v198:搜索框灰底修复(用户第二轮实锤)——根因=v198 给输入框自绘的胶囊填充 Capsule().fill(white 0.06~0.14碾在液态玻璃面板深色底上就是一块实心灰,且v198 关了系统焦点效果focusEffectDisabled后系统不再画标准描边,只剩这块自绘灰;用户已确认要走native风格且该灰块随焦点移动;另外v197 补 recognizer.delegate=FNOSPanBridge.shared 修好了KS无极滑块触摸滑动(用户确认已解决,禁止回滚);本版=胶囊填充置Color.clear,只保留纯描边(未聚焦 0.28pt白细框/聚焦 1.0pt 3pt白粗框),输入区背景 100% 透明透出玻璃面板本身。同含v197全部:KS滑块滑动修复/搜索功能(媒体库优先→TMDB兜底→详情页入库)/屏保所有权归容器/Hero剧集解禁/字幕保护区/弹幕显示区域/MPV与KS 1:1。"
 }

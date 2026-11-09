@@ -3060,12 +3060,15 @@ private struct FNOSMainSearchView: View {
                         .padding(.horizontal, 26)
                         .padding(.vertical, 16)
                         .background(
+                            // v199: 彻底去除灰底填充（用户实测：任何不透明填充叠在玻璃面板上都是一块灰）
+                            // 未聚焦 = 完全透明，只留一层很淡的白色细描边界定输入区；
+                            // 聚焦 = 仅描边变亮变粗（纯描边动画，无填充、无灰盖）
                             Capsule()
-                                .fill(Color.white.opacity(fieldFocused ? 0.14 : 0.06))
+                                .fill(Color.clear)
                                 .overlay(
                                     Capsule().stroke(
-                                        Color.white.opacity(fieldFocused ? 0.85 : 0.22),
-                                        lineWidth: fieldFocused ? 2 : 1
+                                        Color.white.opacity(fieldFocused ? 1.0 : 0.28),
+                                        lineWidth: fieldFocused ? 3 : 1
                                     )
                                 )
                         )

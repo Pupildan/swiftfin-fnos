@@ -3038,8 +3038,7 @@ private struct FNOSMainSearchView: View {
     @State private var tmdbResults: [FNOSTMDBItem] = []
     @State private var isSearching = false
     @State private var searched = false
-    /// v199: 官方 searchable 搜索框的聚焦绑定（onAppear 自动聚焦系统搜索框）
-    @FocusState private var isSearchFocused: Bool
+    /// v199: 官方 searchable 系统搜索框（tvOS 无 searchFocused API，聚焦由系统管理）
     @FocusState private var focusedResult: String?
 
     var body: some View {
@@ -3072,7 +3071,6 @@ private struct FNOSMainSearchView: View {
             // v199: 用户实测自绘搜索框去不掉灰块（自绘底+系统聚焦效果叠加），改用官方
             // searchable 系统搜索框——输入框与键盘全部由系统绘制，本视图不再画任何背景
             .searchable(text: $query, placement: .automatic, prompt: Text("输入片名或剧名"))
-            .searchFocused($isSearchFocused)
             .onChange(of: query) { _, newValue in
                 // 实时防抖搜索：450ms 内停止输入才触发（取消上一次未完成任务）
                 searchTask?.cancel()
@@ -3092,9 +3090,6 @@ private struct FNOSMainSearchView: View {
         }
         // Menu 关闭搜索弹层
         .onExitCommand(perform: onClose)
-        .onAppear {
-            isSearchFocused = true
-        }
     }
 
     // MARK: 结果区（媒体库优先 → TMDB 兜底）

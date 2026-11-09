@@ -1682,13 +1682,13 @@ struct FNOSDanmuSettingsSheet: View {
                 .font(.system(size: 22, weight: .bold))
                 .foregroundColor(.white)
 
-            sliderRow(id: "size", title: "字号", value: $fontSize, range: 16...44, step: 1) {
+            sliderRow(id: "size", title: "字号", value: $fontSize, range: 16...44, step: 2) {
                 "\(Int($0)) px"
             }
-            sliderRow(id: "opacity", title: "不透明度", value: $opacity, range: 0.2...1.0, step: 0.01) {
+            sliderRow(id: "opacity", title: "不透明度", value: $opacity, range: 0.2...1.0, step: 0.05) {
                 "\(Int(($0 * 100).rounded())) %"
             }
-            sliderRow(id: "speed", title: "速度", value: $speed, range: 0.5...2.5, step: 0.05) {
+            sliderRow(id: "speed", title: "速度", value: $speed, range: 0.5...2.5, step: 0.1) {
                 String(format: "%.2fx", $0)
             }
             // v190: 显示区域上限 75%——底部 260pt 是字幕保护区（不准显示弹幕，用户死规则）
@@ -1744,6 +1744,10 @@ struct FNOSDanmuSettingsSheet: View {
         }
     }
 
+    /// v194: 连按/连滑加速（0.2s 内连续触发翻倍，最多 ×4；停顿回落到基础步长）
+    @State private var sliderAccel: Double = 1
+    @State private var lastSliderMove: Date? = nil
+
     /// v190: 仅四个滑块可被滑动调节；开关行不吃滑动手势
     private func sliderID(from control: String?) -> String? {
         guard let control, ["size", "opacity", "speed", "area"].contains(control) else { return nil }
@@ -1790,11 +1794,17 @@ struct FNOSDanmuSettingsSheet: View {
             .focused($focusedControl, equals: id)
             .focusEffectDisabled()
             .onMoveCommand { direction in
+                // v194: 连按/连滑加速——0.2s 内连续触发翻倍（最多 ×4），停顿回落到基础步长
+                let now = Date()
+                let rapid = lastSliderMove.map { now.timeIntervalSince($0) < 0.2 } ?? false
+                sliderAccel = rapid ? min(sliderAccel * 2, 4) : 1
+                lastSliderMove = now
+                let effective = step * sliderAccel
                 switch direction {
                 case .left:
-                    value.wrappedValue = max(range.lowerBound, value.wrappedValue - step)
+                    value.wrappedValue = max(range.lowerBound, value.wrappedValue - effective)
                 case .right:
-                    value.wrappedValue = min(range.upperBound, value.wrappedValue + step)
+                    value.wrappedValue = min(range.upperBound, value.wrappedValue + effective)
                 default:
                     break   // 上下交给焦点引擎在行间移动
                 }

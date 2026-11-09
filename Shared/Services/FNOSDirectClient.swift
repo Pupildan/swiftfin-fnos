@@ -148,6 +148,34 @@ final class FNOSDirectClient {
         }
     }
 
+    /// v194: 媒体库搜索（Jellyfin 标准 searchTerm + Recursive，电影+剧集）
+    func searchItems(userID: String, query: String, limit: Int = 20) async -> [FNOSItem] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        do {
+            let data = try await get(
+                path: "Users/\(userID)/Items",
+                query: [
+                    "searchTerm": trimmed,
+                    "Recursive": "true",
+                    "IncludeItemTypes": "Movie,Series",
+                    "Limit": String(limit),
+                    "SortBy": "SortName",
+                    "Fields": "Overview,ProductionYear,RunTimeTicks,OfficialRating,Genres,SeriesName,ParentIndexNumber,IndexNumber,BackdropImageTags",
+                    "EnableImageTypes": "Primary,Backdrop,Thumb",
+                    "EnableTotalRecordCount": "false",
+                ]
+            )
+            let envelope = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data)
+            print("FNOSℹ️媒体库搜索「\(trimmed)」\(envelope.Items.count) 条")
+            return envelope.Items
+        } catch {
+            print("FNOS❗️媒体库搜索失败: \(error)")
+            FNOSDiag.shared.add("媒体库搜索失败: \(error.localizedDescription)", dedupeKey: "search.err")
+            return []
+        }
+    }
+
     /// POST JSON（播放进度上报用；Jellyfin 标准 /Sessions/Playing* 端点）。
     /// 兼容层若未实现这些路由，静默失败（打印），绝不影响播放。
     private func post(path: String, body: [String: Any]) async {

@@ -83,6 +83,49 @@ enum FNOSTMDBClient {
         }
     }
 
+    /// v194: TMDB 多类型搜索（电影+剧集，中文；过滤掉 person 结果）
+    static func search(query: String, apiKey: String) async throws -> [FNOSTMDBItem] {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        guard let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) else { return [] }
+        let urlString = "\(baseURL)/search/multi?api_key=\(apiKey)&language=zh-CN&query=\(encoded)"
+        guard let url = URL(string: urlString) else {
+            throw FNOSDirectError("TMDB 搜索 URL 构造失败")
+        }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 15
+        let (data, response) = try await URLSession.shared.data(for: req)
+        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+            throw FNOSDirectError("TMDB 搜索 HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)")
+        }
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let results = json["results"] as? [[String: Any]] else {
+            throw FNOSDirectError("TMDB 搜索响应无 results")
+        }
+        return results.compactMap { dict in
+            guard let id = dict["id"] as? Int else { return nil }
+            let mediaType = dict["media_type"] as? String ?? "movie"
+            // search/multi 会混入 person 结果——只保留电影/剧集
+            guard mediaType == "movie" || mediaType == "tv" else { return nil }
+            let title = (dict["title"] as? String) ?? (dict["name"] as? String) ?? "?"
+            let posterPath = dict["poster_path"] as? String
+            let backdropPath = dict["backdrop_path"] as? String
+            let overview = dict["overview"] as? String ?? ""
+            let releaseDate = (dict["release_date"] as? String) ?? (dict["first_air_date"] as? String)
+            let voteAverage = dict["vote_average"] as? Double ?? 0
+            return FNOSTMDBItem(
+                id: id,
+                title: title,
+                posterPath: posterPath,
+                backdropPath: backdropPath,
+                overview: overview,
+                releaseDate: releaseDate,
+                voteAverage: voteAverage,
+                mediaType: mediaType
+            )
+        }
+    }
+
     /// 电影/剧集详情（Phase 2 用，先预留）
     static func detail(id: Int, mediaType: String, apiKey: String) async throws -> [String: Any] {
         let urlString = "\(baseURL)/\(mediaType)/\(id)?api_key=\(apiKey)&language=zh-CN&append_to_response=credits"

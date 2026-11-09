@@ -138,6 +138,9 @@ struct FNOSMainView: View {
 
     // 首页设置面板（刷新/退出集成在内）
     @State private var showSettings = false
+    /// v194: 首页搜索（媒体库优先 → TMDB 兜底）
+    @State private var showSearch = false
+    @FocusState private var searchButtonFocused: Bool
     // 设置按钮焦点（与 Hero 按钮同一套视觉）
     @FocusState private var settingsButtonFocused: Bool
     // 媒体库卡片焦点（下键从 Hero 跳入海报墙的落点）
@@ -301,9 +304,23 @@ struct FNOSMainView: View {
                     // dismiss 时焦点引擎才有合法落点（返回高概率丢焦点的根因）。
                     .disabled(flight != nil)
 
-                    // 左上角设置按钮（刷新/退出集成在设置面板里）
+                    // 左上角：搜索 + 设置按钮（刷新/退出集成在设置面板里）
                     VStack {
-                        HStack {
+                        HStack(spacing: 14) {
+                            // v194: 搜索入口（媒体库优先 → TMDB 兜底）
+                            Button {
+                                showSearch = true
+                            } label: {
+                                FNOSFocusButtonLabel(
+                                    isFocused: searchButtonFocused,
+                                    isPrimary: false
+                                ) {
+                                    Image(systemName: "magnifyingglass")
+                                        .font(.system(size: 22, weight: .semibold))
+                                }
+                            }
+                            .buttonStyle(FNOSBareButtonStyle())
+                            .focused($searchButtonFocused)
                             Button {
                                 showSettings = true
                             } label: {
@@ -408,6 +425,27 @@ struct FNOSMainView: View {
                     return await native.existsInLibrary(title: tmdbItem.title, isSeries: tmdbItem.mediaType == "tv")
                 },
                 onDismiss: { tmdbDetailItem = nil }
+            )
+        }
+        // v194: 首页搜索弹层（媒体库优先 → TMDB 兜底；结果可进详情页/入库）
+        .fullScreenCover(isPresented: $showSearch) {
+            FNOSMainSearchView(
+                client: client ?? FNOSDirectClient(baseURL: credentials.serverURL, token: credentials.token),
+                userID: userID,
+                tmdbApiKey: tmdbApiKey,
+                onClose: { showSearch = false },
+                onOpenLibraryItem: { item in
+                    showSearch = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        detailItem = item
+                    }
+                },
+                onOpenTMDBItem: { item in
+                    showSearch = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                        tmdbDetailItem = item
+                    }
+                }
             )
         }
         // v115：Bangumi 番剧详情页 fullScreenCover（v121 接入 MoviePilot 入库）
@@ -2979,5 +3017,221 @@ struct FNOSDiagView: View {
             }
         }
         .onExitCommand { dismiss() }
+    }
+}
+
+// MARK: - v194 首页搜索弹层（媒体库优先 → TMDB 兜底；结果可进详情页 / 入库）
+
+private struct FNOSMainSearchView: View {
+    let client: FNOSDirectClient
+    let userID: String
+    let tmdbApiKey: String
+    let onClose: () -> Void
+    /// 点媒体库结果 → 关闭搜索并打开库内详情页
+    let onOpenLibraryItem: (FNOSItem) -> Void
+    /// 点 TMDB 结果 → 关闭搜索并打开 TMDB 详情页（内含入库按钮）
+    let onOpenTMDBItem: (FNOSTMDBItem) -> Void
+
+    @State private var query = ""
+    @State private var libraryResults: [FNOSItem] = []
+    @State private var tmdbResults: [FNOSTMDBItem] = []
+    @State private var isSearching = false
+    @State private var searched = false
+    @FocusState private var fieldFocused: Bool
+    @FocusState private var searchButtonFocused: Bool
+    @FocusState private var focusedResult: String?
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.5).ignoresSafeArea()
+            VStack(alignment: .leading, spacing: 22) {
+                Text("搜索")
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundColor(.white)
+
+                HStack(spacing: 16) {
+                    TextField("输入片名或剧名", text: $query)
+                        .font(.system(size: 22))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 26)
+                        .padding(.vertical, 16)
+                        .background(Capsule().fill(Color.white.opacity(0.1)))
+                        .focused($fieldFocused)
+                        .onSubmit {
+                            Task { await runSearch() }
+                        }
+                    Button {
+                        Task { await runSearch() }
+                    } label: {
+                        FNOSFocusButtonLabel(isFocused: searchButtonFocused, isPrimary: false) {
+                            Image(systemName: "magnifyingglass")
+                                .font(.system(size: 22, weight: .semibold))
+                        }
+                    }
+                    .buttonStyle(FNOSBareButtonStyle())
+                    .focused($searchButtonFocused)
+                }
+
+                if isSearching {
+                    HStack(spacing: 12) {
+                        ProgressView()
+                        Text("搜索中…")
+                            .font(.system(size: 17))
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else if searched {
+                    resultsView
+                }
+
+                Spacer()
+            }
+            .padding(36)
+            .frame(width: 900)
+            // 官方液态玻璃（死规则：新功能 UI 一律玻璃）
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        // Menu 关闭搜索弹层
+        .onExitCommand(perform: onClose)
+        .onAppear {
+            fieldFocused = true
+        }
+    }
+
+    // MARK: 结果区（媒体库优先 → TMDB 兜底）
+
+    @ViewBuilder
+    private var resultsView: some View {
+        if libraryResults.isEmpty && tmdbResults.isEmpty {
+            Text("没有找到相关内容")
+                .font(.system(size: 18))
+                .foregroundColor(.white.opacity(0.65))
+        } else {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    if !libraryResults.isEmpty {
+                        Text("媒体库")
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundColor(.white.opacity(0.85))
+                        ForEach(libraryResults) { item in
+                            resultRow(
+                                id: "lib." + item.Id,
+                                title: item.Name ?? "?",
+                                subtitle: libraryMeta(item),
+                                posterURL: client.posterURL(itemID: item.Id, tag: item.ImageTags?["Primary"]),
+                                headers: client.mediaHeaders,
+                                badgeSystemImage: "checkmark.seal.fill",
+                                badgeColor: .green
+                            ) {
+                                onOpenLibraryItem(item)
+                            }
+                        }
+                    }
+                    if !tmdbResults.isEmpty {
+                        Text("TMDB · 可入库")
+                            .font(.system(size: 17, weight: .bold))
+                            .foregroundColor(.white.opacity(0.85))
+                        ForEach(tmdbResults) { item in
+                            resultRow(
+                                id: "tmdb." + String(item.id),
+                                title: item.title,
+                                subtitle: tmdbMeta(item),
+                                posterURL: item.posterURL,
+                                headers: [:],
+                                badgeSystemImage: "plus.circle",
+                                badgeColor: .white.opacity(0.6)
+                            ) {
+                                onOpenTMDBItem(item)
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(height: 520)
+        }
+    }
+
+    private func resultRow(
+        id: String,
+        title: String,
+        subtitle: String,
+        posterURL: URL?,
+        headers: [String: String],
+        badgeSystemImage: String,
+        badgeColor: Color,
+        action: @escaping () -> Void
+    ) -> some View {
+        let isFocused = focusedResult == id
+        return Button {
+            action()
+        } label: {
+            HStack(spacing: 18) {
+                FNOSAsyncImage(url: posterURL, headers: headers, contentMode: .fill)
+                    .frame(width: 56, height: 84)
+                    .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(title)
+                        .font(.system(size: 20, weight: .semibold))
+                        .foregroundColor(.white)
+                    Text(subtitle)
+                        .font(.system(size: 15))
+                        .foregroundColor(.white.opacity(0.6))
+                }
+                Spacer()
+                Image(systemName: badgeSystemImage)
+                    .font(.system(size: 18))
+                    .foregroundColor(badgeColor)
+            }
+            .padding(.horizontal, 22)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .fill(isFocused ? Color.white.opacity(0.14) : Color.clear)
+            )
+            .scaleEffect(isFocused ? 1.03 : 1.0)
+            .animation(.easeOut(duration: 0.12), value: isFocused)
+        }
+        .buttonStyle(FNOSBareButtonStyle())
+        .focused($focusedResult, equals: id)
+    }
+
+    // MARK: 搜索执行（媒体库优先 → TMDB 兜底）
+
+    private func runSearch() async {
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        isSearching = true
+        searched = true
+        // 1) 媒体库优先
+        libraryResults = await client.searchItems(userID: userID, query: trimmed)
+        // 2) TMDB 兜底（未配置 API Key 则跳过）
+        if tmdbApiKey.isEmpty {
+            tmdbResults = []
+        } else {
+            tmdbResults = (try? await FNOSTMDBClient.search(query: trimmed, apiKey: tmdbApiKey)) ?? []
+        }
+        isSearching = false
+        // 搜索完成焦点落到第一条结果
+        if let first = libraryResults.first {
+            focusedResult = "lib." + first.Id
+        } else if let first = tmdbResults.first {
+            focusedResult = "tmdb." + String(first.id)
+        }
+    }
+
+    private func libraryMeta(_ item: FNOSItem) -> String {
+        var parts: [String] = []
+        if let year = item.ProductionYear { parts.append("\(year)") }
+        parts.append(item.type == "Series" ? "剧集" : "电影")
+        return parts.joined(separator: " · ")
+    }
+
+    private func tmdbMeta(_ item: FNOSTMDBItem) -> String {
+        var parts: [String] = []
+        if let date = item.releaseDate, date.count >= 4 { parts.append(String(date.prefix(4))) }
+        parts.append(item.mediaType == "tv" ? "剧集" : "电影")
+        if item.voteAverage > 0 { parts.append(String(format: "%.1f", item.voteAverage)) }
+        return parts.joined(separator: " · ")
     }
 }

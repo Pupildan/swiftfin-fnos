@@ -2,7 +2,7 @@
 
 > 仓库：`Pupildan/swiftfin-fnos`（GitHub 私有仓，CI 构建 unsigned ipa）
 > 本地工作区：`C:\Users\Admin\WorkBuddy\fndanmu-tvos\build-package\swiftfin-fnos`
-> 当前版本：**v187**（回滚版：仅保留内嵌字幕显示修复/字幕图标/弹层标题；诊断埋点已就位），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
+> 当前版本：**v205**（MPV SDR 全链路定稿：hdrPolicy/displayMatching/sdrOutput 三项已定案，弹幕颜色修复 ✓；含官方 searchable 搜索、KS 滑块触摸滑动修复、屏保双保险、MPV 与 KS 1:1 对齐），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
 > 交付物命名规则：`output/Swiftfin-FNOS-tvos-unsigned-vXX.ipa`（32MB 左右）
 
 ---
@@ -330,13 +330,53 @@ xcodebuild -project Swiftfin.xcodeproj -scheme "Swiftfin tvOS" \
 - **debugLines 管道**：FNOSItemDetailView 的调试区 UI 已删（v184），debugLines 收集仍后台运行（不可见）。
 - **git 整包回滚**：reset --hard + force push（v179/v186 两次），被回滚的提交仍在 reflog/历史可寻。
 
-## 待解决问题清单（按用户优先级）
-1. 自动跳过片头/片尾未生效（诊断已埋，等 v187 真机播放凡人修仙传后读日志）
-2. 内嵌字幕显示（v186 渲染层被回滚——按字幕原始 NSAttributedString 显示、禁阴影，待重做）
-3. 字幕选择后不加载（select(track:) 后 MEPlayer isSeek 需刷新，与渲染层一起重做）
-4. 继续播放选集失效（分集自拉被回滚，待重做）
-5. 换集面板 4 集/页 + 标题 + 简介（被回滚，待重做）
-6. 播放器弹层液态玻璃化（被回滚，待重做；参照评论弹窗）
-7. 续播卡第 3+ 张上键无落点（方案 A 落设置按钮失败、binding 方案真机不完美——需新思路）
-8. MPV 路径内嵌字幕切换
-9. TMDB infoSection 死代码清理
+## v188-v205：诊断通道·滑块手感·MPV 1:1·屏保·弹幕颜色（2026-11-09~10，⚠️最新铁律区）
+
+### 版本流水（摘要）
+- **v188**：选集条 4 大卡重做 + **诊断通道断裂修复**——FNOSDiag 只 print 从不 POST 到 9999，播放侧诊断自埋点起全断；v188 并入 FNOSDiagLog.send（教训见铁律 8）
+- **v189**：播放器三弹窗 .sheet → 播放器内 overlay（tvOS .sheet 系统压暗+玻璃只折射 sheet 内暗背景=死灰板）；内嵌字幕弃 ASS 描边样式（渲染=线条骨架字）改软件默认字体 40pt 白
+- **v190**：弹幕设置四项无极滑块（自绘 focusable+onMoveCommand，系统 Slider 焦点不可靠老坑）+ 弹幕显示区域（引擎 laneCount 动态化，maxLanePool 20 定长池，默认 30%）+ Hero 剧集解禁（抽选池 Movie+Series；剧集预告解析第一集随机 30s=15%-75% 起点；播放键对剧集=开剧集详情页）
+- **v191**：滑块支持触摸板滑动（根挂载 pan 桥，仅水平且聚焦滑块时消费）+ 删完成按钮（Menu 关）+ 隐藏底部弹幕开关(hideBottom，引擎弃 mode4) + **字幕保护区死规则（泳道封顶屏高-260+底部固定弹幕上移 height-290+区域滑块上限 75%）** + **MPV 与 KS 1:1 对齐**（控制条 KS 布局/倍速 0.5-2.0/三大玻璃弹窗共用=FNOSTrackOption 中性模型/4 大卡选集条/续播选择窗 3s/进度梯子 10-30-60-120/FNOSMPVPanCoordinator 滑动拖动/字幕 40pt 统一；🐛修 mpv ticker 弹幕倍速硬编码 1.0；mpv 诊断按钮已删=严格 1:1）
+- **v192**：mpv 色彩修正（hable 偏亮+饱和色发灰 → tone-mapping 换 bt.2390 EETF+色域映射 clip→per-channel）
+- **v193**：滑块滑动不跟手修复=滑动桥改每实例协调器直连面板绑定（旧桥写 UserDefaults 靠 @AppStorage 回读不即时）；mpv 弹窗焦点修复=ticker 250ms 兜底在弹层打开时跳过+关闭弹层回对应按钮(sheetReturnFocus)
+- **v194**：滑块步进加大+连按加速；🆕首页搜索=设置旁放大镜→玻璃搜索弹层→媒体库优先（FNOSDirectClient.searchItems searchTerm+Recursive）→TMDB 兜底（FNOSTMDBClient.search /search/multi 过滤 person）→点结果进对应详情页
+- **v195**：搜索框 textFieldStyle(.plain) 去系统底 + 首页设置/搜索按钮对调
+- **v196**：KS 滑块 shouldBegin 让位=**死代码**（漏挂 recognizer.delegate）
+- **v197**：KS 滑块真根因修复（补 recognizer.delegate=FNOSPanBridge.shared，**用户确认已解决 ✓ 结案勿再改**）+ 搜索框 focusEffectDisabled + 屏保所有权归容器
+- **v198**：搜索框灰块根除=胶囊填充 Color.clear 只留纯描边（自绘半透明白填充叠玻璃面板=实心灰，且随焦点移动）
+- **v199/v200**：搜索框改官方 searchable（🚨tvOS 无 searchFocused API=iOS 专属，编译已踩坑；聚焦由系统管理）；防抖实时搜索 450ms
+- **v201**：MPV 屏保真根因=**SwiftUI Group 把修饰符分发给每个子视图**——容器 onAppear(true)/onDisappear(false) 在 KS→MPV 切换时 KS 的 false 后触发→屏保；修复=容器 Group→ZStack + MPV ticker 每 250ms 重申 true（双保险）
+- **v202**：MPV 弹幕白变灰=MPVUI HDRPolicy 默认 .automatic 杜比视界以 HDR EDR 直出→电视切 HDR 模式→系统把 App 的 SDR 浮层整体压暗；修复=hdrPolicy:.disabled（对照 MPVUI v0.7.0 锁定版源码确认）
+- **v203**：诊断版（弹幕数据层+渲染管线两路日志落 9999）
+- **v204**：displayMatching:.disabled（日志实锤第二颗雷：displayMatching .automatic 仍按杜比视界片源把电视切进 HDR 模式）
+- **v205**：sdrOutput:.compatibility8Bit（MPV 输出层从 linear float16 P3 降级为 8-bit sRGB，与 KS 视频层同类）→ **用户确认弹幕颜色已修复 ✓ MPV 色彩战役闭环**
+
+### 🚨 新铁律与踩坑（v188-v205，违反过全都付出了代价）
+1. **MPV 输出配置三件套已定案勿再改**：`hdrPolicy:.disabled` + `displayMatching:.disabled` + `sdrOutput:.compatibility8Bit`（SDR 全链路：层=8-bit sRGB，bt.2390 色调映射生效，弹幕/字幕/控制条纯白与 KS 一致）。**代价=无 HDR 直出/峰值亮度降至 SDR/宽色域收窄 bt.709（用户知情接受）。** 若未来要 HDR 直出+白弹幕=需把弹幕渲染进 EDR 空间，tvOS SwiftUI 对 Text 无官方 EDR 路径，工程量大不可控。
+2. **SwiftUI Group 把修饰符分发给每个子视图**：容器生命周期的 onAppear/onDisappear 挂在 Group 上，会在 if/else 分支切换（KS↔MPV）时各自触发且顺序不定（KS 的 false 后触发=屏保）。需要"整容器只触发一次"的修饰符一律挂 ZStack/VStack 等真实容器。
+3. **手势 recognizer 不挂 delegate=死代码**：FNOSPanBridge.shouldBegin（v196）因漏挂 recognizer.delegate 从未生效，v197 补上才修复。新增 recognizer 必须同时挂 delegate。
+4. **tvOS 无 searchFocused API**（iOS 专属，编译报 unavailable）；官方 searchable 的聚焦由系统管理，弹层打开后焦点若未自动落框属系统行为。
+5. **官方 searchable 是搜索框的定稿方案**：自绘 TextField（.plain+focusEffectDisabled+透明胶囊+描边）穷尽组合仍有系统聚焦灰盖；`.searchable` 输入框/键盘/聚焦外观全部系统绘制，勿再回退自绘。
+6. **弹幕数据层已验证正确**（诊断日志：77119 条 98% 纯白、100% 不透明、解析 0xFFFFFF→1.0/1.0/1.0）——弹幕颜色问题先查渲染/显示合成层，勿再查数据层。
+7. **诊断日志先行**：MPV 弹幕灰三轮盲猜失败，v203 两路日志（弹幕数据层+渲染管线）一次实锤（根因=displayMatching 切电视进 HDR 模式）。播放器渲染/颜色问题先加 FNOSDiagLog 诊断再改。
+8. **hosts 裸连通道**（梯子坏期间）：hosts 固定真实 IP——github.com→140.82.113.3/116.3（轮换重试）、api.github.com→20.205.243.168、objects.githubusercontent.com→20.200.245.247；备份 hosts.bak_fnos；代理恢复后删 '# fnos github bypass' 段；GFW 偶发重置=轮换 IP 重试即通。
+9. **用户确认已解决、禁止回滚**：KS 滑块触摸滑动（v197）、MPV 屏保（v201 ZStack+ticker）、弹幕颜色（v205 SDR 三件套）、搜索框（v200 官方 searchable）、弹幕设置滑块手感（v193 直连绑定）。
+10. **FNOSDiag 与 FNOSDiagLog 是两条通道**：FNOSDiag=内存环形缓冲+print（设置面板 FNOSDiagView 用）；FNOSDiagLog.send=POST 9999 落盘。播放侧诊断必须走 FNOSDiagLog（v188 已把 FNOSDiag.add 并入）。
+
+### 待解决问题清单（更新于 v205）
+1. 本地手动跳过片头片尾——服务端 play_config skip 值全 null 已定论（客户端无 bug），fnos_tv_danmu 的本地滑条方案（0-600s/部，READY 跳片头+tick 判片尾）待用户拍板
+2. 续播卡第 3+ 张上键无落点（方案 A 落设置按钮失败、binding 方案真机不完美——需新思路）
+3. TMDB infoSection 死代码清理（未被 body 引用）
+4. 直播/MV 行恢复（数据通道已验证，播放层搁置）
+5. 「已在库中」精细化（MP 转移历史端点未探）
+6. 番剧名匹配边界（MP 转存后以 TMDB 名为准）
+7. MPV 选集条缩略图（原生 EpisodeRef 无缩略图=渐变占位，可从 compat 层补拉）
+8. 弹幕极轻微停顿（v174 后残留，需录屏定位）
+
+### 未来优化方向（按价值排序，未排期）
+1. **本地手动跳过片头片尾**：参考 fnos_tv_danmu 的 SharedPreferences 滑条（0-600s/部），数据结构=按剧集 guid 存 intro/outro 秒数；入口可放弹幕设置或长按进度条
+2. **搜索增强**：搜索历史（UserDefaults 持久化最近 N 条）/拼音首字母匹配/TMDB 海报预载（点进详情页零等待）
+3. **MPV 选集条补缩略图**：compat 层 Shows/{id}/Episodes 有 still 数据，按 guid 映射回填 4 大卡
+4. **弹幕 EDR 渲染**（远期）：若恢复 HDR 直出，弹幕需渲染进扩展线性空间（tvOS SwiftUI Text 无官方路径，需 CoreText/Metal 自绘，工程量大）
+5. **播放器设置持久化面板**：当前弹幕设置即时生效但无全局预览，可加最小化预览条
+6. **续播体验**：第 3+ 张续播卡上键落点；KS/MPV 续播选择窗样式统一复查

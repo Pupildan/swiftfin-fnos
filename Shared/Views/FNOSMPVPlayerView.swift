@@ -784,13 +784,14 @@ struct FNOSMPVPlayerView: View {
         let configuration = MPVPlayerConfiguration(
             additionalOptions: [
                 "http-header-fields": "Authorization: \(authToken)",
-                // v119：DoVi→SDR 转换别把字幕/弹幕压灰。改 hable tone-mapping 提对比
-                // + 显式纯白字幕色 + 覆盖 ASS 自带灰色样式。
+                // v119：DoVi→SDR 转换别把字幕/弹幕压灰。显式纯白字幕色 + 覆盖 ASS 自带灰色样式。
                 //（不能用 "vo=gpu-next" 这种无冒号写法——[String:String] 字典字面量
                 //  必须 key: value，且 vo 已由 videoOutput:.metal 管理）
-                "tone-mapping": "hable",
+                // v192：用户实测 hable 偏亮+饱和度发灰 → 换 BT.2390 EETF（行业标准，
+                // 对比更准亮度更中性）+ 逐通道色域映射（比 clip 硬裁剪还原饱和色更好）
+                "tone-mapping": "bt.2390",
                 "hdr-compute-peak": "yes",
-                "gamut-mapping-mode": "clip",
+                "gamut-mapping-mode": "per-channel",
                 "sub-color": "#FFFFFFFF",
                 "sub-border-color": "#FF000000",
                 "sub-shadow-color": "#B4000000",

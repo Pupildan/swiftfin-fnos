@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v198"
+    static let version = "v199"
 
     /// 本版主要变更摘要
-    static let changes = "v198:搜索框灰底修复(用户第二轮实锤)——根因=v198 给输入框自绘的胶囊填充 Capsule().fill(white 0.06~0.14碾在液态玻璃面板深色底上就是一块实心灰,且v198 关了系统焦点效果focusEffectDisabled后系统不再画标准描边,只剩这块自绘灰;用户已确认要走native风格且该灰块随焦点移动;另外v197 补 recognizer.delegate=FNOSPanBridge.shared 修好了KS无极滑块触摸滑动(用户确认已解决,禁止回滚);本版=胶囊填充置Color.clear,只保留纯描边(未聚焦 0.28pt白细框/聚焦 1.0pt 3pt白粗框),输入区背景 100% 透明透出玻璃面板本身。同含v197全部:KS滑块滑动修复/搜索功能(媒体库优先→TMDB兜底→详情页入库)/屏保所有权归容器/Hero剧集解禁/字幕保护区/弹幕显示区域/MPV与KS 1:1。"
+    static let changes = "v199:搜索框改用官方 searchable 系统搜索框(用户指令:放弃自绘,用官方试试)——输入框/键盘/聚焦外观全部由系统绘制,App 不再画任何背景(自绘胶囊填充+系统聚焦效果叠加=灰块,自绘方案已彻底移除);实时防抖搜索(450ms 停止输入自动触发,取消上次未完成);焦点自动落在系统搜索框(onAppear searchFocused),结果区布局不变(媒体库优先→TMDB兜底→详情页/入库);注意:系统搜索框外观为 tvOS 官方样式,若键盘面板底色仍不满意属系统绘制范围。"
 }

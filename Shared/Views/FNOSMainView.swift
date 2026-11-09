@@ -3033,85 +3033,67 @@ private struct FNOSMainSearchView: View {
     let onOpenTMDBItem: (FNOSTMDBItem) -> Void
 
     @State private var query = ""
+    @State private var searchTask: Task<Void, Never>?
     @State private var libraryResults: [FNOSItem] = []
     @State private var tmdbResults: [FNOSTMDBItem] = []
     @State private var isSearching = false
     @State private var searched = false
-    @FocusState private var fieldFocused: Bool
-    @FocusState private var searchButtonFocused: Bool
+    /// v199: 官方 searchable 搜索框的聚焦绑定（onAppear 自动聚焦系统搜索框）
+    @FocusState private var isSearchFocused: Bool
     @FocusState private var focusedResult: String?
 
     var body: some View {
-        ZStack {
-            Color.black.opacity(0.5).ignoresSafeArea()
-            VStack(alignment: .leading, spacing: 22) {
-                Text("搜索")
-                    .font(.system(size: 26, weight: .bold))
-                    .foregroundColor(.white)
-
-                HStack(spacing: 16) {
-                    TextField("输入片名或剧名", text: $query)
-                        .textFieldStyle(.plain)
-                        // v198: 去掉 tvOS 系统聚焦效果（聚焦时系统会盖一层灰底，用户实测）；
-                        // 改用自绘白色描边表示聚焦，不再有任何灰底/灰盖
-                        .focusEffectDisabled()
-                        .font(.system(size: 22))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 26)
-                        .padding(.vertical, 16)
-                        .background(
-                            // v199: 彻底去除灰底填充（用户实测：任何不透明填充叠在玻璃面板上都是一块灰）
-                            // 未聚焦 = 完全透明，只留一层很淡的白色细描边界定输入区；
-                            // 聚焦 = 仅描边变亮变粗（纯描边动画，无填充、无灰盖）
-                            Capsule()
-                                .fill(Color.clear)
-                                .overlay(
-                                    Capsule().stroke(
-                                        Color.white.opacity(fieldFocused ? 1.0 : 0.28),
-                                        lineWidth: fieldFocused ? 3 : 1
-                                    )
-                                )
-                        )
-                        .focused($fieldFocused)
-                        .onSubmit {
-                            Task { await runSearch() }
-                        }
-                    Button {
-                        Task { await runSearch() }
-                    } label: {
-                        FNOSFocusButtonLabel(isFocused: searchButtonFocused, isPrimary: false) {
-                            Image(systemName: "magnifyingglass")
-                                .font(.system(size: 22, weight: .semibold))
-                        }
-                    }
-                    .buttonStyle(FNOSBareButtonStyle())
-                    .focused($searchButtonFocused)
-                }
+        NavigationStack {
+            ZStack {
+                Color.black.opacity(0.5).ignoresSafeArea()
 
                 if isSearching {
-                    HStack(spacing: 12) {
+                    VStack(spacing: 12) {
                         ProgressView()
                         Text("搜索中…")
                             .font(.system(size: 17))
                             .foregroundColor(.white.opacity(0.7))
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else if searched {
                     resultsView
+                } else {
+                    VStack(spacing: 14) {
+                        Image(systemName: "magnifyingglass")
+                            .font(.system(size: 44))
+                            .foregroundColor(.white.opacity(0.35))
+                        Text("输入片名或剧名开始搜索")
+                            .font(.system(size: 19))
+                            .foregroundColor(.white.opacity(0.6))
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
-
-                Spacer()
             }
-            .padding(36)
-            .frame(width: 900)
-            // 官方液态玻璃（死规则：新功能 UI 一律玻璃）
-            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // v199: 用户实测自绘搜索框去不掉灰块（自绘底+系统聚焦效果叠加），改用官方
+            // searchable 系统搜索框——输入框与键盘全部由系统绘制，本视图不再画任何背景
+            .searchable(text: $query, placement: .automatic, prompt: Text("输入片名或剧名"))
+            .searchFocused($isSearchFocused)
+            .onChange(of: query) { _, newValue in
+                // 实时防抖搜索：450ms 内停止输入才触发（取消上一次未完成任务）
+                searchTask?.cancel()
+                let trimmed = newValue.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else {
+                    searched = false
+                    libraryResults = []
+                    tmdbResults = []
+                    return
+                }
+                searchTask = Task {
+                    try? await Task.sleep(nanoseconds: 450_000_000)
+                    guard !Task.isCancelled else { return }
+                    await runSearch(trimmed)
+                }
+            }
         }
         // Menu 关闭搜索弹层
         .onExitCommand(perform: onClose)
         .onAppear {
-            fieldFocused = true
+            isSearchFocused = true
         }
     }
 
@@ -3164,7 +3146,7 @@ private struct FNOSMainSearchView: View {
                     }
                 }
             }
-            .frame(height: 520)
+            .padding(.horizontal, 140)
         }
     }
 
@@ -3214,9 +3196,7 @@ private struct FNOSMainSearchView: View {
 
     // MARK: 搜索执行（媒体库优先 → TMDB 兜底）
 
-    private func runSearch() async {
-        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+    private func runSearch(_ trimmed: String) async {
         isSearching = true
         searched = true
         // 1) 媒体库优先
@@ -3228,12 +3208,7 @@ private struct FNOSMainSearchView: View {
             tmdbResults = (try? await FNOSTMDBClient.search(query: trimmed, apiKey: tmdbApiKey)) ?? []
         }
         isSearching = false
-        // 搜索完成焦点落到第一条结果
-        if let first = libraryResults.first {
-            focusedResult = "lib." + first.Id
-        } else if let first = tmdbResults.first {
-            focusedResult = "tmdb." + String(first.id)
-        }
+        // v199: 焦点保持在系统搜索框上，由用户自行下移到结果行——不再自动抢焦点打断输入
     }
 
     private func libraryMeta(_ item: FNOSItem) -> String {

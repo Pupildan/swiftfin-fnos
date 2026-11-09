@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v195"
+    static let version = "v196"
 
     /// 本版主要变更摘要
-    static let changes = "v195:①搜索输入框灰色遮盖修复(用户实测焦点在输入框上时被系统TextField默认灰底盖住)——加textFieldStyle(.plain)去掉系统底,保留自定义玻璃胶囊;②首页左上角设置/搜索按钮位置对调(设置在左、搜索在右)。同包含v194全部内容:滑块步进加大+连按加速(KS/MPV同步)+首页搜索(媒体库优先→TMDB兜底→详情页/入库)+mpv色彩bt.2390。"
+    static let changes = "v196:①KS 弹幕无极滑块滑动失效修复(用户实测KS上滑不动/不如MPV)——根因=KS视频层FNOSPanBridge手势与面板滑动桥竞争抢走滑动手势,加delegate shouldBegin:弹层打开时视频层手势让位给面板桥,KS滑动与MPV一致;②滑块步进降低(用户实测步进太快)——滑动灵敏度减半(字号0.15/不透明度0.003/区域0.0015每px),速度单独0.0025每px(限制步进≤0.5),按键步进减半(字号1/不透明度0.025/速度0.05/区域0.025)+连按加速上限×2;③同含v195全部内容(搜索框去灰底/设置搜索按钮对调)。"
 }

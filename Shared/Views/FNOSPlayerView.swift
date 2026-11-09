@@ -226,12 +226,19 @@ extension View {
 
 // MARK: - 转盘/触摸滑动桥接（SwiftUI 无公开 scroll wheel API，走 UIKit 手势）
 
-final class FNOSPanBridge: NSObject {
+final class FNOSPanBridge: NSObject, UIGestureRecognizerDelegate {
     static let shared = FNOSPanBridge()
     var onPan: ((UIPanGestureRecognizer) -> Void)?
+    /// v196: 弹层打开时返回 false 让位——否则 KS 视频层手势会抢走滑动手势，
+    /// 导致弹幕设置滑块在 KS 上滑不动（MPV 无此竞争所以体验正常）。
+    var shouldBegin: () -> Bool = { true }
 
     @objc func handle(_ gesture: UIPanGestureRecognizer) {
         onPan?(gesture)
+    }
+
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        shouldBegin()
     }
 }
 
@@ -1003,6 +1010,9 @@ struct FNOSPlayerContainerView: View {
                     break
                 }
             }
+            // v196: 弹层打开时让位给面板滑动桥（否则 KS 视频层手势会抢走滑动手势，
+            // 导致弹幕设置滑块在 KS 上滑不动；MPV 无此竞争所以体验正常）
+            FNOSPanBridge.shared.shouldBegin = { !isSheetPresented }
         }
     }
 
@@ -1682,17 +1692,17 @@ struct FNOSDanmuSettingsSheet: View {
                 .font(.system(size: 22, weight: .bold))
                 .foregroundColor(.white)
 
-            sliderRow(id: "size", title: "字号", value: $fontSize, range: 16...44, step: 2) {
+            sliderRow(id: "size", title: "字号", value: $fontSize, range: 16...44, step: 1) {
                 "\(Int($0)) px"
             }
-            sliderRow(id: "opacity", title: "不透明度", value: $opacity, range: 0.2...1.0, step: 0.05) {
+            sliderRow(id: "opacity", title: "不透明度", value: $opacity, range: 0.2...1.0, step: 0.025) {
                 "\(Int(($0 * 100).rounded())) %"
             }
-            sliderRow(id: "speed", title: "速度", value: $speed, range: 0.5...2.5, step: 0.1) {
+            sliderRow(id: "speed", title: "速度", value: $speed, range: 0.5...2.5, step: 0.05) {
                 String(format: "%.2fx", $0)
             }
             // v190: 显示区域上限 75%——底部 260pt 是字幕保护区（不准显示弹幕，用户死规则）
-            sliderRow(id: "area", title: "显示区域", value: $area, range: 0.25...0.75, step: 0.05) {
+            sliderRow(id: "area", title: "显示区域", value: $area, range: 0.25...0.75, step: 0.025) {
                 "\(Int(($0 * 100).rounded())) % 屏"
             }
 
@@ -1725,11 +1735,12 @@ struct FNOSDanmuSettingsSheet: View {
                 onPanDelta: { dx in
                     func clamp(_ v: Double, _ lo: Double, _ hi: Double) -> Double { min(hi, max(lo, v)) }
                     let d = Double(dx)
+                    // v196: 灵敏度较 v193 减半（用户实测步进太快）——一次满幅滑动≈走完量程
                     switch focusedControl {
-                    case "size":    fontSize = clamp(fontSize + d * 0.3, 16, 44)
-                    case "opacity": opacity = clamp(opacity + d * 0.006, 0.2, 1.0)
-                    case "speed":   speed = clamp(speed + d * 0.015, 0.5, 2.5)
-                    case "area":    area = clamp(area + d * 0.003, 0.25, 0.75)
+                    case "size":    fontSize = clamp(fontSize + d * 0.15, 16, 44)
+                    case "opacity": opacity = clamp(opacity + d * 0.003, 0.2, 1.0)
+                    case "speed":   speed = clamp(speed + d * 0.0025, 0.5, 2.5)
+                    case "area":    area = clamp(area + d * 0.0015, 0.25, 0.75)
                     default: break
                     }
                 }
@@ -1797,7 +1808,7 @@ struct FNOSDanmuSettingsSheet: View {
                 // v194: 连按/连滑加速——0.2s 内连续触发翻倍（最多 ×4），停顿回落到基础步长
                 let now = Date()
                 let rapid = lastSliderMove.map { now.timeIntervalSince($0) < 0.2 } ?? false
-                sliderAccel = rapid ? min(sliderAccel * 2, 4) : 1
+                sliderAccel = rapid ? min(sliderAccel * 2, 2) : 1
                 lastSliderMove = now
                 let effective = step * sliderAccel
                 switch direction {

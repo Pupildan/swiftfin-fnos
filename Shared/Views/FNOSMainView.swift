@@ -399,10 +399,8 @@ struct FNOSMainView: View {
                 client: target.client,
                 userID: target.userID,
                 seriesName: target.seriesName,
-                seriesID: target.seriesID,
-                startFraction: target.startFraction,
-                startSeconds: target.startSeconds,
                 // v212: 继续播放入口补换集回调（此前未传=选集条换集没反应；详情页入口同款机制）
+                // 注意: onSelectEpisode 在声明序里位于 episodes 之后/seriesID 之前，实参必须按此顺序
                 onSelectEpisode: { ep in
                     pendingPlaybackTarget = FNOSPlaybackTarget(
                         item: ep,
@@ -413,6 +411,9 @@ struct FNOSMainView: View {
                     )
                     playbackTarget = nil
                 },
+                seriesID: target.seriesID,
+                startFraction: target.startFraction,
+                startSeconds: target.startSeconds,
                 nativeItemGUID: target.nativeItemGUID
             )
         }

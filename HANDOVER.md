@@ -2,7 +2,7 @@
 
 > 仓库：`Pupildan/swiftfin-fnos`（GitHub 私有仓，CI 构建 unsigned ipa）
 > 本地工作区：`C:\Users\Admin\WorkBuddy\fndanmu-tvos\build-package\swiftfin-fnos`
-> 当前版本：**v211**（🆕滑动真根因=window 级手势输给 tvOS 系统手势→宿主移到视频层顶层成 hit-test 终点+simultaneous+全程日志；🆕选集卡强引用字典预载直渲染（v110 方案，灭重建闪烁+解码风暴拖卡弹幕）。v210 真机结论=选集卡有真实数据 ✓ 但 FNOSAsyncImage 反复重载拖卡弹幕、滑动仍不行；图标缓存刷新待用户重启验证），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
+> 当前版本：**v212**（🆕继续播放入口选集失效修复：容器自拉分集兜底（allEpisodes，端点同详情页）+ 首页补 onSelectEpisode（pendingPlaybackTarget 关播重开）。v211 真机结论=**MPV 滑动 ✓ 选集卡数据 ✓ 弹幕不卡 ✓（MPV 交互战役闭环）**），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
 > 交付物命名规则：`output/Swiftfin-FNOS-tvos-unsigned-vXX.ipa`（32MB 左右）
 
 ---
@@ -43,7 +43,9 @@ v130 我为了修「KS 轻微左右抖 + mpv 原地抖后重载」，把小漂�
 
 - **v210：MPV 选集真实数据 + 滑动真根因 + 图标缓存定论（2026-11-13）**。①**mpv 选集卡真实数据**：容器 `FNOSPlayerContainerView` 本身就有 compat 全分集（`episodes: [FNOSItem]`，带海报/标题/简介）——mpvLayer 构造时直接注入 `FNOSMPVPlayerView(compatClient: client, compatEpisodes: episodes)`，选集卡按集号匹配 `$0.IndexNumber == ep.number` → `compatClient.episodeStillURL`（Thumb/Primary/Backdrop 三级）+ FNOSAsyncImage 鉴权渲染 + 标题 + 两行简介；无匹配退渐变占位卡。**零额外网络请求**（KS 同款数据源）。②**挂载时序修复（非真根因）**：updateUIView 首调时宿主未上树 → 手势挂死宿主自身永不重挂；修=延迟挂载+爬根校验+失效重挂。③**App 图标**：解包对比 v206/v209 `Assets.car`（2.71MB→3.88MB）**证实编译产物已含 Nbeefin 分层图标**——真机不显示=**tvOS 分层图标系统缓存**；刷新路径=**彻底删除 App → 设置里重启 Apple TV → 重装**。**真机验收（v210）：选集卡有数据 ✓ 但「一直刷新拖卡弹幕」、滑动仍不行 → v211。**
 
-- **v211：滑动真根因（window 级手势必败）+ 选集卡强引用字典（2026-11-13，KS 一行不动）**。①**滑动**：v210 挂载正确后仍收不到事件=**window 级手势在 tvOS 上输给系统手势**（UIKit 触摸链中深层视图的手势先识别；KS 桥挂 videoView 深层所以赢，MPV 桥爬根挂 window 根=最浅层永收不到）。修=**FNOSMPVPanHostView 移到 videoSurface ZStack 顶层（isUserInteractionEnabled=true 成 hit-test 终点）**+手势挂宿主自身不再爬根+`shouldRecognizeSimultaneouslyWith true`+**全程诊断日志**（挂载结果/began 三分支/ended+门控快照落 9999）——下次真机无论成败日志即实锤。②**选集卡一直刷新拖卡弹幕**：FNOSAsyncImage 在 LazyHStack 重建时重置 @State 反复重载（v98 教训）+20+ 张 640 宽并发解码。修=**v110 终极方案**：`preloadEpisodeStills()`（展开选集条触发，串行下载→ImageIO `kCGImageSourceShouldCacheImmediately` 后台急切解码→逐张入 `stillImages: [Int: UIImage]` 强引用字典），卡片 `Image(uiImage:)` 直渲染+占位渐变兜底——零重建零闪烁零解码风暴。**通用教训：UIViewRepresentable 挂 UIKit 手势两铁律=①宿主必须可接收触摸且处于 hit-test 链内（isUserInteractionEnabled=false 或挂 window 根都会让手势必败/不触发）②tvOS 上自定义 pan 手势必须挂深层视图（视频层），window 根挂载会被系统手势饿死。**
+- **v211：滑动真根因（window 级手势必败）+ 选集卡强引用字典（2026-11-13，KS 一行不动）**。①**滑动**：v210 挂载正确后仍收不到事件=**window 级手势在 tvOS 上输给系统手势**（UIKit 触摸链中深层视图的手势先识别；KS 桥挂 videoView 深层所以赢，MPV 桥爬根挂 window 根=最浅层永收不到）。修=**FNOSMPVPanHostView 移到 videoSurface ZStack 顶层（isUserInteractionEnabled=true 成 hit-test 终点）**+手势挂宿主自身不再爬根+`shouldRecognizeSimultaneouslyWith true`+**全程诊断日志**（挂载结果/began 三分支/ended+门控快照落 9999）。②**选集卡一直刷新拖卡弹幕**：FNOSAsyncImage 在 LazyHStack 重建时重置 @State 反复重载（v98 教训）+20+ 张 640 宽并发解码。修=**v110 终极方案**：`preloadEpisodeStills()`（展开选集条触发，串行下载→ImageIO `kCGImageSourceShouldCacheImmediately` 后台急切解码→逐张入 `stillImages: [Int: UIImage]` 强引用字典），卡片 `Image(uiImage:)` 直渲染+占位渐变兜底——零重建零闪烁零解码风暴。**通用教训：UIViewRepresentable 挂 UIKit 手势两铁律=①宿主必须可接收触摸且处于 hit-test 链内（isUserInteractionEnabled=false 或挂 window 根都会让手势必败/不触发）②tvOS 上自定义 pan 手势必须挂深层视图（视频层），window 根挂载会被系统手势饿死。****真机验收（v211）：滑动 ✓ 选集卡数据 ✓ 弹幕不卡 ✓（MPV 交互战役闭环）。**
+
+- **v212：继续播放入口选集失效修复（2026-11-13）**。根因=**首页继续播放入口（FNOSMainView fullScreenCover）构造 `FNOSPlayerContainerView` 时未传 `episodes` 与 `onSelectEpisode`**（详情页入口 FNOSItemDetailView 都有传）：KS 选集条被 `guard !episodes.isEmpty` 拦死展不开、KS 换集回调 nil 点了没反应；MPV 虽能展开（原生 range.episodes）但 compatEpisodes 空=无封面信息。修=①**容器自拉分集兜底**：`fetchedEpisodes` @State + `allEpisodes` 计算属性（外部传入优先），`.task { fetchEpisodesIfNeeded() }` 在 episodes 空+是剧集时按详情页同款端点自拉（`Shows/{SeriesId}/Episodes?UserId` → `Users/{uid}/Items?ParentId` 兜底，ParentIndexNumber+IndexNumber 升序），失败静默；容器内 nextEpisode/选集条 ForEach/.down/mpvLayer compatEpisodes 全部改用 allEpisodes——**任何入口自动生效**。②**首页补 onSelectEpisode**：`pendingPlaybackTarget` @State，回调记目标→关播→onDismiss 里重开（详情页 pendingEpisode 同款机制），换集后从头播新集。**通用教训：给 `FNOSPlayerContainerView` 加/改参数时必须核对全部构造点（详情页/首页继续播放/首页直接开播 1224 行）——多入口参数不齐=只有部分入口的功能正常。**
 
 ---
 

@@ -112,6 +112,8 @@ struct FNOSMainView: View {
     @State private var didBootstrap = false
 
     @State private var playbackTarget: FNOSPlaybackTarget?
+    /// v212: 换集待开目标（cover 关播 → onDismiss 重开；详情页 pendingEpisode 同款机制）
+    @State private var pendingPlaybackTarget: FNOSPlaybackTarget?
     @State private var seriesItem: FNOSItem?
     // 影视详情页（1:1 复刻 ATV+）
     @State private var detailItem: FNOSItem?
@@ -382,6 +384,14 @@ struct FNOSMainView: View {
             await bootstrapIfNeeded()
         }
         .fullScreenCover(item: $playbackTarget, onDismiss: {
+            // v212: 换集关播重开（详情页 pendingEpisode 同款机制——cover 展示中换 item 不重建，
+            // 必须先关再重开）；onDismiss 先刷新继续播放再检查待开目标
+            if let pending = pendingPlaybackTarget {
+                pendingPlaybackTarget = nil
+                rebuildResumeEntries()
+                playbackTarget = pending
+                return
+            }
             rebuildResumeEntries()
         }) { target in
             FNOSPlayerContainerView(
@@ -392,6 +402,17 @@ struct FNOSMainView: View {
                 seriesID: target.seriesID,
                 startFraction: target.startFraction,
                 startSeconds: target.startSeconds,
+                // v212: 继续播放入口补换集回调（此前未传=选集条换集没反应；详情页入口同款机制）
+                onSelectEpisode: { ep in
+                    pendingPlaybackTarget = FNOSPlaybackTarget(
+                        item: ep,
+                        client: target.client,
+                        userID: target.userID,
+                        seriesName: target.seriesName ?? ep.SeriesName,
+                        seriesID: target.seriesID ?? ep.SeriesId
+                    )
+                    playbackTarget = nil
+                },
                 nativeItemGUID: target.nativeItemGUID
             )
         }

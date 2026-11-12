@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v211"
+    static let version = "v212"
 
     /// 本版主要变更摘要
-    static let changes = "v211:v210 真机反馈两修(KS 仍一行未动)。①滑动真根因=window 级手势输给 tvOS 系统手势(深层视图手势先识别;KS 挂 videoView 深层所以赢,MPV 挂 window 根所以永收不到);修=手势宿主移到视频层顶层成为 hit-test 终点(isUserInteractionEnabled=true)+挂宿主自身不再爬根+simultaneous delegate+全程诊断日志(挂载/began/ended/门控快照落 9999);②选集卡一直刷新拖卡弹幕=FNOSAsyncImage 在 LazyHStack 重建时重置 @State 反复重载(v98 教训)+20+张并发解码;修=v110 终极方案:打开选集条即串行预载剧照(下载→ImageIO 急切后台解码→逐张入强引用字典),卡片 Image(uiImage:) 直渲染,零重建零闪烁零解码风暴。"
+    static let changes = "v212:继续播放入口剧集选集失效修复(用户真机反馈)。根因=首页继续播放入口构造播放容器时未传 episodes 和 onSelectEpisode(详情页入口有传):KS 选集条被 guard !episodes.isEmpty 直接拦死展不开,MPV 虽能展开(原生分集)但无封面信息且 KS 换集回调为 nil 点了没反应。修=①容器自拉分集兜底:episodes 为空且是剧集时按详情页同款端点(Shows/{seriesId}/Episodes → Users/{uid}/Items?ParentId 兜底)自拉,allEpisodes 计算属性外部传入优先,所有入口自动生效,失败静默不影响播放;②首页继续播放入口补 onSelectEpisode 回调(pendingPlaybackTarget 关播重开,详情页 pendingEpisode 同款机制),换集后从头播放新集。"
 }

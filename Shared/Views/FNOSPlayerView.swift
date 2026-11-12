@@ -320,6 +320,7 @@ struct FNOSPlayerContainerView: View {
     /// 单集所属剧名（弹幕按剧名+集数匹配；item.SeriesName 缺失时用这个兜底）
     var seriesName: String? = nil
     /// 同剧全部分集（进度条下方换集条；电影为空即不显示）
+    /// v212: 继续播放入口等未传分集时，容器按剧集级 guid 自拉兜底（fetchedEpisodes）
     var episodes: [FNOSItem] = []
     /// 点击换集回调（由详情页重建播放目标实现切集）
     var onSelectEpisode: ((FNOSItem) -> Void)? = nil
@@ -384,13 +385,19 @@ struct FNOSPlayerContainerView: View {
     @State private var lastLocalSaveAt: Date = .distantPast
     /// v88：转盘手势本会话已挂载标记（防同会话重复挂；跨会话由 onPan 清空重挂解决）
     @State private var panAttached = false
+    /// v212: 继续播放入口等未传分集时容器自拉的兜底分集（详情页入口外部传入优先）
+    @State private var fetchedEpisodes: [FNOSItem] = []
+    @State private var didFetchEpisodes = false
+
+    /// v212: 选集条数据源——外部传入优先，否则用容器自拉的兜底分集
+    private var allEpisodes: [FNOSItem] { episodes.isEmpty ? fetchedEpisodes : episodes }
 
     /// 剧集自动连播：当前集在本列表里的下一集
     private var nextEpisode: FNOSItem? {
         guard item.type == "Episode",
-              let idx = episodes.firstIndex(where: { $0.Id == item.Id }),
-              idx + 1 < episodes.count else { return nil }
-        return episodes[idx + 1]
+              let idx = allEpisodes.firstIndex(where: { $0.Id == item.Id }),
+              idx + 1 < allEpisodes.count else { return nil }
+        return allEpisodes[idx + 1]
     }
 
     /// 10s 节流的进度上报（v94：飞牛原生 play/record，兼容层 Sessions 是空壳已定案）。
@@ -524,6 +531,8 @@ struct FNOSPlayerContainerView: View {
         .task { await resolveReporter() }
         // v94：原生上报上下文解析 + 起播上报（多端同步写通道）
         .task { await resolveReporter() }
+        // v212: 继续播放入口未传分集时容器自拉兜底（详情页入口 episodes 已有则跳过）
+        .task { await fetchEpisodesIfNeeded() }
         // v197: 屏保所有权归容器——整个播放会话（KS/MPV 及引擎自动切换）期间一律禁止屏保。
         // 之前内核切换时 KS 的 onDisappear 把 isIdleTimerDisabled 重置 false、MPV 的 onAppear 又设 true，
         // 顺序不定 → MPV 播放中会进系统屏保（用户实测）。容器统一持有，内核只设 true、不再设 false。
@@ -610,7 +619,7 @@ struct FNOSPlayerContainerView: View {
                 range: mpvRange,
                 // v210: 兼容层 client+全分集 → mpv 选集卡真实缩略图/标题/简介（零额外请求）
                 compatClient: client,
-                compatEpisodes: episodes,
+                compatEpisodes: allEpisodes,
                 initialSeek: handoffPosition > 1 ? handoffPosition : resumeStartSeconds,
                 skipOpening: mpvRange.skipOpening,
                 skipEnding: mpvRange.skipEnding,
@@ -1204,7 +1213,7 @@ struct FNOSPlayerContainerView: View {
             }
 
             // 换集条：只有「焦点在进度条 + 再按一次下键」才展开
-            if !episodes.isEmpty && showEpisodeStrip {
+                if !allEpisodes.isEmpty && showEpisodeStrip {
                 episodeStrip
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
@@ -1246,7 +1255,7 @@ struct FNOSPlayerContainerView: View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 14) {
-                    ForEach(episodes) { ep in
+                    ForEach(allEpisodes) { ep in
                         let isCurrent = ep.Id == item.Id
                         let isFocused = focusedChip == ep.Id
                         Button {
@@ -1358,11 +1367,11 @@ struct FNOSPlayerContainerView: View {
                 scrub(by: 1)
             case .down:
                 // 第一次按↓：展开换集条并把焦点交给当前集
-                guard !episodes.isEmpty else { return }
+                guard !allEpisodes.isEmpty else { return }
                 withAnimation(.easeInOut(duration: 0.2)) {
                     showEpisodeStrip = true
                 }
-                let target = episodes.first(where: { $0.Id == item.Id })?.Id ?? episodes.first?.Id
+                let target = allEpisodes.first(where: { $0.Id == item.Id })?.Id ?? allEpisodes.first?.Id
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                     focusedChip = target
                 }
@@ -1620,6 +1629,57 @@ struct FNOSPlayerContainerView: View {
     }
 
     // MARK: 准备（真实 MediaSourceId → 直链 → 弹幕）
+
+    /// v212: 继续播放入口等未传分集时容器自拉兜底（端点与详情页 loadEpisodes 同款：
+    /// 全剧集 Shows/{seriesId}/Episodes → 通用条目查询 Users/{uid}/Items?ParentId 兜底）。
+    /// 失败静默（选集条继续隐藏，不影响播放）。
+    @MainActor
+    private func fetchEpisodesIfNeeded() async {
+        guard item.type == "Episode", episodes.isEmpty, !didFetchEpisodes else { return }
+        didFetchEpisodes = true
+        let seriesId = item.SeriesId ?? item.Id
+        let fields = "Overview,RunTimeTicks,OfficialRating,ParentIndexNumber,IndexNumber,PremiereDate,SeriesName"
+
+        var all: [FNOSItem] = []
+        // 端点 B：全剧集（带 UserId）
+        do {
+            let data = try await client.get(
+                path: "Shows/\(seriesId)/Episodes",
+                query: ["UserId": userID, "Fields": fields]
+            )
+            all = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items
+            print("FNOSℹ️播放器自拉分集(Shows/Episodes): \(all.count) 集")
+        } catch {
+            print("FNOS⚠️ 播放器自拉分集失败: \(error.localizedDescription)")
+        }
+
+        // 端点 C：通用条目查询兜底
+        if all.isEmpty {
+            do {
+                let data = try await client.get(
+                    path: "Users/\(userID)/Items",
+                    query: [
+                        "ParentId": seriesId,
+                        "Recursive": "true",
+                        "Limit": "500",
+                        "SortBy": "ParentIndexNumber,IndexNumber",
+                        "SortOrder": "Ascending",
+                        "Fields": fields,
+                    ]
+                )
+                all = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items
+                print("FNOSℹ️播放器自拉分集(Items 兜底): \(all.count) 集")
+            } catch {
+                print("FNOS⚠️ 播放器自拉分集兜底失败: \(error.localizedDescription)")
+            }
+        }
+
+        // 集号排序（与详情页一致：按季+集升序）
+        if !all.isEmpty {
+            all.sort { ($0.ParentIndexNumber ?? 0, $0.IndexNumber ?? 0) < ($1.ParentIndexNumber ?? 0, $1.IndexNumber ?? 0) }
+            fetchedEpisodes = all
+        }
+    }
 
     private func prepare() async {
         guard !didSetup else { return }

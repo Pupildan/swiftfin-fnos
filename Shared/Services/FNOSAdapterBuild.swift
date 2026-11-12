@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v208"
+    static let version = "v209"
 
     /// 本版主要变更摘要
-    static let changes = "v208:v207 真机反馈三修+图标。①面板时间读取不准=打开瞬间靠下一个 tick 才有位置,改打开时立即同步真实位置/总时长(两内核同款);②弹窗选中效果白底白字看不清=弃官方 .glass 改 FNOSBareButtonStyle+自绘描边(聚焦白 2.5pt/非聚焦 0.28 白 1pt);③自动跳过后选集/进度失效的头号嫌疑=KS onPlay 后台线程直接 seek 有内部竞态,改一律 Task{@MainActor} 提交,并加触发时与 seek 后 1.2s 的 timemodel 快照诊断(9999),复现即可实锤;④App 图标换 Nbeefin 图(imagestack 双层整图铺满,按现有资产尺寸生成)。"
+    static let changes = "v209:v208 真机反馈 MPV 两修(KS 已完美不动)。①选集闪一下就没=ticker 250ms 焦点兜底的跳过条件只有四弹层不含选集条,展开后焦点移到集数卡 focus 变 nil 被兜底拽回播放键,chip 失焦触发 onChange 关条;修=兜底跳过条件加 showEpisodeStrip。②不能快速滑动进度条=滑动桥 guard 把 began 拦死(控制条隐藏时连唤出都不发生)且 ticker 自动隐藏无 scrubActive 守卫(快速大幅拖动超 5s 被中断焦点被拽走拖动结果丢失);修=滑动桥结构对齐 KS(弹层让位单独判断+began 时控制条隐藏则唤出+began/changed 刷活动时间)+自动隐藏条件加 !scrubActive。"
 }

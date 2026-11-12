@@ -781,24 +781,33 @@ struct FNOSMPVPlayerView: View {
     }
 
     /// v191: 触摸板滑动拖动进度（与 KS FNOSPanBridge 同款：进度条聚焦时 1px≈0.2s）
+    /// v209: 结构对齐 KS——弹层让位单独判断（began 不被 guard 拦死：控制条隐藏时滑动先唤出）；
+    /// began/changed 刷活动时间（快速大幅拖动不再被 5s 自动隐藏中断）
     private func attachPanHandler() {
         FNOSMPVPanCoordinator.shared.onPan = { gesture in
-            guard let player, controlsVisible, focus == .scrubber,
-                  !showDanmuSettings, !showSkipSettings, !showAudioSheet, !showSubtitleSheet else { return }
+            // 弹层打开时让位给面板滑动桥（KS 同款）
+            if showDanmuSettings || showSkipSettings || showAudioSheet || showSubtitleSheet { return }
             switch gesture.state {
             case .began:
-                scrubActive = true
-                scrubValue = seconds(player.position)
+                if let player, controlsVisible, focus == .scrubber {
+                    scrubActive = true
+                    scrubValue = seconds(player.position)
+                    bumpActivity()
+                } else if !controlsVisible {
+                    // KS revealControls 同款：滑动唤出控制条（下一笔滑动即可拖动）
+                    showControls()
+                }
             case .changed:
-                guard scrubActive else { return }
+                guard scrubActive, let player, focus == .scrubber else { return }
                 let translation = gesture.translation(in: gesture.view)
                 gesture.setTranslation(.zero, in: gesture.view)
                 let delta = Double(translation.x) * 0.2
                 let total = max(seconds(player.duration), 1)
                 scrubValue = min(max(scrubValue + delta, 0), total)
                 scheduleScrubCommit()
+                bumpActivity()
             case .ended, .cancelled:
-                if focus == .scrubber {
+                if let player, focus == .scrubber {
                     commitScrubIfNeeded(player)
                 }
             default:
@@ -1032,8 +1041,11 @@ struct FNOSMPVPlayerView: View {
                 }
 
                 // 自动隐藏：播放中、无面板/弹层展开、5 秒无操作
+                // v209: 加 !scrubActive——拖动进度途中不自动隐藏（KS scheduleHide 同款守卫；
+                //       快速大幅拖动超过 5s 会被中断、焦点被拽走、拖动结果丢失）
                 if controlsVisible,
                    !player.isPaused,
+                   !scrubActive,
                    !showEpisodeStrip,
                    !showDanmuSettings,
                    !showSkipSettings,
@@ -1046,9 +1058,11 @@ struct FNOSMPVPlayerView: View {
                 // 焦点兜底：任何原因导致焦点丢失都重新落到有效对象上
                 // v192 修复: 弹层打开时焦点在弹层内（弹层自己的 FocusState 管理）——
                 // 不能每 250ms 把焦点拽回播放键（表现为弹层焦点移不进/自动回退到播放键）
+                // v209 修复: 换集条展开时同理——焦点在集数卡上（focusedChip 管理，focus==nil 是
+                //       正常状态），兜底拽回播放键会让 chip 失焦 → onChange 关条 =「选集闪一下就没了」
                 if focus == nil {
-                    if showDanmuSettings || showSkipSettings || showAudioSheet || showSubtitleSheet {
-                        // 保持现状：焦点留在弹层内
+                    if showDanmuSettings || showSkipSettings || showAudioSheet || showSubtitleSheet || showEpisodeStrip {
+                        // 保持现状：焦点留在弹层内 / 换集条集数卡上
                     } else {
                         focus = controlsVisible ? .playPause : .surface
                     }

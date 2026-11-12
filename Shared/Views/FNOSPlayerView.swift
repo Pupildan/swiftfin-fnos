@@ -608,6 +608,9 @@ struct FNOSPlayerContainerView: View {
                 authToken: mpvToken,
                 native: mpvClient,
                 range: mpvRange,
+                // v210: 兼容层 client+全分集 → mpv 选集卡真实缩略图/标题/简介（零额外请求）
+                compatClient: client,
+                compatEpisodes: episodes,
                 initialSeek: handoffPosition > 1 ? handoffPosition : resumeStartSeconds,
                 skipOpening: mpvRange.skipOpening,
                 skipEnding: mpvRange.skipEnding,

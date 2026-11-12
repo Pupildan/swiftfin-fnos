@@ -31,6 +31,9 @@ struct FNOSMPVPlayerView: View {
     let authToken: String
     let native: FNOSNativeClient
     let range: FNOSNativeClient.MediaRange
+    /// v210: 兼容层 client + 全分集（选集卡真实缩略图/标题/简介数据源；容器注入，零额外请求）
+    let compatClient: FNOSDirectClient?
+    @State private var compatEpisodes: [FNOSItem]
     /// 引擎切换时带过来的播放进度（无感续播）
     var initialSeek: Double? = nil
     /// v184: 服务器跳过配置（秒）——来自 play/info play_config，null = 不跳过
@@ -119,6 +122,8 @@ struct FNOSMPVPlayerView: View {
         authToken: String,
         native: FNOSNativeClient,
         range: FNOSNativeClient.MediaRange,
+        compatClient: FNOSDirectClient? = nil,
+        compatEpisodes: [FNOSItem] = [],
         initialSeek: Double? = nil,
         skipOpening: Double? = nil,
         skipEnding: Double? = nil,
@@ -132,6 +137,8 @@ struct FNOSMPVPlayerView: View {
         self.authToken = authToken
         self.native = native
         self.range = range
+        self.compatClient = compatClient
+        _compatEpisodes = State(initialValue: compatEpisodes)
         self.initialSeek = initialSeek
         _skipOpening = State(initialValue: skipOpening)
         _skipEnding = State(initialValue: skipEnding)
@@ -457,21 +464,33 @@ struct FNOSMPVPlayerView: View {
                             guard !isCurrent else { return }
                             switchEpisode(to: ep)
                         } label: {
+                            // v210: 兼容层分集匹配（按集号）→ 真实缩略图+标题+简介；无匹配退占位卡
+                            let compat = compatEpisodes.first(where: { $0.IndexNumber == ep.number })
                             VStack(alignment: .leading, spacing: 8) {
                                 ZStack {
-                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                        .fill(
-                                            LinearGradient(
-                                                colors: [Color.white.opacity(0.16), Color.white.opacity(0.05)],
-                                                startPoint: .topLeading,
-                                                endPoint: .bottomTrailing
-                                            )
+                                    if let compat, let still = compatClient?.episodeStillURL(item: compat, maxWidth: 640) {
+                                        FNOSAsyncImage(
+                                            url: still,
+                                            headers: compatClient?.mediaHeaders ?? [:],
+                                            contentMode: .fill
                                         )
-                                    Text("\(ep.number)")
-                                        .font(.system(size: 56, weight: .bold, design: .rounded))
-                                        .foregroundColor(.white.opacity(0.9))
+                                    } else {
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .fill(
+                                                LinearGradient(
+                                                    colors: [Color.white.opacity(0.16), Color.white.opacity(0.05)],
+                                                    startPoint: .topLeading,
+                                                    endPoint: .bottomTrailing
+                                                )
+                                            )
+                                        Text("\(ep.number)")
+                                            .font(.system(size: 56, weight: .bold, design: .rounded))
+                                            .foregroundColor(.white.opacity(0.9))
+                                    }
                                 }
                                 .frame(width: 424, height: 238)
+                                .clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                                         .stroke(Color.white, lineWidth: isCurrent ? 2.5 : 0)
@@ -481,16 +500,18 @@ struct FNOSMPVPlayerView: View {
                                     Text("第 \(ep.number) 集")
                                         .font(.system(size: 16, weight: .bold))
                                         .foregroundColor(isCurrent ? .white : .white.opacity(0.75))
-                                    Text("mpv 直连播放")
+                                    Text(compat?.Name ?? "mpv 直连播放")
                                         .font(.system(size: 16, weight: .semibold))
                                         .foregroundColor(.white)
                                         .lineLimit(1)
                                     Spacer(minLength: 0)
                                 }
-                                Text("原生媒体流 · 倍速/音轨/字幕同 KS 引擎")
+                                Text(compat?.Overview ?? "原生媒体流 · 倍速/音轨/字幕同 KS 引擎")
                                     .font(.system(size: 13))
                                     .foregroundColor(.white.opacity(0.62))
-                                    .lineLimit(1)
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+                                    .lineSpacing(3)
                                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                             }
                             .padding(10)
@@ -1192,10 +1213,36 @@ final class FNOSMPVPanCoordinator: NSObject, UIGestureRecognizerDelegate {
     }
 
     private func mountIfNeeded() {
-        guard recognizer == nil, let host = hostView else { return }
-        var root = host
+        guard let host = hostView else { return }
+        // 已挂且手势所在视图仍在 window 上 → 幂等返回
+        if let rec = recognizer, let recView = rec.view, recView.window != nil { return }
+        // 旧手势失效（宿主销毁/从未上树）→ 清掉重挂
+        if let rec = recognizer {
+            rec.view?.removeGestureRecognizer(rec)
+            recognizer = nil
+        }
+        // v210: KS 同款延迟挂载——updateUIView 首调时宿主可能还没进 window 层级，
+        // 立即爬根会失败 → 手势挂到宿主自身（isUserInteractionEnabled=false）上=永不触发。
+        // 挂载前必须校验爬根真的到了 UIWindow，否则等待重试。
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+            self?.mountNow(retry: 0)
+        }
+    }
+
+    private func mountNow(retry: Int) {
+        guard let host = hostView, recognizer == nil else { return }
+        var root: UIView = host
         while let superview = root.superview, !(superview is UIWindow) {
             root = superview
+        }
+        guard root is UIWindow else {
+            // 仍未上树 → 最多再等 3 轮（每轮 0.5s）
+            if retry < 3 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                    self?.mountNow(retry: retry + 1)
+                }
+            }
+            return
         }
         if let existing = root.gestureRecognizers?.first(where: {
             ($0 as? UIPanGestureRecognizer)?.name == "fnos.mpv.scrub.pan"

@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v205"
+    static let version = "v206"
 
     /// 本版主要变更摘要
-    static let changes = "v204:MPV 弹幕白变灰根因闭环(诊断日志实锤)——日志证实:弹幕数据纯白(77119条中98%白色/样本ffffff/不透明度100%)+渲染层已是 SDR(configuredDynamicRange:.sdr)+颜色解析正确,灰只能来自显示模式;漏网之鱼=displayMatching .automatic 仍按杜比视界片源把电视切进 HDR 显示模式,HDR 模式下系统把 SDR 浮层压暗到 203 尼特参考白;修复=displayMatching:.disabled(官方现成档位,detach 显示匹配协调器,电视留在 SDR 模式)+保留 hdrPolicy:.disabled(渲染层 SDR)。两者皆关后 mpv 全链路 SDR,弹幕/字幕/控制条恢复真实白色。"
+    static let changes = "v206:跳过片头片尾改为服务端配置(多端同步)。写入端点 POST /v/api/v1/play/setConfigByItem,body {guid: parent_guid, skip_opening, skip_ending},两值限 0~600 秒,配置挂在剧集级 parent_guid 上(Web 播放器改设置后 50ms 防抖自动保存),换客户端无需重设。播放器新增片头片尾设置面板并回读生效。重要修正:skip_ending 实为「距结尾剩余秒数」(Web 端 allowSkipEnding 校验 duration-opening-ending>=5),v184 误按绝对时间点判定会导致在片头结束处提前跳到片尾,本版已修正为 duration - skip_ending。"
 }

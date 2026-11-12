@@ -247,7 +247,8 @@ final class FNOSPanBridge: NSObject, UIGestureRecognizerDelegate {
 /// 面板背景宿主（本身不吃触摸）：把手势挂在内容根视图上，滑动增量直接回调给面板绑定——
 /// v192 修正: 旧版把增量写 UserDefaults 再靠 @AppStorage 回读，滑块填充/数值不即时跟随（用户实测
 /// 「滑很多次才动一点点」）；现在宿主持有回调闭包（闭包直接改 @AppStorage 属性），滑块随滑动即时进退。
-private struct FNOSPanelPanHostView: UIViewRepresentable {
+/// v206: 去掉 private——FNOSSkipSettingsSheet（独立文件）也复用这块滑动桥。
+struct FNOSPanelPanHostView: UIViewRepresentable {
     /// 是否允许接管滑动（弹幕设置弹窗显示且焦点在某个滑块行上）
     let isEnabled: () -> Bool
     /// 滑动增量回调（points，按事件消费；正=向右）
@@ -375,6 +376,8 @@ struct FNOSPlayerContainerView: View {
     @State private var reporterNative: FNOSNativeClient?
     @State private var reporterMediaGUID: String?
     @State private var reporterItemGUID: String?
+    // v206: 剧集级 parent_guid（跳过片头片尾配置挂这里；resolveReporter 解析时带回）
+    @State private var reporterParentGUID: String?
     // v87 续播：本地进度为可靠主链路；记录 > 30s 时弹「从头/继续」选择（3s 自动续播）
     @State private var pendingResumeTarget: Double?
     @State private var resumeAutoTask: Task<Void, Never>?
@@ -425,6 +428,8 @@ struct FNOSPlayerContainerView: View {
         reporterNative = native
         reporterMediaGUID = range.mediaGUID
         reporterItemGUID = range.itemGUID
+        // v206: 存剧集级 parent_guid（片头片尾设置面板推服务端用）
+        reporterParentGUID = range.parentGUID
         // v184: 带回服务器跳过配置（片头结束点/片尾开始点）
         skipOpening = range.skipOpening
         skipEnding = range.skipEnding
@@ -463,6 +468,10 @@ struct FNOSPlayerContainerView: View {
     @State private var audioSheetPresented = false
     /// v185: 内嵌字幕轨选择弹层
     @State private var subtitleSheetPresented = false
+    /// v206: 片头片尾跳过设置弹层（独立按钮，与弹幕设置同款玻璃面板）
+    @State private var skipSettingsPresented = false
+    /// v206: 设置面板防抖推服务端的任务（0.5s 内连续改值只发一次，Web 端同语义）
+    @State private var skipPushTask: Task<Void, Never>?
     @FocusState private var focus: Control?
     // 换集条：默认不展开（一上来就渲染 24 张缩略图会跟弹幕争内存，拖动进度条容易闪退）
     @State private var showEpisodeStrip = false
@@ -473,6 +482,7 @@ struct FNOSPlayerContainerView: View {
 
     private enum Control: Hashable {
         case rewind, playPause, forward, rate, danmu, danmuSettings, audio, subtitle, scrubber
+        case skipSettings
         case resumeStartOver, resumeContinue
     }
 
@@ -802,6 +812,14 @@ struct FNOSPlayerContainerView: View {
                             }
                             closeSheet()
                         }
+                    } else if skipSettingsPresented {
+                        // v206: 片头片尾设置（独立弹层；改值即时生效 + 防抖同步服务端）
+                        FNOSSkipSettingsSheet(
+                            opening: skipOpening,
+                            ending: skipEnding,
+                            onClose: { closeSheet() },
+                            onChange: { op, ed in commitSkipSettings(opening: op, ending: ed) }
+                        )
                     } else {
                         FNOSDanmuSettingsSheet(onClose: { closeSheet() })
                     }
@@ -818,12 +836,35 @@ struct FNOSPlayerContainerView: View {
         withAnimation(.easeInOut(duration: 0.2)) {
             audioSheetPresented = false
             subtitleSheetPresented = false
+            skipSettingsPresented = false
             isSheetPresented = false
         }
         DispatchQueue.main.async {
             focus = .playPause
         }
         revealControls()
+    }
+
+    /// v206: 片头片尾改值 → 本端立即生效 + 0.5s 防抖推服务端（Web 端同语义自动保存）。
+    /// 未解析出 parent_guid（上报链路失败/直播/电影无父级）时只留诊断，不影响本地生效。
+    private func commitSkipSettings(opening: Double?, ending: Double?) {
+        skipOpening = opening
+        skipEnding = ending
+        guard let parent = reporterParentGUID, !parent.isEmpty else {
+            FNOSDiag.shared.add("跳过设置: 无 parent_guid，仅本端生效", dedupeKey: "skip.push.no")
+            return
+        }
+        skipPushTask?.cancel()
+        skipPushTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled else { return }
+            let ok = await reporterNative?.setSkipConfig(
+                parentGUID: parent,
+                skipOpening: Int(opening?.rounded() ?? 0),
+                skipEnding: Int(ending?.rounded() ?? 0)
+            ) ?? false
+            FNOSDiag.shared.add("跳过设置推送: \(ok ? "成功" : "失败") intro=\(Int(opening ?? 0))s ending=\(Int(ending ?? 0))s → \(parent.prefix(8))…")
+        }
     }
 
     // MARK: 裸播放视图（无 KSPlayer 内置控制）+ 转盘滑动桥接
@@ -866,9 +907,11 @@ struct FNOSPlayerContainerView: View {
                     coordinator.seek(time: so)
                     FNOSDiag.shared.add("自动跳过片头 → \(Int(so))s")
                 }
-                if let se = skipEnding, !endingSkipped, se > 1, currentTime >= se {
+                // v206: skip_ending 是「距结尾秒数」（Web 端语义），开始点 = 总时长 - se
+                if let se = skipEnding, !endingSkipped, se > 0 {
                     let total = Double(coordinator.timemodel.totalTime)
-                    if total > 2, currentTime < total - 2 {
+                    let endingStart = total - se
+                    if total > 2, endingStart > total * 0.1, currentTime >= endingStart, currentTime < total - 2 {
                         endingSkipped = true
                         coordinator.seek(time: total - 1.5)
                         FNOSDiag.shared.add("自动跳过片尾 → \(Int(total - 1.5))s")
@@ -1075,6 +1118,16 @@ struct FNOSPlayerContainerView: View {
                         withAnimation(.easeInOut(duration: 0.22)) {
                             audioSheetPresented = false
                             subtitleSheetPresented = false
+                            skipSettingsPresented = false
+                            isSheetPresented = true
+                        }
+                    }
+                    // v206: 片头片尾设置按钮（与弹幕设置同款功能键列）
+                    controlButton(.skipSettings, icon: "tv.inset.filled") {
+                        withAnimation(.easeInOut(duration: 0.22)) {
+                            audioSheetPresented = false
+                            subtitleSheetPresented = false
+                            skipSettingsPresented = true
                             isSheetPresented = true
                         }
                     }
@@ -1082,6 +1135,7 @@ struct FNOSPlayerContainerView: View {
                         controlButton(.audio, icon: "waveform") {
                             withAnimation(.easeInOut(duration: 0.22)) {
                                 subtitleSheetPresented = false
+                                skipSettingsPresented = false
                                 audioSheetPresented = true
                                 isSheetPresented = true
                             }
@@ -1092,6 +1146,7 @@ struct FNOSPlayerContainerView: View {
                         controlButton(.subtitle, icon: "character.textbox") {
                             withAnimation(.easeInOut(duration: 0.22)) {
                                 audioSheetPresented = false
+                                skipSettingsPresented = false
                                 subtitleSheetPresented = true
                                 isSheetPresented = true
                             }

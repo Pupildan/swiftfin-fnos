@@ -28,6 +28,10 @@ final class FNOSNativeClient {
     private static let apiKey = "NDzZTVxnRKP8Z0jXg1VAMonaG8akvh"
     private static let apiSecret = "16CCEB3D-AB42-077D-36A1-F355324E4237"
 
+    /// v206: 跳过片头/片尾上限（秒）——飞牛 Web 播放器 `maxTotalMinutes = 10`，
+    /// 前后两端都按 0~600 校验（`isValidOpeningSeconds` / `isValidEndingSeconds`）
+    static let maxSkipSeconds = 600
+
     struct Person {
         let name: String
         let role: String?
@@ -539,6 +543,8 @@ extension FNOSNativeClient {
         /// v184: 服务器跳过配置（秒）——片头结束点 / 片尾开始点，null = 不跳过
         var skipOpening: Double? = nil
         var skipEnding: Double? = nil
+        /// v206: 剧集级配置用的父 guid（`play/info` 的 parent_guid，整剧同步；写跳过设置用）
+        var parentGUID: String? = nil
     }
 
     /// 解析播放直链。
@@ -579,7 +585,8 @@ extension FNOSNativeClient {
             episodeNumber: episodeNumber,
             episodes: episodes,
             skipOpening: info.skipOpening,
-            skipEnding: info.skipEnding
+            skipEnding: info.skipEnding,
+            parentGUID: info.parentGUID
         )
     }
 
@@ -594,7 +601,8 @@ extension FNOSNativeClient {
             episodeNumber: nil,
             episodes: [],
             skipOpening: info.skipOpening,
-            skipEnding: info.skipEnding
+            skipEnding: info.skipEnding,
+            parentGUID: info.parentGUID
         )
     }
 
@@ -605,8 +613,8 @@ extension FNOSNativeClient {
         return URL(string: "\(base)/v/api/v1/media/range/\(mediaGUID)")!
     }
 
-    /// `POST /v/api/v1/play/info` → media_guid + 条目字典（评分等元数据）+ 跳过配置（v184）
-    private func playInfo(itemGUID: String, log: DebugLog) async -> (mediaGUID: String, duration: Int?, itemDict: [String: Any]?, skipOpening: Double?, skipEnding: Double?)? {
+    /// `POST /v/api/v1/play/info` → media_guid + 条目字典（评分等元数据）+ 跳过配置（v184）+ parent_guid（v206）
+    private func playInfo(itemGUID: String, log: DebugLog) async -> (mediaGUID: String, duration: Int?, itemDict: [String: Any]?, parentGUID: String?, skipOpening: Double?, skipEnding: Double?)? {
         let body = "{\"item_guid\":\"\(Self.escape(itemGUID))\"}"
         guard let json = try? await post(path: "api/v1/play/info", body: body),
               let data = json["data"] as? [String: Any],
@@ -618,20 +626,24 @@ extension FNOSNativeClient {
         }
         let itemDict = data["item"] as? [String: Any]
         let duration = (itemDict?["duration"] as? NSNumber)?.intValue
+        // v206: 跳过片头片尾配置挂在父级条目上（Web 播放器 setConfigByItem 即写 parent_guid），故必须带回
+        let parentGUID = (data["parent_guid"] as? String).flatMap { $0.isEmpty ? nil : $0 }
         // v185 诊断: play_config 原始内容（自动跳过片头片尾排查）
         if let pc = data["play_config"] {
             FNOSDiag.shared.add("play/info play_config: \(pc)", dedupeKey: "pi.pc")
         } else {
             FNOSDiag.shared.add("play/info 无 play_config 字段", dedupeKey: "pi.pc0")
         }
-        // v184: 服务器跳过配置（秒；null/0 = 不跳过）——片头结束点 / 片尾开始点
+        // v184: 服务器跳过配置（秒；null/0 = 不跳过）——片头结束点 / 片尾剩余时长
+        // v206: skip_ending 语义已实锤为「距结尾秒数」（Web 端 allowSkipEnding: duration-a-o>=5），
+        //       片尾开始点 = duration - skip_ending，见播放器侧换算
         var skipOpening: Double? = nil
         var skipEnding: Double? = nil
         if let pc = data["play_config"] as? [String: Any] {
             if let n = pc["skip_opening"] as? NSNumber, n.doubleValue > 0 { skipOpening = n.doubleValue }
             if let n = pc["skip_ending"] as? NSNumber, n.doubleValue > 0 { skipEnding = n.doubleValue }
         }
-        return (mediaGUID, duration, itemDict, skipOpening, skipEnding)
+        return (mediaGUID, duration, itemDict, parentGUID, skipOpening, skipEnding)
     }
 
     /// 防御性评分解析：飞牛 play/info 的 item 字典按常见键名找评分。
@@ -768,6 +780,31 @@ extension FNOSNativeClient {
         } catch {
             print("FNOS❗️play/record 失败: \(error)")
             FNOSDiag.shared.add("play/record 失败: \(error.localizedDescription)", dedupeKey: "rec.err")
+            return false
+        }
+    }
+
+    /// 写入跳过片头/片尾配置（v206：服务端持久化，多端同步）。
+    ///
+    /// 端点与形状来源：飞牛 Web 播放器 `/v/assets` 中 `ve.play.setConfigByItem`，
+    /// 以及参考代理 `fntv-electron/pkg/fnapi/api.go: SetSkipInfo`。
+    /// Web 端语义（`Wg` hook）：改配置 → 50ms 防抖 → POST 整个 playInfoConfig
+    /// → `{guid: item.parent_guid, skip_opening, skip_ending}`，两值均 `≤ 600 && ≤ duration`，
+    /// 为 0 表示该端不跳过（`allowSkipOpening` 用 `isValidOpeningSeconds` 判 t>=a 即放行）。
+    /// 注意：Web 端值为「距片尾秒数」，不是绝对时间点。
+    func setSkipConfig(parentGUID: String, skipOpening: Int, skipEnding: Int) async -> Bool {
+        guard !parentGUID.isEmpty else { return false }
+        let op = min(max(skipOpening, 0), Self.maxSkipSeconds)
+        let ed = min(max(skipEnding, 0), Self.maxSkipSeconds)
+        let body = "{\"guid\":\"\(Self.escape(parentGUID))\",\"skip_opening\":\(op),\"skip_ending\":\(ed)}"
+        do {
+            let json = try await post(path: "api/v1/play/setConfigByItem", body: body)
+            let ok = (json["code"] as? NSNumber)?.intValue == 0
+            FNOSDiag.shared.add("setConfigByItem \(ok ? "成功" : "失败"): 片头 \(op)s / 片尾 \(ed)s")
+            return ok
+        } catch {
+            print("FNOS❗️setConfigByItem 失败: \(error)")
+            FNOSDiag.shared.add("setConfigByItem 失败: \(error.localizedDescription)")
             return false
         }
     }

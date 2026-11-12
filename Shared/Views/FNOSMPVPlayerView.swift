@@ -34,8 +34,9 @@ struct FNOSMPVPlayerView: View {
     /// 引擎切换时带过来的播放进度（无感续播）
     var initialSeek: Double? = nil
     /// v184: 服务器跳过配置（秒）——来自 play/info play_config，null = 不跳过
-    var skipOpening: Double? = nil
-    var skipEnding: Double? = nil
+    /// v206: 改为 @State——设置面板改值后立即更新，tick 下一轮即生效
+    @State private var skipOpening: Double? = nil
+    @State private var skipEnding: Double? = nil
     /// 由自动分流选中（而不是用户手动开 mpv）→ 顶部提示一次
     var autoSelected: Bool = false
     /// v86：播放进度回调（ticker 每 ~4s 触发一次；容器做 10s 节流后上报服务端）。
@@ -52,6 +53,8 @@ struct FNOSMPVPlayerView: View {
     @State private var currentGUID: String
     @State private var currentNumber: Int?
     @State private var episodes: [FNOSNativeClient.EpisodeRef]
+    /// v206: 当前剧集级 parent_guid（片头片尾设置推服务端用；切集时随 mediaRange 刷新）
+    @State private var parentGUID: String?
 
     @State private var ticker: Task<Void, Never>?
     @State private var subtitleTask: Task<Void, Never>?
@@ -60,6 +63,10 @@ struct FNOSMPVPlayerView: View {
     @State private var showDanmu = true
     @State private var showEpisodeStrip = false
     @State private var showDanmuSettings = false
+    /// v206: 片头片尾跳过设置弹层（独立按钮，与弹幕设置同款玻璃面板）
+    @State private var showSkipSettings = false
+    /// v206: 设置面板防抖推服务端的任务（0.5s 内连续改值只发一次，Web 端同语义）
+    @State private var skipPushTask: Task<Void, Never>?
     @State private var switching = false
     /// v192: 关闭弹层后焦点回到「打开该弹层的那个按钮」（用户令：不回播放键）
     @State private var sheetReturnFocus: Control? = nil
@@ -99,6 +106,7 @@ struct FNOSMPVPlayerView: View {
     private enum Control: Hashable {
         case surface
         case rewind, playPause, forward, rate, danmu, danmuSettings, audio, subtitle, info, scrubber
+        case skipSettings
         case resumeStartOver, resumeContinue
     }
 
@@ -122,8 +130,8 @@ struct FNOSMPVPlayerView: View {
         self.native = native
         self.range = range
         self.initialSeek = initialSeek
-        self.skipOpening = skipOpening
-        self.skipEnding = skipEnding
+        _skipOpening = State(initialValue: skipOpening)
+        _skipEnding = State(initialValue: skipEnding)
         self.autoSelected = autoSelected
         self.onProgress = onProgress
         self.onFinished = onFinished
@@ -132,6 +140,7 @@ struct FNOSMPVPlayerView: View {
         _currentGUID = State(initialValue: range.itemGUID)
         _currentNumber = State(initialValue: range.episodeNumber)
         _episodes = State(initialValue: range.episodes)
+        _parentGUID = State(initialValue: range.parentGUID)
         _engineToast = State(
             initialValue: autoSelected ? "已自动切换 mpv 引擎（杜比视界色彩转换）" : nil
         )
@@ -218,6 +227,18 @@ struct FNOSMPVPlayerView: View {
                     .padding(.trailing, 90)
                     .padding(.bottom, 170)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
+            }
+            // v206: 片头片尾设置（独立弹层；改值即时生效 + 防抖同步服务端）
+            if showSkipSettings {
+                FNOSSkipSettingsSheet(
+                    opening: skipOpening,
+                    ending: skipEnding,
+                    onClose: { closeSheets() },
+                    onChange: { op, ed in commitSkipSettings(opening: op, ending: ed) }
+                )
+                .padding(.trailing, 90)
+                .padding(.bottom, 170)
+                .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
             if showAudioSheet {
                 FNOSAudioTracksSheet(
@@ -327,13 +348,25 @@ struct FNOSMPVPlayerView: View {
                             showDanmuSettings = true
                             showAudioSheet = false
                             showSubtitleSheet = false
+                            showSkipSettings = false
                             sheetReturnFocus = .danmuSettings
+                        }
+                    }
+                    // v206: 片头片尾设置按钮（与弹幕设置同款功能键列）
+                    controlButton(.skipSettings, icon: "tv.inset.filled") {
+                        withAnimation(.easeInOut(duration: 0.22)) {
+                            showDanmuSettings = false
+                            showAudioSheet = false
+                            showSubtitleSheet = false
+                            showSkipSettings = true
+                            sheetReturnFocus = .skipSettings
                         }
                     }
                     if !player.audioTracks.isEmpty {
                         controlButton(.audio, icon: "waveform") {
                             withAnimation(.easeInOut(duration: 0.22)) {
                                 showDanmuSettings = false
+                                showSkipSettings = false
                                 showAudioSheet = true
                                 showSubtitleSheet = false
                                 sheetReturnFocus = .audio
@@ -344,6 +377,7 @@ struct FNOSMPVPlayerView: View {
                         controlButton(.subtitle, icon: "character.textbox") {
                             withAnimation(.easeInOut(duration: 0.22)) {
                                 showDanmuSettings = false
+                                showSkipSettings = false
                                 showAudioSheet = false
                                 showSubtitleSheet = true
                                 sheetReturnFocus = .subtitle
@@ -646,12 +680,35 @@ struct FNOSMPVPlayerView: View {
             showDanmuSettings = false
             showAudioSheet = false
             showSubtitleSheet = false
+            showSkipSettings = false
         }
         DispatchQueue.main.async {
             // v192: 关闭后焦点回到「打开该弹层的那个按钮」上，而不是播放键（用户令）
             focus = sheetReturnFocus ?? .playPause
         }
         bumpActivity()
+    }
+
+    /// v206: 片头片尾改值 → 本端立即生效 + 0.5s 防抖推服务端（Web 端同语义自动保存）。
+    /// 未解析出 parent_guid 时只留诊断，不影响本地生效。
+    private func commitSkipSettings(opening: Double?, ending: Double?) {
+        skipOpening = opening
+        skipEnding = ending
+        guard let parent = parentGUID, !parent.isEmpty else {
+            print("FNOS⚠️跳过设置: 无 parent_guid，仅本端生效")
+            return
+        }
+        skipPushTask?.cancel()
+        skipPushTask = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            guard !Task.isCancelled else { return }
+            let ok = await native.setSkipConfig(
+                parentGUID: parent,
+                skipOpening: Int(opening?.rounded() ?? 0),
+                skipEnding: Int(ending?.rounded() ?? 0)
+            )
+            print("FNOS\(ok ? "ℹ️" : "⚠️")跳过设置推送: \(ok ? "成功" : "失败") intro=\(Int(opening ?? 0))s ending=\(Int(ending ?? 0))s → \(parent.prefix(8))…")
+        }
     }
 
     // MARK: - 续播选择弹窗（v191: 与 KS 同款——3s 未确认自动续播）
@@ -711,7 +768,7 @@ struct FNOSMPVPlayerView: View {
     private func attachPanHandler() {
         FNOSMPVPanCoordinator.shared.onPan = { gesture in
             guard let player, controlsVisible, focus == .scrubber,
-                  !showDanmuSettings, !showAudioSheet, !showSubtitleSheet else { return }
+                  !showDanmuSettings, !showSkipSettings, !showAudioSheet, !showSubtitleSheet else { return }
             switch gesture.state {
             case .began:
                 scrubActive = true
@@ -768,7 +825,7 @@ struct FNOSMPVPlayerView: View {
             finishResumeChoice(startOver: false)
             return
         }
-        if showDanmuSettings || showAudioSheet || showSubtitleSheet {
+        if showDanmuSettings || showSkipSettings || showAudioSheet || showSubtitleSheet {
             closeSheets()
             return
         }
@@ -911,13 +968,16 @@ struct FNOSMPVPlayerView: View {
                 UIApplication.shared.isIdleTimerDisabled = true
 
                 // v184: 自动跳过片头/片尾（服务器 play_config 数据，各单次触发）
+                // v206: skipOpening/skipEnding 即生效值——设置面板改值后立刻更新，tick 下轮即生效
                 if let so = skipOpening, !introSkipped, position > 0.5, position < so - 0.5 {
                     introSkipped = true
                     player.seek(by: .seconds(so - position))
                 }
-                if let se = skipEnding, !endingSkipped, se > 1, position >= se {
+                // v206: skip_ending 是「距结尾秒数」（Web 端语义），开始点 = 总时长 - se
+                if let se = skipEnding, !endingSkipped, se > 0 {
                     let dur = seconds(player.duration)
-                    if dur > 2, position < dur - 2 {
+                    let endingStart = dur - se
+                    if dur > 2, endingStart > dur * 0.1, position >= endingStart, position < dur - 2 {
                         endingSkipped = true
                         player.seek(by: .seconds((dur - 1.5) - position))
                     }
@@ -948,6 +1008,7 @@ struct FNOSMPVPlayerView: View {
                    !player.isPaused,
                    !showEpisodeStrip,
                    !showDanmuSettings,
+                   !showSkipSettings,
                    !showAudioSheet,
                    !showSubtitleSheet,
                    Date().timeIntervalSince(lastActivity) > 5 {
@@ -958,7 +1019,7 @@ struct FNOSMPVPlayerView: View {
                 // v192 修复: 弹层打开时焦点在弹层内（弹层自己的 FocusState 管理）——
                 // 不能每 250ms 把焦点拽回播放键（表现为弹层焦点移不进/自动回退到播放键）
                 if focus == nil {
-                    if showDanmuSettings || showAudioSheet || showSubtitleSheet {
+                    if showDanmuSettings || showSkipSettings || showAudioSheet || showSubtitleSheet {
                         // 保持现状：焦点留在弹层内
                     } else {
                         focus = controlsVisible ? .playPause : .surface
@@ -1018,6 +1079,10 @@ struct FNOSMPVPlayerView: View {
             currentGUID = ep.guid
             currentNumber = ep.number
             currentURL = next.url
+            // v206: 切集后随 mediaRange 刷新剧集级 guid；重置跳过单次触发标记
+            parentGUID = next.parentGUID ?? parentGUID
+            introSkipped = false
+            endingSkipped = false
             lastPersist = 0
             subtitleText = ""
 

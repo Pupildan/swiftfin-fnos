@@ -131,6 +131,53 @@ X-Emby-Token: {token}
 
 ### 2.5 外部内容源端点（v111-v130 新增，全部实测）
 
+> **v206 跳过片头片尾（服务端同步，挖自飞牛 Web 播放器 `/v/assets` JS，勿再猜语义）**
+> - 读：`POST /v/api/v1/play/info` → `data.play_config.{skip_opening,skip_ending}`，另取 `data.parent_guid`（配置粒度 = 整剧/整季）
+> - 写：`POST /v/api/v1/play/setConfigByItem` body `{"guid": <parent_guid>, "skip_opening": N, "skip_ending": N}`，`code==0` 为成功
+> - **语义**：`skip_opening` = 片头结束**绝对秒数**；`skip_ending` = **距结尾剩余秒数**（片尾开始点 = 总时长 − skip_ending）。
+>   证据：Web `allowSkipEnding` 判 `duration - opening - ending >= 5`；设置面板 ending 行显示 remainingTime、opening 行显示 currentTime；本地参考 `fnos_tv_danmu` 同口径。
+> - **合法区间**：两端 `0 ~ 600`（`maxTotalMinutes=10`），`0` = 该端不跳过，步进 5s。Web 端改设置后 50ms 防抖自动保存。
+> - ⚠️ v184 曾把 `skip_ending` 当绝对时间点（`currentTime >= se`），服务端一旦有值会在片头结束处就跳片尾；v206 已在 KS / MPV 两处改为 `时长 − se` 判定。
+
+### 2.5.1 v206 落地状态（接手必读）
+
+已落地（可编译状态，未 push、未出包）：
+
+| 位置 | 内容 |
+|---|---|
+| `FNOSNativeClient.swift` | `maxSkipSeconds = 600`；`MediaRange.parentGUID`；`playInfo` 返回值带 `parent_guid`；新增 `setSkipConfig(parentGUID:skipOpening:skipEnding:) async -> Bool` |
+| `FNOSPlayerView.swift:869` | **修正**：`endingStart = total - se` 再判 `currentTime >= endingStart`（原按绝对点，是 bug） |
+| `FNOSMPVPlayerView.swift:918` | **同上修正**：`endingStart = dur - se` |
+| `FNOSAdapterBuild.swift` | version → v206 |
+| `HANDOVER.md` | 本节（协议结论 + 语义证据） |
+
+v206 设置面板（已接线，待真机验证）：
+
+| 位置 | 内容 |
+|---|---|
+| `FNOSSkipSettingsSheet.swift`（新文件） | 独立「片头片尾」玻璃面板：两行自绘滑块（0~600s、步进 5s、v194 连按加速），风格 1:1 复刻 `FNOSDanmuSettingsSheet`；面板不落本地存储——改值经 `onChange` 交宿主 |
+| `FNOSPlayerView.swift` | 新增 `.skipSettings` Control + `tv.inset.filled` 按钮（danmuSettings 旁）；`skipSettingsPresented` 弹层分支进 `isSheetPresented` overlay；`closeSheet()` 关闭；`resolveReporter()` 存 `reporterParentGUID`；`commitSkipSettings()`=本端立即生效 + 0.5s 防抖 `setSkipConfig` 推服务端 |
+| `FNOSMPVPlayerView.swift` | 同款按钮/弹层/`commitSkipSettings`（用 `native` + `parentGUID` @State，init 从 `range.parentGUID` 初始化）；`skipOpening/skipEnding` 改 `@State`（面板改值 tick 立即生效）；切集 `switchEpisode` 刷新 parentGUID 并重置 `introSkipped/endingSkipped`；守卫链（pan/exit/自动隐藏/焦点兜底）全部纳入 `showSkipSettings`；音轨/字幕按钮互斥关掉本弹层 |
+| `FNOSPlayerView.swift:250` | `FNOSPanelPanHostView` 去掉 `private`——新面板复用触摸板滑动桥 |
+
+真机验证清单（出包后逐项）：
+
+1. 播放剧集 → 控制条出现「片头片尾」按钮（tv 图标）→ 打开面板焦点自动落「跳过片头」行。
+2. 设 90/60 → **本集立即生效**（面板不关也生效）→ 退出重进 → 服务端值仍是 90/60。
+3. 另一端（Web/手机）看到同样值；Web 端改值 → tvOS 重进播放后取到新值。
+4. 改 0（关闭）→ 两端都不再跳。
+5. **连播回归**：片尾设 ≥5s 播完一集，确认自动连播仍正常（seek 终点贴近 1.5s 窗口的理论边界，实测确认）。
+6. 面板内触摸板滑动/连按左右加速调节流畅；Menu 键关闭；焦点不丢。
+
+未落地（后续）：
+
+1. **剧集级/全局开关**：Web 端无 "仅本集" 概念，本客户端也别加；每部剧独立配置。
+2. KS 引擎直连 mpv 的引擎切换（`probeProfile`/`switchToMPV`）路径：`skipOpening/skipEnding` 由
+   `mpvRange` 带入 MPV 面板初值，但 KS 阶段改过的值不会带过去（面板重开会显示服务端值）——影响极小，暂不处理。
+
+换集链路（已接线）：MPV `switchEpisode` 刷新 parentGUID + 重置 `introSkipped/endingSkipped`（新集 play_config
+随 `mediaRange(itemGUID:)` 带回）；KS 侧换集走「关播→重开」既有链路，`resolveReporter` 重取 play_config。
+
 | 服务 | 端点要点 |
 |---|---|
 | TMDB | GET `api.themoviedb.org/3/trending/all/day` + `/movie|tv/{id}?append_to_response=credits`；key 用户在设置面板填（`fnos.tmdb.apikey`） |

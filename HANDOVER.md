@@ -2,7 +2,7 @@
 
 > 仓库：`Pupildan/swiftfin-fnos`（GitHub 私有仓，CI 构建 unsigned ipa）
 > 本地工作区：`C:\Users\Admin\WorkBuddy\fndanmu-tvos\build-package\swiftfin-fnos`
-> 当前版本：**v207**（🆕片头片尾面板重做：实时位置 + 取当前位置做片头/片尾 + ±1s 微调；服务端实测结论=剧集多端同步链路全通、电影服务端不回读 play_config；前情=v206 跳过片头片尾服务端化、v205 MPV SDR 全链路定稿：hdrPolicy/displayMatching/sdrOutput 三项已定案，弹幕颜色修复 ✓；含官方 searchable 搜索、KS 滑块触摸滑动修复、屏保双保险、MPV 与 KS 1:1 对齐），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
+> 当前版本：**v208**（🆕v207 真机三修：面板时间打开即同步、选中效果改描边、自动跳过 seek 切主线程+诊断日志；🆕App 图标换 Nbeefin 图；前情=v207 片头片尾面板重做：实时位置 + 取当前位置做片头/片尾 + ±1s 微调；v205 MPV SDR 全链路定稿：hdrPolicy/displayMatching/sdrOutput 三项已定案，弹幕颜色修复 ✓），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
 > 交付物命名规则：`output/Swiftfin-FNOS-tvos-unsigned-vXX.ipa`（32MB 左右）
 
 ---
@@ -34,7 +34,9 @@ v130 我为了修「KS 轻微左右抖 + mpv 原地抖后重载」，把小漂�
 
 - **v206：跳过片头片尾服务端化 + 独立设置面板（2026-11-12~13）**。协议逆向实锤（fntv-electron Go 代理 + 飞牛 Web JS 互证）：写入端点 `POST /v/api/v1/play/setConfigByItem`，body `{guid: parent_guid, skip_opening, skip_ending}`，挂剧集级 parent_guid；**skip_ending 语义=距结尾剩余秒数**（非绝对时间，v184 误判已修正为 `duration - skip_ending`）；新文件 `FNOSSkipSettingsSheet.swift`（两滑块 0~600s 玻璃面板，复刻弹幕设置）+ KS/MPV 双接线（`tv.inset.filled` 按钮 + overlay + 守卫链 + 0.5s 防抖推服务端 + 切集刷新）；详见 §2.5.1。
 
-- **v207：片头片尾面板重做 + 服务端协议实测结论（2026-11-13）**。v206 真机反馈「不生效 + 逻辑不对」，服务端直探（test 账号 Authx 签名）实锤：**剧集链路全通**（play/info `data.parent_guid` 非空 → setConfigByItem 写 123/45 → 同集与同剧另一集回读 `play_config` 均为 123/45，剧级共享确认）；**电影无存储位**（play/info 连 `play_config` 键都缺、parent_guid 空，写自身 guid 回读仍 null——电影场景仅本端本次生效，服务端不支持）。**面板按用户规格重做**：顶部实时显示当前播放位置；聚焦行按确认键=取当前位置（片头=绝对秒/片尾=距结尾剩余秒）；左右键或触摸板滑动=±1s 微调（连按加速 ×4）；捕捉=标记此处（宿主置对应 Skipped 标志，本次播放不再自动跳——否则捕捉片尾瞬间 endingStart 恰好等于当前位置下一 tick 立即跳尾太突兀）；微调=直接改值（位置在新边界内立即 seek，保留「本集立即生效」）；0=关闭。canSync 文案区分剧集（同步到 Web/手机）与电影（仅本次播放生效）。面板打开/捕捉/推送全链路 FNOSDiag 落 9999。诊断脚本 `_tmp/probe_skip_v207.ps1`（b/c/d 三变体）。
+- **v207：片头片尾面板重做 + 服务端协议实测结论（2026-11-13）**。v206 真机反馈「不生效 + 逻辑不对」，服务端直探（test 账号 Authx 签名）实锤：**剧集链路全通**（play/info `data.parent_guid` 非空 → setConfigByItem 写 123/45 → 同集与同剧另一集回读 `play_config` 均为 123/45，剧级共享确认）；**电影无存储位**（play/info 连 `play_config` 键都缺、parent_guid 空，写自身 guid 回读仍 null——电影场景仅本端本次生效，服务端不支持）。**面板按用户规格重做**：顶部实时显示当前播放位置；聚焦行按确认键=取当前位置（片头=绝对秒/片尾=距结尾剩余秒）；左右键或触摸板滑动=±1s 微调（连按加速 ×4）；捕捉=标记此处（宿主置对应 Skipped 标志，本次播放不再自动跳——否则捕捉片尾瞬间 endingStart 恰好等于当前位置下一 tick 立即跳尾太突兀）；微调=直接改值（位置在新边界内立即 seek，保留「本集立即生效」）；0=关闭。canSync 文案区分剧集（同步到 Web/手机）与电影（仅本次播放生效）。面板打开/捕捉/推送全链路 FNOSDiag 落 9999。诊断脚本 `_tmp/probe_skip_v207.ps1`（b/c/d 三变体）。**真机反馈：跳过功能生效 ✓，但三 bug（时间读取不准/选中白色看不清/跳过后选集进度失效）→ v208。**
+
+- **v208：v207 真机三修 + 图标（2026-11-13）**。①**面板时间读取不准**：根因=打开面板靠下一个 tick 才有 skipPanelPos，打开瞬间显示 00:00/旧值 → 立刻确认就捕捉错位置；修=按钮 action 打开时立即同步 `timemodel.currentTime/totalTime`（MPV=player.position/duration，两内核同款），打开后仍由 tick 持续刷新。②**选中效果白色看不清**：官方 `.glass` 按钮聚焦态在玻璃面板上白底白字；修=`FNOSBareButtonStyle()` + `focusEffectDisabled()` + 自绘描边（聚焦白 2.5pt/非聚焦 0.28 白 1pt，RoundedRectangle 14）——玻璃面板禁半透明白填充的老规矩继续有效。③**自动跳过后选集失效+进度条滑动失效**：头号嫌疑=KS onPlay 是 KSPlayer **后台线程**回调，播放中直接 `coordinator.seek(time:)` 有内部竞态（v87 resume seek 是起播前所以无恙）；修=自动跳过 seek 一律 `Task { @MainActor in }` 提交，并加诊断日志（触发时 timemodel 快照 + seek 提交 + 1.2s 后 cur/total 快照，两内核同款）——若 v208 真机仍复现，读 9999 日志实锤再精准修，勿盲猜。④**App 图标换 Nbeefin**：`AppIcon-dark-blue.imagestack` 双层整图铺满（Front/Back 同图，源图 2752×1536 居中裁 2560×1536→800×480/400×240，PowerShell System.Drawing），tvOS 26 系统自动处理形状；脚本 `_tmp/make_icon_v208.ps1`。tvOS target 图标名=`AppIcon-dark-blue`（pbxproj ASSETCATALOG_COMPILER_APPICON_NAME）。
 
 ---
 

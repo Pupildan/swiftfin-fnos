@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v207"
+    static let version = "v208"
 
     /// 本版主要变更摘要
-    static let changes = "v207:片头片尾面板重做(用户规格)——面板实时显示当前播放位置;聚焦行按确认键=取当前位置做片头结束点/片尾开始点;左右键或触摸板滑动=±1秒微调(连按加速),直接改值立即生效;捕捉=标记此处(本次播放不再自动跳,下次播放起效);0=关闭。服务端实测:剧集配置写 parent_guid 后 play/info 同集与同剧另一集均回读成功(多端同步可用);电影服务端不回读 play_config,面板会提示仅本次播放生效。面板打开/捕捉/推送全链路诊断落 9999 日志。"
+    static let changes = "v208:v207 真机反馈三修+图标。①面板时间读取不准=打开瞬间靠下一个 tick 才有位置,改打开时立即同步真实位置/总时长(两内核同款);②弹窗选中效果白底白字看不清=弃官方 .glass 改 FNOSBareButtonStyle+自绘描边(聚焦白 2.5pt/非聚焦 0.28 白 1pt);③自动跳过后选集/进度失效的头号嫌疑=KS onPlay 后台线程直接 seek 有内部竞态,改一律 Task{@MainActor} 提交,并加触发时与 seek 后 1.2s 的 timemodel 快照诊断(9999),复现即可实锤;④App 图标换 Nbeefin 图(imagestack 双层整图铺满,按现有资产尺寸生成)。"
 }

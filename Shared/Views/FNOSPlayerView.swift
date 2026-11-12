@@ -918,10 +918,18 @@ struct FNOSPlayerContainerView: View {
                     skipPanelDur = Double(coordinator.timemodel.totalTime)
                 }
                 // v184: 自动跳过片头/片尾（服务器 play_config 数据，各单次触发）
+                // v208: seek 一律切主线程执行（KS 回调在后台线程，播放中直接调 seek 有内部状态
+                //       竞态风险=v207「跳过后选集/进度失效」的头号嫌疑）+ 触发/后置状态留 9999 日志
                 if let so = skipOpening, !introSkipped, currentTime > 0.5, currentTime < so - 0.5 {
                     introSkipped = true
-                    coordinator.seek(time: so)
-                    FNOSDiag.shared.add("自动跳过片头 → \(Int(so))s")
+                    let snapTotal = Double(coordinator.timemodel.totalTime)
+                    FNOSDiag.shared.add("自动跳过片头触发: so=\(Int(so)) cur=\(Int(currentTime)) total=\(Int(snapTotal))")
+                    Task { @MainActor in
+                        coordinator.seek(time: so)
+                        FNOSDiag.shared.add("自动跳过片头 seek 提交 → \(Int(so))s（主线程）")
+                        try? await Task.sleep(nanoseconds: 1_200_000_000)
+                        FNOSDiag.shared.add("跳过seek后1.2s: cur=\(Int(coordinator.timemodel.currentTime)) total=\(Int(coordinator.timemodel.totalTime))")
+                    }
                 }
                 // v206: skip_ending 是「距结尾秒数」（Web 端语义），开始点 = 总时长 - se
                 if let se = skipEnding, !endingSkipped, se > 0 {
@@ -929,8 +937,11 @@ struct FNOSPlayerContainerView: View {
                     let endingStart = total - se
                     if total > 2, endingStart > total * 0.1, currentTime >= endingStart, currentTime < total - 2 {
                         endingSkipped = true
-                        coordinator.seek(time: total - 1.5)
-                        FNOSDiag.shared.add("自动跳过片尾 → \(Int(total - 1.5))s")
+                        FNOSDiag.shared.add("自动跳过片尾触发: se=\(Int(se)) cur=\(Int(currentTime)) total=\(Int(total))")
+                        Task { @MainActor in
+                            coordinator.seek(time: total - 1.5)
+                            FNOSDiag.shared.add("自动跳过片尾 seek 提交 → \(Int(total - 1.5))s（主线程）")
+                        }
                     }
                 }
                 // v190: 渲染 KSPlayer 内嵌字幕（裸播放视图不含 KSPlayer 字幕 UI，需自行显示）。
@@ -1140,6 +1151,10 @@ struct FNOSPlayerContainerView: View {
                     }
                     // v206: 片头片尾设置按钮（与弹幕设置同款功能键列）
                     controlButton(.skipSettings, icon: "tv.inset.filled") {
+                        // v208: 打开瞬间立即同步真实位置（v207 靠下一个 onPlay tick 更新，
+                        // 打开瞬间显示 00:00/旧值 → 用户立刻按确认就捕捉到错位置=「时间读取不准确」）
+                        skipPanelPos = Double(coordinator.timemodel.currentTime)
+                        skipPanelDur = Double(coordinator.timemodel.totalTime)
                         withAnimation(.easeInOut(duration: 0.22)) {
                             audioSheetPresented = false
                             subtitleSheetPresented = false

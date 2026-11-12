@@ -364,6 +364,9 @@ struct FNOSMPVPlayerView: View {
                     }
                     // v206: 片头片尾设置按钮（与弹幕设置同款功能键列）
                     controlButton(.skipSettings, icon: "tv.inset.filled") {
+                        // v208: 打开瞬间立即同步真实位置（与 KS 同款，不等下一个 ticker tick）
+                        skipPanelPos = seconds(player?.position ?? .zero)
+                        skipPanelDur = seconds(player?.duration ?? .zero)
                         withAnimation(.easeInOut(duration: 0.22)) {
                             showDanmuSettings = false
                             showAudioSheet = false
@@ -987,9 +990,15 @@ struct FNOSMPVPlayerView: View {
                 }
                 // v184: 自动跳过片头/片尾（服务器 play_config 数据，各单次触发）
                 // v206: skipOpening/skipEnding 即生效值——设置面板改值后立刻更新，tick 下轮即生效
+                // v208: 触发/后置状态留 9999 日志（与 KS 同款，跳过后选集/进度失效排查）
                 if let so = skipOpening, !introSkipped, position > 0.5, position < so - 0.5 {
                     introSkipped = true
+                    FNOSDiag.shared.add("自动跳过片头触发(mpv): so=\(Int(so)) pos=\(Int(position)) dur=\(Int(seconds(player.duration)))")
                     player.seek(by: .seconds(so - position))
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 1_200_000_000)
+                        FNOSDiag.shared.add("跳过seek后1.2s(mpv): pos=\(Int(seconds(player.position))) dur=\(Int(seconds(player.duration)))")
+                    }
                 }
                 // v206: skip_ending 是「距结尾秒数」（Web 端语义），开始点 = 总时长 - se
                 if let se = skipEnding, !endingSkipped, se > 0 {
@@ -997,6 +1006,7 @@ struct FNOSMPVPlayerView: View {
                     let endingStart = dur - se
                     if dur > 2, endingStart > dur * 0.1, position >= endingStart, position < dur - 2 {
                         endingSkipped = true
+                        FNOSDiag.shared.add("自动跳过片尾触发(mpv): se=\(Int(se)) pos=\(Int(position)) dur=\(Int(dur))")
                         player.seek(by: .seconds((dur - 1.5) - position))
                     }
                 }

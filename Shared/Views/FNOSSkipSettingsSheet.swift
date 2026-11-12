@@ -122,7 +122,8 @@ struct FNOSSkipSettingsSheet: View {
     // MARK: - 捕捉行（官方 glass 按钮：确认键=取当前位置；onMoveCommand 左右=微调）
 
     private func captureRow(id: String, title: String) -> some View {
-        Button {
+        let isFocused = focusedControl == id
+        return Button {
             capturePosition(isIntro: id == "opening")
         } label: {
             HStack(spacing: 16) {
@@ -145,7 +146,14 @@ struct FNOSSkipSettingsSheet: View {
             .padding(.vertical, 10)
             .frame(width: 600)
         }
-        .buttonStyle(.glass)
+        // v208: 弃官方 .glass（聚焦态白底白字看不清）——FNOSBareButtonStyle 压系统焦点板 +
+        // 自绘描边表焦点（用户规格「改成描边」；玻璃面板上禁半透明白填充的老规矩不破）
+        .buttonStyle(FNOSBareButtonStyle())
+        .focusEffectDisabled()
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.white.opacity(isFocused ? 1.0 : 0.28), lineWidth: isFocused ? 2.5 : 1)
+        )
         .focused($focusedControl, equals: id)
         .onMoveCommand { direction in
             // v194: 连按加速（0.2s 内连续按翻倍，最多 ×4）

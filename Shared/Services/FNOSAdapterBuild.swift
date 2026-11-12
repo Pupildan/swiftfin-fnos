@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v210"
+    static let version = "v211"
 
     /// 本版主要变更摘要
-    static let changes = "v210:v209 真机反馈三修(KS 仍一行未动)。①mpv 选集卡真实数据:容器把兼容层 client+全分集(FNOSItem,带海报/标题/简介)注入 mpv 视图,选集卡按集号匹配显示真实缩略图(Thumb/Primary/Backdrop)+标题+两行简介,无匹配退渐变占位——数据现成零额外请求;②mpv 快速滑动根因实锤=滑动桥宿主 updateUIView 首调时未上树,爬根循环停在宿主自身(isUserInteractionEnabled=false=永不触发),且 recognizer 非 nil 后永不重挂;修=对齐 KS 模式(延迟 0.3s 挂载+爬根必须到 UIWindow 否则重试最多 3 轮+手势失效自动清理重挂);③App 图标:解包对比 v206/v209 Assets.car(2.71MB→3.88MB)证实编译产物已含 Nbeefin 图,真机不显示=tvOS 分层图标系统缓存,需删除 App+重启 Apple TV+重装。"
+    static let changes = "v211:v210 真机反馈两修(KS 仍一行未动)。①滑动真根因=window 级手势输给 tvOS 系统手势(深层视图手势先识别;KS 挂 videoView 深层所以赢,MPV 挂 window 根所以永收不到);修=手势宿主移到视频层顶层成为 hit-test 终点(isUserInteractionEnabled=true)+挂宿主自身不再爬根+simultaneous delegate+全程诊断日志(挂载/began/ended/门控快照落 9999);②选集卡一直刷新拖卡弹幕=FNOSAsyncImage 在 LazyHStack 重建时重置 @State 反复重载(v98 教训)+20+张并发解码;修=v110 终极方案:打开选集条即串行预载剧照(下载→ImageIO 急切后台解码→逐张入强引用字典),卡片 Image(uiImage:) 直渲染,零重建零闪烁零解码风暴。"
 }

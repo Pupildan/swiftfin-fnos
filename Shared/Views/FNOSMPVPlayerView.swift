@@ -1,4 +1,5 @@
 import Foundation
+import ImageIO
 import MPVUI
 import SwiftUI
 import UIKit
@@ -73,6 +74,11 @@ struct FNOSMPVPlayerView: View {
     /// v207: 片头片尾面板实时位置/总时长（面板打开期间由 ticker 更新，与 KS 同款）
     @State private var skipPanelPos: Double = 0
     @State private var skipPanelDur: Double = 0
+    /// v211: 选集卡剧照强引用字典（按集号）——v110 终极方案：FNOSAsyncImage 在 LazyHStack
+    /// 重建时会重置 @State 反复重载（v98 教训），且 20+ 张并发解码把弹幕拖卡；
+    /// 打开选集条时串行预载（下载→ImageIO 急切后台解码→逐张入字典），卡片 Image 直渲染
+    @State private var stillImages: [Int: UIImage] = [:]
+    @State private var stillLoadTask: Task<Void, Never>?
     @State private var switching = false
     /// v192: 关闭弹层后焦点回到「打开该弹层的那个按钮」（用户令：不回播放键）
     @State private var sheetReturnFocus: Control? = nil
@@ -291,8 +297,6 @@ struct FNOSMPVPlayerView: View {
                 .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
-        // v191: 触摸板滑动拖动进度的手势宿主（与 KS FNOSPanBridge 同款体验）
-        .background(FNOSMPVPanHostView())
         .onAppear {
             attachPanHandler()
         }
@@ -315,6 +319,12 @@ struct FNOSMPVPlayerView: View {
                     // 控制条隐藏时任意方向键都能唤回
                     showControls()
                 }
+
+            // v211: 滑动手势宿主移到视频层最顶（与 KS 挂 videoView 同款深层）——
+            // v210 挂 window 根的手势输给 tvOS 系统手势（window 级识别竞争，深层视图
+            // 手势先识别），挂载正确也永远收不到事件；本宿主成为 hit-test 终点后手势必参与
+            FNOSMPVPanHostView()
+                .ignoresSafeArea()
         }
     }
 
@@ -465,15 +475,14 @@ struct FNOSMPVPlayerView: View {
                             switchEpisode(to: ep)
                         } label: {
                             // v210: 兼容层分集匹配（按集号）→ 真实缩略图+标题+简介；无匹配退占位卡
+                            // v211: 缩略图改强引用字典直渲染（v110 终极方案），FNOSAsyncImage 退役
                             let compat = compatEpisodes.first(where: { $0.IndexNumber == ep.number })
                             VStack(alignment: .leading, spacing: 8) {
                                 ZStack {
-                                    if let compat, let still = compatClient?.episodeStillURL(item: compat, maxWidth: 640) {
-                                        FNOSAsyncImage(
-                                            url: still,
-                                            headers: compatClient?.mediaHeaders ?? [:],
-                                            contentMode: .fill
-                                        )
+                                    if let img = stillImages[ep.number] {
+                                        Image(uiImage: img)
+                                            .resizable()
+                                            .aspectRatio(contentMode: .fill)
                                     } else {
                                         RoundedRectangle(cornerRadius: 10, style: .continuous)
                                             .fill(
@@ -560,6 +569,41 @@ struct FNOSMPVPlayerView: View {
         }
     }
 
+    /// v211: 选集条打开时批量预载剧照到强引用字典（串行下载限带宽、ImageIO 急切后台解码
+    /// 防主线程解码风暴、逐张入字典=渐进出现无闪烁）——v110 终极方案（绕开 FNOSAsyncImage 管线）
+    private func preloadEpisodeStills() {
+        guard let client = compatClient, stillLoadTask == nil else { return }
+        let eps = compatEpisodes
+        stillLoadTask = Task { @MainActor in
+            defer { stillLoadTask = nil }
+            for ep in eps {
+                if Task.isCancelled { return }
+                let num = ep.IndexNumber ?? 0
+                guard stillImages[num] == nil,
+                      let url = client.episodeStillURL(item: ep, maxWidth: 640) else { continue }
+                if let img = await Self.fetchStill(url: url, headers: client.mediaHeaders) {
+                    stillImages[num] = img
+                }
+            }
+        }
+    }
+
+    private static func fetchStill(url: URL, headers: [String: String]) async -> UIImage? {
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 10
+        for (k, v) in headers { req.setValue(v, forHTTPHeaderField: k) }
+        guard let (data, resp) = try? await URLSession.shared.data(for: req),
+              (resp as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty else { return nil }
+        return await Task.detached(priority: .utility) {
+            // ImageIO 急切解码（v102 教训：UIImage(data:) 惰性解码会在首绘时主线程解 8MB+）
+            if let src = CGImageSourceCreateWithData(data as CFData, nil),
+               let cg = CGImageSourceCreateImageAtIndex(src, 0, [kCGImageSourceShouldCacheImmediately: true] as CFDictionary) {
+                return UIImage(cgImage: cg)
+            }
+            return UIImage(data: data)
+        }.value
+    }
+
     // MARK: - 进度条
 
     private func scrubber(_ player: MPVPlayer) -> some View {
@@ -591,6 +635,8 @@ struct FNOSMPVPlayerView: View {
                 withAnimation(.easeInOut(duration: 0.2)) {
                     showEpisodeStrip = true
                 }
+                // v211: 展开即批量预载剧照（强引用字典直渲染，见 preloadEpisodeStills）
+                preloadEpisodeStills()
                 let target = episodes.first(where: { $0.number == currentNumber })?.guid
                     ?? episodes.first?.guid
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
@@ -804,6 +850,7 @@ struct FNOSMPVPlayerView: View {
     /// v191: 触摸板滑动拖动进度（与 KS FNOSPanBridge 同款：进度条聚焦时 1px≈0.2s）
     /// v209: 结构对齐 KS——弹层让位单独判断（began 不被 guard 拦死：控制条隐藏时滑动先唤出）；
     /// began/changed 刷活动时间（快速大幅拖动不再被 5s 自动隐藏中断）
+    /// v211: 全程诊断日志（挂载/began/changed/ended + 门控快照）——9999 实锤滑动链路
     private func attachPanHandler() {
         FNOSMPVPanCoordinator.shared.onPan = { gesture in
             // 弹层打开时让位给面板滑动桥（KS 同款）
@@ -814,9 +861,13 @@ struct FNOSMPVPlayerView: View {
                     scrubActive = true
                     scrubValue = seconds(player.position)
                     bumpActivity()
+                    FNOSDiag.shared.add("滑动拖动开始: pos=\(Int(scrubValue))s")
                 } else if !controlsVisible {
                     // KS revealControls 同款：滑动唤出控制条（下一笔滑动即可拖动）
                     showControls()
+                    FNOSDiag.shared.add("滑动唤出控制条(focus=\(focus.map { "\($0)" } ?? "nil"))")
+                } else {
+                    FNOSDiag.shared.add("滑动began未消费: focus=\(focus.map { "\($0)" } ?? "nil") controls=\(controlsVisible)")
                 }
             case .changed:
                 guard scrubActive, let player, focus == .scrubber else { return }
@@ -830,6 +881,7 @@ struct FNOSMPVPlayerView: View {
             case .ended, .cancelled:
                 if let player, focus == .scrubber {
                     commitScrubIfNeeded(player)
+                    FNOSDiag.shared.add("滑动拖动提交: → \(Int(scrubValue))s")
                 }
             default:
                 break
@@ -1213,7 +1265,7 @@ final class FNOSMPVPanCoordinator: NSObject, UIGestureRecognizerDelegate {
     }
 
     private func mountIfNeeded() {
-        guard let host = hostView else { return }
+        guard hostView != nil else { return }
         // 已挂且手势所在视图仍在 window 上 → 幂等返回
         if let rec = recognizer, let recView = rec.view, recView.window != nil { return }
         // 旧手势失效（宿主销毁/从未上树）→ 清掉重挂
@@ -1221,9 +1273,7 @@ final class FNOSMPVPanCoordinator: NSObject, UIGestureRecognizerDelegate {
             rec.view?.removeGestureRecognizer(rec)
             recognizer = nil
         }
-        // v210: KS 同款延迟挂载——updateUIView 首调时宿主可能还没进 window 层级，
-        // 立即爬根会失败 → 手势挂到宿主自身（isUserInteractionEnabled=false）上=永不触发。
-        // 挂载前必须校验爬根真的到了 UIWindow，否则等待重试。
+        // v210: KS 同款延迟挂载——updateUIView 首调时宿主可能还没进 window 层级
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             self?.mountNow(retry: 0)
         }
@@ -1231,11 +1281,9 @@ final class FNOSMPVPanCoordinator: NSObject, UIGestureRecognizerDelegate {
 
     private func mountNow(retry: Int) {
         guard let host = hostView, recognizer == nil else { return }
-        var root: UIView = host
-        while let superview = root.superview, !(superview is UIWindow) {
-            root = superview
-        }
-        guard root is UIWindow else {
+        // v211: 手势直接挂宿主自身（宿主已在视频层顶层=is hit-test 终点），不再爬根到
+        // window——v210 实测 window 级手势输给 tvOS 系统手势永不触发（KS 挂 videoView 深层所以赢）
+        guard host.window != nil else {
             // 仍未上树 → 最多再等 3 轮（每轮 0.5s）
             if retry < 3 {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
@@ -1244,7 +1292,7 @@ final class FNOSMPVPanCoordinator: NSObject, UIGestureRecognizerDelegate {
             }
             return
         }
-        if let existing = root.gestureRecognizers?.first(where: {
+        if let existing = host.gestureRecognizers?.first(where: {
             ($0 as? UIPanGestureRecognizer)?.name == "fnos.mpv.scrub.pan"
         }) {
             recognizer = existing as? UIPanGestureRecognizer
@@ -1254,8 +1302,9 @@ final class FNOSMPVPanCoordinator: NSObject, UIGestureRecognizerDelegate {
         recognizer.name = "fnos.mpv.scrub.pan"
         recognizer.cancelsTouchesInView = false
         recognizer.delegate = self
-        root.addGestureRecognizer(recognizer)
+        host.addGestureRecognizer(recognizer)
         self.recognizer = recognizer
+        FNOSDiag.shared.add("滑动桥挂载 ✓ 视频层（重试\(retry)轮）")
     }
 
     @objc private func handle(_ gesture: UIPanGestureRecognizer) {
@@ -1266,14 +1315,22 @@ final class FNOSMPVPanCoordinator: NSObject, UIGestureRecognizerDelegate {
     func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         onPan != nil
     }
+
+    /// v211: 允许与其它手势同时识别（控制条按钮 tap / 系统手势并存时不互斥饿死）
+    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
+                           shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool {
+        true
+    }
 }
 
-/// 手势宿主（本身不吃触摸），把视图交给协调器爬根挂载
+/// 手势宿主（透明不吃视觉，但必须接收触摸成为 hit-test 终点——手势才参与识别；
+/// v210 的 isUserInteractionEnabled=false + 挂 window 组合=手势永不触发）
 private struct FNOSMPVPanHostView: UIViewRepresentable {
     func makeUIView(context: Context) -> UIView {
         let view = UIView()
         view.backgroundColor = .clear
-        view.isUserInteractionEnabled = false
+        view.isUserInteractionEnabled = true
+        FNOSMPVPanCoordinator.shared.setHost(view)
         return view
     }
 

@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v206"
+    static let version = "v207"
 
     /// 本版主要变更摘要
-    static let changes = "v206:跳过片头片尾改为服务端配置(多端同步)。写入端点 POST /v/api/v1/play/setConfigByItem,body {guid: parent_guid, skip_opening, skip_ending},两值限 0~600 秒,配置挂在剧集级 parent_guid 上(Web 播放器改设置后 50ms 防抖自动保存),换客户端无需重设。播放器新增片头片尾设置面板并回读生效。重要修正:skip_ending 实为「距结尾剩余秒数」(Web 端 allowSkipEnding 校验 duration-opening-ending>=5),v184 误按绝对时间点判定会导致在片头结束处提前跳到片尾,本版已修正为 duration - skip_ending。"
+    static let changes = "v207:片头片尾面板重做(用户规格)——面板实时显示当前播放位置;聚焦行按确认键=取当前位置做片头结束点/片尾开始点;左右键或触摸板滑动=±1秒微调(连按加速),直接改值立即生效;捕捉=标记此处(本次播放不再自动跳,下次播放起效);0=关闭。服务端实测:剧集配置写 parent_guid 后 play/info 同集与同剧另一集均回读成功(多端同步可用);电影服务端不回读 play_config,面板会提示仅本次播放生效。面板打开/捕捉/推送全链路诊断落 9999 日志。"
 }

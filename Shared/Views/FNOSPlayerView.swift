@@ -472,6 +472,9 @@ struct FNOSPlayerContainerView: View {
     @State private var skipSettingsPresented = false
     /// v206: 设置面板防抖推服务端的任务（0.5s 内连续改值只发一次，Web 端同语义）
     @State private var skipPushTask: Task<Void, Never>?
+    /// v207: 片头片尾面板实时位置/总时长（面板打开期间由进度回调更新，用户规格=定位当前播放位置）
+    @State private var skipPanelPos: Double = 0
+    @State private var skipPanelDur: Double = 0
     @FocusState private var focus: Control?
     // 换集条：默认不展开（一上来就渲染 24 张缩略图会跟弹幕争内存，拖动进度条容易闪退）
     @State private var showEpisodeStrip = false
@@ -813,12 +816,20 @@ struct FNOSPlayerContainerView: View {
                             closeSheet()
                         }
                     } else if skipSettingsPresented {
-                        // v206: 片头片尾设置（独立弹层；改值即时生效 + 防抖同步服务端）
+                        // v207: 片头片尾设置（实时位置 + 取当前位置 + ±1s 微调；改值即时生效 + 防抖同步服务端）
                         FNOSSkipSettingsSheet(
                             opening: skipOpening,
                             ending: skipEnding,
+                            currentPosition: skipPanelPos,
+                            totalDuration: skipPanelDur,
+                            canSync: reporterParentGUID?.isEmpty == false && reporterNative != nil,
                             onClose: { closeSheet() },
-                            onChange: { op, ed in commitSkipSettings(opening: op, ending: ed) }
+                            onChange: { op, ed in commitSkipSettings(opening: op, ending: ed) },
+                            onCapture: { isIntro in
+                                // 捕捉 = 标记此处，本次播放不再自动跳（下次播放起效）
+                                if isIntro { introSkipped = true } else { endingSkipped = true }
+                                FNOSDiag.shared.add("跳过捕捉: \(isIntro ? "片头" : "片尾") → pos=\(Int(skipPanelPos))s")
+                            }
                         )
                     } else {
                         FNOSDanmuSettingsSheet(onClose: { closeSheet() })
@@ -900,6 +911,11 @@ struct FNOSPlayerContainerView: View {
                             seconds: currentTime
                         )
                     }
+                }
+                // v207: 片头片尾面板打开期间实时刷新当前位置（用户规格=定位当前播放位置）
+                if skipSettingsPresented {
+                    skipPanelPos = currentTime
+                    skipPanelDur = Double(coordinator.timemodel.totalTime)
                 }
                 // v184: 自动跳过片头/片尾（服务器 play_config 数据，各单次触发）
                 if let so = skipOpening, !introSkipped, currentTime > 0.5, currentTime < so - 0.5 {
@@ -1130,6 +1146,8 @@ struct FNOSPlayerContainerView: View {
                             skipSettingsPresented = true
                             isSheetPresented = true
                         }
+                        // v207: 面板打开时的链路快照（9999 日志可查，服务端值/parent_guid/类型一次看清）
+                        FNOSDiag.shared.add("跳过面板打开: intro=\(skipOpening.map { "\(Int($0))s" } ?? "关") ending=\(skipEnding.map { "\(Int($0))s" } ?? "关") parent=\(reporterParentGUID?.isEmpty == false) type=\(item.type) pos=\(Int(skipPanelPos))s")
                     }
                     if !audioTracks.isEmpty {
                         controlButton(.audio, icon: "waveform") {

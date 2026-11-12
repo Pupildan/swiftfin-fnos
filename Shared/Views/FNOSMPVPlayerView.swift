@@ -67,6 +67,9 @@ struct FNOSMPVPlayerView: View {
     @State private var showSkipSettings = false
     /// v206: 设置面板防抖推服务端的任务（0.5s 内连续改值只发一次，Web 端同语义）
     @State private var skipPushTask: Task<Void, Never>?
+    /// v207: 片头片尾面板实时位置/总时长（面板打开期间由 ticker 更新，与 KS 同款）
+    @State private var skipPanelPos: Double = 0
+    @State private var skipPanelDur: Double = 0
     @State private var switching = false
     /// v192: 关闭弹层后焦点回到「打开该弹层的那个按钮」（用户令：不回播放键）
     @State private var sheetReturnFocus: Control? = nil
@@ -228,13 +231,20 @@ struct FNOSMPVPlayerView: View {
                     .padding(.bottom, 170)
                     .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
-            // v206: 片头片尾设置（独立弹层；改值即时生效 + 防抖同步服务端）
+            // v207: 片头片尾设置（实时位置 + 取当前位置 + ±1s 微调；与 KS 同款）
             if showSkipSettings {
                 FNOSSkipSettingsSheet(
                     opening: skipOpening,
                     ending: skipEnding,
+                    currentPosition: skipPanelPos,
+                    totalDuration: skipPanelDur,
+                    canSync: parentGUID?.isEmpty == false,
                     onClose: { closeSheets() },
-                    onChange: { op, ed in commitSkipSettings(opening: op, ending: ed) }
+                    onChange: { op, ed in commitSkipSettings(opening: op, ending: ed) },
+                    onCapture: { isIntro in
+                        // 捕捉 = 标记此处，本次播放不再自动跳（下次播放起效）
+                        if isIntro { introSkipped = true } else { endingSkipped = true }
+                    }
                 )
                 .padding(.trailing, 90)
                 .padding(.bottom, 170)
@@ -361,6 +371,8 @@ struct FNOSMPVPlayerView: View {
                             showSkipSettings = true
                             sheetReturnFocus = .skipSettings
                         }
+                        // v207: 面板打开时的链路快照（与 KS 同款）
+                        FNOSDiag.shared.add("跳过面板打开(mpv): intro=\(skipOpening.map { "\(Int($0))s" } ?? "关") ending=\(skipEnding.map { "\(Int($0))s" } ?? "关") parent=\(parentGUID?.isEmpty == false) type=\(item.type) pos=\(Int(skipPanelPos))s")
                     }
                     if !player.audioTracks.isEmpty {
                         controlButton(.audio, icon: "waveform") {
@@ -695,7 +707,8 @@ struct FNOSMPVPlayerView: View {
         skipOpening = opening
         skipEnding = ending
         guard let parent = parentGUID, !parent.isEmpty else {
-            print("FNOS⚠️跳过设置: 无 parent_guid，仅本端生效")
+            // v207: 走 FNOSDiag（9999 日志可查；电影等无 parent_guid 场景=仅本端生效）
+            FNOSDiag.shared.add("跳过设置: 无 parent_guid，仅本端生效", dedupeKey: "mpv.skip.push.no")
             return
         }
         skipPushTask?.cancel()
@@ -707,7 +720,7 @@ struct FNOSMPVPlayerView: View {
                 skipOpening: Int(opening?.rounded() ?? 0),
                 skipEnding: Int(ending?.rounded() ?? 0)
             )
-            print("FNOS\(ok ? "ℹ️" : "⚠️")跳过设置推送: \(ok ? "成功" : "失败") intro=\(Int(opening ?? 0))s ending=\(Int(ending ?? 0))s → \(parent.prefix(8))…")
+            FNOSDiag.shared.add("跳过设置推送(mpv): \(ok ? "成功" : "失败") intro=\(Int(opening ?? 0))s ending=\(Int(ending ?? 0))s → \(parent.prefix(8))…")
         }
     }
 
@@ -967,6 +980,11 @@ struct FNOSMPVPlayerView: View {
                 // 也在 250ms 内恢复为 true，播放中永不进系统屏保（用户实测两轮未修好）
                 UIApplication.shared.isIdleTimerDisabled = true
 
+                // v207: 片头片尾面板打开期间实时刷新当前位置（与 KS 同款）
+                if showSkipSettings {
+                    skipPanelPos = position
+                    skipPanelDur = seconds(player.duration)
+                }
                 // v184: 自动跳过片头/片尾（服务器 play_config 数据，各单次触发）
                 // v206: skipOpening/skipEnding 即生效值——设置面板改值后立刻更新，tick 下轮即生效
                 if let so = skipOpening, !introSkipped, position > 0.5, position < so - 0.5 {

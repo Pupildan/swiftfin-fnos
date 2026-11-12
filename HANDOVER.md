@@ -2,7 +2,7 @@
 
 > 仓库：`Pupildan/swiftfin-fnos`（GitHub 私有仓，CI 构建 unsigned ipa）
 > 本地工作区：`C:\Users\Admin\WorkBuddy\fndanmu-tvos\build-package\swiftfin-fnos`
-> 当前版本：**v206**（🆕跳过片头片尾：服务端配置多端同步，独立设置面板；前情=v205 MPV SDR 全链路定稿：hdrPolicy/displayMatching/sdrOutput 三项已定案，弹幕颜色修复 ✓；含官方 searchable 搜索、KS 滑块触摸滑动修复、屏保双保险、MPV 与 KS 1:1 对齐），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
+> 当前版本：**v207**（🆕片头片尾面板重做：实时位置 + 取当前位置做片头/片尾 + ±1s 微调；服务端实测结论=剧集多端同步链路全通、电影服务端不回读 play_config；前情=v206 跳过片头片尾服务端化、v205 MPV SDR 全链路定稿：hdrPolicy/displayMatching/sdrOutput 三项已定案，弹幕颜色修复 ✓；含官方 searchable 搜索、KS 滑块触摸滑动修复、屏保双保险、MPV 与 KS 1:1 对齐），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
 > 交付物命名规则：`output/Swiftfin-FNOS-tvos-unsigned-vXX.ipa`（32MB 左右）
 
 ---
@@ -33,6 +33,8 @@ v130 我为了修「KS 轻微左右抖 + mpv 原地抖后重载」，把小漂�
 - **v167-v187：详情页评论/人物弹窗 + 播放器弹幕渲染重构 + 内嵌字幕（2026-11-07~09 增量，详见文末「评论弹窗·弹幕渲染·播放器」章节）**。关键节点：v168 frodo 签名缺 `/api/v2` 修复（celebrities/reviews/photos 三通道静默 400，一个根因三症状）；v169-v171 hero 弹幕三次重构（TimelineView 逐帧=闪烁 → .position 布局=抖动 → 双拷贝 marquee+精确测宽定稿）；v172/v176/v178/v181 分区 `.focusable()` 与 `.card` 灰底反复（真根因是入库按钮 `.disabled`，v180 实锤）；v180 人物弹窗 + 入库按钮移除 `.disabled`；v183 聚焦白块真修（`FNOSBareButtonStyle`，v76 已知坑重踩）；v184 评论弹窗段落分行 + 删调试区 + 自动跳片头片尾（play_config）；v185 内嵌字幕切换 + 诊断埋点；v186 内嵌字幕渲染层 + 换集面板重做 + 弹层玻璃化（用户要求回滚，v187 仅保留字幕渲染/图标/弹层标题）。
 
 - **v206：跳过片头片尾服务端化 + 独立设置面板（2026-11-12~13）**。协议逆向实锤（fntv-electron Go 代理 + 飞牛 Web JS 互证）：写入端点 `POST /v/api/v1/play/setConfigByItem`，body `{guid: parent_guid, skip_opening, skip_ending}`，挂剧集级 parent_guid；**skip_ending 语义=距结尾剩余秒数**（非绝对时间，v184 误判已修正为 `duration - skip_ending`）；新文件 `FNOSSkipSettingsSheet.swift`（两滑块 0~600s 玻璃面板，复刻弹幕设置）+ KS/MPV 双接线（`tv.inset.filled` 按钮 + overlay + 守卫链 + 0.5s 防抖推服务端 + 切集刷新）；详见 §2.5.1。
+
+- **v207：片头片尾面板重做 + 服务端协议实测结论（2026-11-13）**。v206 真机反馈「不生效 + 逻辑不对」，服务端直探（test 账号 Authx 签名）实锤：**剧集链路全通**（play/info `data.parent_guid` 非空 → setConfigByItem 写 123/45 → 同集与同剧另一集回读 `play_config` 均为 123/45，剧级共享确认）；**电影无存储位**（play/info 连 `play_config` 键都缺、parent_guid 空，写自身 guid 回读仍 null——电影场景仅本端本次生效，服务端不支持）。**面板按用户规格重做**：顶部实时显示当前播放位置；聚焦行按确认键=取当前位置（片头=绝对秒/片尾=距结尾剩余秒）；左右键或触摸板滑动=±1s 微调（连按加速 ×4）；捕捉=标记此处（宿主置对应 Skipped 标志，本次播放不再自动跳——否则捕捉片尾瞬间 endingStart 恰好等于当前位置下一 tick 立即跳尾太突兀）；微调=直接改值（位置在新边界内立即 seek，保留「本集立即生效」）；0=关闭。canSync 文案区分剧集（同步到 Web/手机）与电影（仅本次播放生效）。面板打开/捕捉/推送全链路 FNOSDiag 落 9999。诊断脚本 `_tmp/probe_skip_v207.ps1`（b/c/d 三变体）。
 
 ---
 
@@ -142,9 +144,13 @@ X-Emby-Token: {token}
 > - **合法区间**：两端 `0 ~ 600`（`maxTotalMinutes=10`），`0` = 该端不跳过，步进 5s。Web 端改设置后 50ms 防抖自动保存。
 > - ⚠️ v184 曾把 `skip_ending` 当绝对时间点（`currentTime >= se`），服务端一旦有值会在片头结束处就跳片尾；v206 已在 KS / MPV 两处改为 `时长 − se` 判定。
 
-### 2.5.1 v206 落地状态（接手必读）
+### 2.5.1 v206/v207 落地状态（接手必读）
 
-**✅ 已交付**：commit `2a61d46` push main（2026-11-13）→ CI success（run 43255567700）→ `output/Swiftfin-FNOS-tvos-unsigned-v206.ipa`（32.6MB）。**待真机验证**（清单见下）。
+**✅ v206 已交付**：commit `2a61d46` push main（2026-11-13）→ CI success（run 43255567700）→ `output/Swiftfin-FNOS-tvos-unsigned-v206.ipa`（32.6MB）。真机反馈=「不生效 + 面板逻辑不对（盲滑块不知道设多少秒）」→ v207 重做。
+
+**🚨 v207 服务端协议实测结论（2026-11-13 直探，勿再猜测）**：
+- **剧集**：`play/info`（集 guid）→ `data.parent_guid` **非空**（=剧级条目 guid）；`setConfigByItem {guid: parent_guid, skip_opening:123, skip_ending:45}` → code=0；回读**同集与同剧另一集** `play_config` 均为 123/45 → **多端同步链路完整可用**。
+- **电影**：`play/info` `parent_guid` 为空且**无 `play_config` 键**；写自身 guid 回读仍 null → **电影在服务端无存储位**，只能本端本次生效（面板 canSync=false 文案已说明）。
 
 落地内容：
 
@@ -368,7 +374,7 @@ xcodebuild -project Swiftfin.xcodeproj -scheme "Swiftfin tvOS" \
 - **v186 方案（已回滚）**：进度 tick 读 `subtitleModel.parts`（`text` 是 NSAttributedString，**按字幕原始信息显示、禁加阴影/字号**）叠加 overlay 渲染层；`select(track:)` 后 MEPlayer 置 isSeek 需小 seek 刷新。
 - **MPV 路径**字幕由 mpv 自渲染（v119 tone-mapping 已修），无需处理。
 
-## 自动跳过片头/片尾（✅ v206 已解决——服务端配置 + 独立设置面板，多端同步）
+## 自动跳过片头/片尾（✅ v206 服务端化 + v207 面板重做——服务端配置多端同步，实测剧集链路全通）
 - fnOS `play/info` 原生携带 `play_config.skip_opening` / `skip_ending`。v206 协议逆向实锤（fntv-electron Go 代理 `api.go:202` 端点 + 飞牛 Web 播放器 JS 消费端语义互证，**勿再猜测**）：
   - **写入端点**：`POST /v/api/v1/play/setConfigByItem`，body `{"guid": <parent_guid>, "skip_opening": N, "skip_ending": N}`，`code==0` 成功；Web 端改后 50ms 防抖自动保存。
   - **语义**：`skip_opening`=片头结束**绝对秒**；`skip_ending`=**距结尾剩余秒数**（片尾开始点 = 总时长 − skip_ending）；两值 0~600（0=关闭）；配置挂**剧集级 parent_guid**（多端共享，换客户端无需重设）。
@@ -417,8 +423,8 @@ xcodebuild -project Swiftfin.xcodeproj -scheme "Swiftfin tvOS" \
 9. **用户确认已解决、禁止回滚**：KS 滑块触摸滑动（v197）、MPV 屏保（v201 ZStack+ticker）、弹幕颜色（v205 SDR 三件套）、搜索框（v200 官方 searchable）、弹幕设置滑块手感（v193 直连绑定）。
 10. **FNOSDiag 与 FNOSDiagLog 是两条通道**：FNOSDiag=内存环形缓冲+print（设置面板 FNOSDiagView 用）；FNOSDiagLog.send=POST 9999 落盘。播放侧诊断必须走 FNOSDiagLog（v188 已把 FNOSDiag.add 并入）。
 
-### 待解决问题清单（更新于 v206）
-1. **片头片尾真机验证**（v206 刚交付，清单见 §2.5.1）：设 90/60 → 重进生效 → Web 端可见 → 改 0 关闭 → 连播回归。
+### 待解决问题清单（更新于 v207）
+1. **片头片尾 v207 真机验证**（面板已重做：实时位置 + 取当前位置 + ±1s 微调；清单见 §2.5.1）：播剧集到片头结束处 → 开面板确认「当前位置」在走 → 确认键取当前位置做片头 → 回退重播本集验证片头自动跳 → 同法设片尾（确认片尾开始点显示正确）→ 退出重进验证服务端值回读 → Web 端改值 tvOS 生效 → 连播回归。电影场景：面板应显示「仅本次播放生效」（服务端实测无存储位）。
 2. 续播卡第 3+ 张上键无落点（方案 A 落设置按钮失败、binding 方案真机不完美——需新思路）
 3. TMDB infoSection 死代码清理（未被 body 引用）
 4. 直播/MV 行恢复（数据通道已验证，播放层搁置）

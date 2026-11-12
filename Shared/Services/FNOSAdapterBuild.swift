@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v213"
+    static let version = "v214"
 
     /// 本版主要变更摘要
-    static let changes = "v213:继续播放入口选集失效第二根因修复(v212 未命中)。v212 修的是容器 compat/KS 侧,但继续播放条目带 nativePosterURL→nativeItemGUID 直通→走 mediaRange(itemGUID:) 原生链路,该方法 episodes 恒空(换直链专用),MPV 选集条被 guard !episodes.isEmpty 拦死展不开——这才是用户看到的现象(继续播放入口几乎全走这条 mpv 直链)。修=mediaRange(itemGUID:) 用 play/info 的 parent_guid(剧集/季级)补拉同剧分集:先 season/list 拿第一季 guid,失败把 parent_guid 直接当季 guid(episode/list 对非季 guid 返回空=无害);episodeNumber 从分集列表按 guid 反推(选集条当前集高亮);电影/直播 parent_guid 无季列表=分集空,行为与旧版一致。"
+    static let changes = "v214:继续播放选集第三根因修复(用户补充:MPV 能展开但无信息,KS 展不开)。两根因:①fetchResumeItems 的 Fields 缺 SeriesId→服务端继续播放条目 SeriesId=nil→分集自拉用单集 Id 查 Shows/Episodes 必失败(KS 展不开+MPV 无信息);修=Fields 加 SeriesId+自拉时 SeriesId 缺失先补查单集元数据;②MPV 视图 compatEpisodes 是 @State(initialValue:) 首建锁死,容器后拉到的分集永远传不进(继续播放入口 MPV 先建/compat 空/拉取完成后无法更新);修=改 let 每次容器重算实时传入。另:继续播放选集链路全景诊断日志(容器引擎快照/分集自拉每步/MPV init 数据源/KS+MPV 展开动作/换集请求)落 9999。"
 }

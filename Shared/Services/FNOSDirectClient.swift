@@ -131,7 +131,9 @@ final class FNOSDirectClient {
                     "Limit": String(limit),
                     "Recursive": "true",
                     "MediaTypes": "Video",
-                    "Fields": "Overview,ProductionYear,RunTimeTicks,OfficialRating,Genres,SeriesName,ParentIndexNumber,IndexNumber,BackdropImageTags",
+                    // v214: SeriesId 必须显式请求——缺失会导致继续播放入口的分集兜底拉取
+                    // 用单集 Id 去查 Shows/{单集Id}/Episodes 而失败（选集条展不开）
+                    "Fields": "Overview,ProductionYear,RunTimeTicks,OfficialRating,Genres,SeriesName,SeriesId,ParentIndexNumber,IndexNumber,BackdropImageTags",
                     "EnableImageTypes": "Primary,Backdrop,Thumb",
                     "EnableTotalRecordCount": "false",
                 ]

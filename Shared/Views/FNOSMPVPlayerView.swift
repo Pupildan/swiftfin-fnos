@@ -33,8 +33,10 @@ struct FNOSMPVPlayerView: View {
     let native: FNOSNativeClient
     let range: FNOSNativeClient.MediaRange
     /// v210: 兼容层 client + 全分集（选集卡真实缩略图/标题/简介数据源；容器注入，零额外请求）
+    /// v214: 改 let——@State(initialValue:) 只在视图首建时取值，容器后拉到的分集永远传不进
+    /// （继续播放入口：MPV 视图先建、compatEpisodes 空，fetchEpisodesIfNeeded 完成后无法更新）
     let compatClient: FNOSDirectClient?
-    @State private var compatEpisodes: [FNOSItem]
+    let compatEpisodes: [FNOSItem]
     /// 引擎切换时带过来的播放进度（无感续播）
     var initialSeek: Double? = nil
     /// v184: 服务器跳过配置（秒）——来自 play/info play_config，null = 不跳过
@@ -144,8 +146,10 @@ struct FNOSMPVPlayerView: View {
         self.native = native
         self.range = range
         self.compatClient = compatClient
-        _compatEpisodes = State(initialValue: compatEpisodes)
+        self.compatEpisodes = compatEpisodes
         self.initialSeek = initialSeek
+        // v214: 选集数据源快照（原生分集=选集条数据；compat=封面/标题/简介）
+        FNOSDiag.shared.add("MPV init: 原生分集=\(range.episodes.count) compat分集=\(compatEpisodes.count) epNum=\(range.episodeNumber.map(String.init) ?? "nil") parent=\(range.parentGUID?.prefix(8) ?? "nil")")
         _skipOpening = State(initialValue: skipOpening)
         _skipEnding = State(initialValue: skipEnding)
         self.autoSelected = autoSelected
@@ -631,10 +635,14 @@ struct FNOSMPVPlayerView: View {
                 scrub(player, by: 1)
             case .down:
                 // 第一次按↓：展开换集条并把焦点交给当前集（KS 同款）
-                guard !episodes.isEmpty else { return }
+                guard !episodes.isEmpty else {
+                    FNOSDiag.shared.add("MPV选集条展不开: 原生分集为空")
+                    return
+                }
                 withAnimation(.easeInOut(duration: 0.2)) {
                     showEpisodeStrip = true
                 }
+                FNOSDiag.shared.add("MPV选集条展开: \(episodes.count) 集")
                 // v211: 展开即批量预载剧照（强引用字典直渲染，见 preloadEpisodeStills）
                 preloadEpisodeStills()
                 let target = episodes.first(where: { $0.number == currentNumber })?.guid
@@ -1179,13 +1187,20 @@ struct FNOSMPVPlayerView: View {
 
     /// 连续按左右时自动加速：10s → 30s → 60s
     private func switchEpisode(to ep: FNOSNativeClient.EpisodeRef) {
-        guard !switching, ep.number != currentNumber else { return }
+        guard !switching, ep.number != currentNumber else {
+            FNOSDiag.shared.add("MPV换集忽略: switching=\(switching) current=\(currentNumber.map(String.init) ?? "nil") target=\(ep.number)")
+            return
+        }
         switching = true
         bumpActivity()
+        FNOSDiag.shared.add("MPV换集请求: → 第\(ep.number)集")
 
         Task { @MainActor in
             defer { switching = false }
-            guard let next = await native.mediaRange(itemGUID: ep.guid) else { return }
+            guard let next = await native.mediaRange(itemGUID: ep.guid) else {
+                FNOSDiag.shared.add("MPV换集失败: mediaRange nil")
+                return
+            }
 
             if let player, seconds(player.position) > 0 {
                 UserDefaults.standard.set(seconds(player.position), forKey: resumeKey)

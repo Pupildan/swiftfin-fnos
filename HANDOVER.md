@@ -2,7 +2,7 @@
 
 > 仓库：`Pupildan/swiftfin-fnos`（GitHub 私有仓，CI 构建 unsigned ipa）
 > 本地工作区：`C:\Users\Admin\WorkBuddy\fndanmu-tvos\build-package\swiftfin-fnos`
-> 当前版本：**v213**（🆕继续播放入口选集失效第二根因：nativeItemGUID 直通走 mediaRange(itemGUID:) 其 episodes 恒空 → MPV 选集条拦死；修=用 parent_guid 补拉原生分集（season/list → episode/list）+ 按 guid 反推当前集号。v212 的容器自拉/首页回调继续保留（KS 路径生效）），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
+> 当前版本：**v214**（🆕继续播放选集第三根因：①fetchResumeItems Fields 缺 SeriesId→分集自拉必失败（KS 展不开+MPV 无信息）②MPV 视图 compatEpisodes @State(initialValue:) 首建锁死→容器后拉数据传不进；修=Fields+补查单集元数据+compatEpisodes 改 let；选集链路全景诊断日志已落 9999），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
 > 交付物命名规则：`output/Swiftfin-FNOS-tvos-unsigned-vXX.ipa`（32MB 左右）
 
 ---
@@ -47,7 +47,9 @@ v130 我为了修「KS 轻微左右抖 + mpv 原地抖后重载」，把小漂�
 
 - **v212：继续播放入口选集失效修复（2026-11-13）**。根因=**首页继续播放入口（FNOSMainView fullScreenCover）构造 `FNOSPlayerContainerView` 时未传 `episodes` 与 `onSelectEpisode`**（详情页入口 FNOSItemDetailView 都有传）：KS 选集条被 `guard !episodes.isEmpty` 拦死展不开、KS 换集回调 nil 点了没反应；MPV 虽能展开（原生 range.episodes）但 compatEpisodes 空=无封面信息。修=①**容器自拉分集兜底**：`fetchedEpisodes` @State + `allEpisodes` 计算属性（外部传入优先），`.task { fetchEpisodesIfNeeded() }` 在 episodes 空+是剧集时按详情页同款端点自拉（`Shows/{SeriesId}/Episodes?UserId` → `Users/{uid}/Items?ParentId` 兜底，ParentIndexNumber+IndexNumber 升序），失败静默；容器内 nextEpisode/选集条 ForEach/.down/mpvLayer compatEpisodes 全部改用 allEpisodes——**任何入口自动生效**。②**首页补 onSelectEpisode**：`pendingPlaybackTarget` @State，回调记目标→关播→onDismiss 里重开（详情页 pendingEpisode 同款机制），换集后从头播新集。首建失败=onSelectEpisode 必须在 seriesID 之前（memberwise 声明序），4971f3c 修正。**真机验收（v212）：仍失效 → 继续播放条目实际走 nativeItemGUID 直通=mediaRange(itemGUID:)，v212 没修到 → v213。**
 
-- **v213：继续播放入口选集失效第二根因（2026-11-13）**。**继续播放条目带 nativePosterURL → openResume 给了 nativeItemGUID → 容器直进 mpvLayer → `mediaRange(itemGUID:)`（换直链专用，`episodes: []` 恒空）→ MPV 选集条 `guard !episodes.isEmpty` 拦死**——这才是用户看到的现象（继续播放入口几乎全走这条 mpv 直链；v212 修的容器 allEpisodes 只喂 compatEpisodes/KS）。修=`mediaRange(itemGUID:)` 用 play/info 的 `parent_guid`（剧集/季级）补拉同剧分集：先 `season/list/{parent}` 拿第一季 guid，失败把 parent_guid 直接当季 guid（`episode/list` 对非季 guid 返回空=无害）；**episodeNumber 从分集列表按 guid 反推**（选集条「当前集」高亮，此前恒 nil）；电影/直播 parent_guid 无季列表=分集空，行为与旧版一致。**通用教训：继续播放条目几乎必然带 nativePosterURL（v95 sys/img 直通字段）→ nativeItemGUID 非空 → MPV 原生直链——这条链路的数据完整度（分集/跳过配置/封面）必须单独核对，容器侧兜底覆盖不到它。**
+- **v213：继续播放入口选集失效第二根因（2026-11-13）**。**继续播放条目带 nativePosterURL → openResume 给了 nativeItemGUID → 容器直进 mpvLayer → `mediaRange(itemGUID:)`（换直链专用，`episodes: []` 恒空）→ MPV 选集条 `guard !episodes.isEmpty` 拦死**。修=`mediaRange(itemGUID:)` 用 play/info 的 `parent_guid` 补拉同剧分集（`season/list/{parent}` → `episode/list`）+ 按 guid 反推 episodeNumber。**真机验收（v213）：MPV 选集条能展开了 ✓（补拉生效）但「无信息」、KS 仍展不开 → v214。**
+
+- **v214：继续播放选集第三根因（2026-11-13）**。用户补充现象（MPV 能展开但无信息 / KS 展不开）→ 两根因：①**`fetchResumeItems` 的 Fields 缺 `SeriesId`** → 服务端继续播放条目 SeriesId=nil → `fetchEpisodesIfNeeded` 拿**单集 Id** 查 `Shows/{单集Id}/Episodes` 必失败（KS 展不开+MPV 无封面信息）；修=Fields 加 SeriesId + 自拉时 SeriesId 缺失先补查单集元数据（`Users/{uid}/Items?Ids=`）。②**MPV 视图 `compatEpisodes` 是 `@State(initialValue:)` 首建锁死**——MPV 视图先建（compat 空）、容器 `fetchEpisodesIfNeeded` 完成后 body 重算传入新值**被 State 忽略**；修=**改 let**（只读数据每次容器重算实时传入）。③继续播放选集链路全景诊断日志：容器引擎快照（type/nativeGUID/SeriesId）/分集自拉每一步/MPV init 数据源计数/KS+MPV 展开动作与拦截原因/换集请求——9999 全落盘，再复现必可定位。**通用教训：①Jellyfin 兼容层 Episode 的 SeriesId 需要 Fields 显式请求；②`@State(initialValue:)` 是首建快照，父视图后续传入的新值会被忽略——容器异步拉取后才渲染的子视图数据必须用 let 直传。**
 
 ---
 

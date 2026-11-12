@@ -526,13 +526,14 @@ struct FNOSPlayerContainerView: View {
                     .allowsHitTesting(false)
             }
         }
+        .task {
+            // v214: 继续播放选集排查全景快照（引擎路径/外部数据/字段完整性一次看清）
+            FNOSDiag.shared.add("播放器容器: type=\(item.type ?? "nil") nativeGUID=\(nativeItemGUID != nil) 外部episodes=\(episodes.isEmpty ? "无" : "\(episodes.count)") SeriesId=\(item.SeriesId?.prefix(8) ?? "nil") SeriesName=\(item.SeriesName ?? "nil")")
+            await fetchEpisodesIfNeeded()
+        }
         .task { await probeProfile() }
         // v94：原生上报上下文解析 + 起播上报（多端同步写通道）
         .task { await resolveReporter() }
-        // v94：原生上报上下文解析 + 起播上报（多端同步写通道）
-        .task { await resolveReporter() }
-        // v212: 继续播放入口未传分集时容器自拉兜底（详情页入口 episodes 已有则跳过）
-        .task { await fetchEpisodesIfNeeded() }
         // v197: 屏保所有权归容器——整个播放会话（KS/MPV 及引擎自动切换）期间一律禁止屏保。
         // 之前内核切换时 KS 的 onDisappear 把 isIdleTimerDisabled 重置 false、MPV 的 onAppear 又设 true，
         // 顺序不定 → MPV 播放中会进系统屏保（用户实测）。容器统一持有，内核只设 true、不再设 false。
@@ -1367,10 +1368,14 @@ struct FNOSPlayerContainerView: View {
                 scrub(by: 1)
             case .down:
                 // 第一次按↓：展开换集条并把焦点交给当前集
-                guard !allEpisodes.isEmpty else { return }
+                guard !allEpisodes.isEmpty else {
+                    FNOSDiag.shared.add("KS选集条展不开: allEpisodes 为空（外部=\(episodes.isEmpty ? "无" : "有") fetched=\(fetchedEpisodes.count)）")
+                    return
+                }
                 withAnimation(.easeInOut(duration: 0.2)) {
                     showEpisodeStrip = true
                 }
+                FNOSDiag.shared.add("KS选集条展开: \(allEpisodes.count) 集")
                 let target = allEpisodes.first(where: { $0.Id == item.Id })?.Id ?? allEpisodes.first?.Id
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
                     focusedChip = target
@@ -1633,24 +1638,48 @@ struct FNOSPlayerContainerView: View {
     /// v212: 继续播放入口等未传分集时容器自拉兜底（端点与详情页 loadEpisodes 同款：
     /// 全剧集 Shows/{seriesId}/Episodes → 通用条目查询 Users/{uid}/Items?ParentId 兜底）。
     /// 失败静默（选集条继续隐藏，不影响播放）。
+    /// v214: 全链路 FNOSDiag 日志 + SeriesId 缺失时先补查单集元数据（海报墙/Resume 查询
+    /// Fields 未带 SeriesId → 条目 SeriesId=nil → 拿单集 Id 查 Shows/Episodes 必失败）。
     @MainActor
     private func fetchEpisodesIfNeeded() async {
         guard item.type == "Episode", episodes.isEmpty, !didFetchEpisodes else { return }
         didFetchEpisodes = true
-        let seriesId = item.SeriesId ?? item.Id
+        FNOSDiag.shared.add("分集自拉启动: id=\(item.Id.prefix(8)) SeriesId=\(item.SeriesId?.prefix(8) ?? "nil") SeriesName=\(item.SeriesName ?? "nil")")
+
+        // SeriesId 缺失（Resume/海报墙查询 Fields 未带）→ 补查一次单集元数据
+        var seriesId = item.SeriesId
+        if (seriesId ?? "").isEmpty {
+            do {
+                let data = try await client.get(
+                    path: "Users/\(userID)/Items",
+                    query: ["Ids": item.Id, "Fields": "SeriesId,SeriesName"]
+                )
+                if let full = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items.first {
+                    seriesId = full.SeriesId
+                }
+                FNOSDiag.shared.add("分集自拉补查 SeriesId: \(seriesId?.prefix(8) ?? "仍为 nil")")
+            } catch {
+                FNOSDiag.shared.add("分集自拉补查失败: \(error.localizedDescription)")
+            }
+        }
+        guard let sid = seriesId, !sid.isEmpty else {
+            FNOSDiag.shared.add("分集自拉放弃: SeriesId 无法确定（KS/compat 选集条将不可用）")
+            return
+        }
+
         let fields = "Overview,RunTimeTicks,OfficialRating,ParentIndexNumber,IndexNumber,PremiereDate,SeriesName"
 
         var all: [FNOSItem] = []
         // 端点 B：全剧集（带 UserId）
         do {
             let data = try await client.get(
-                path: "Shows/\(seriesId)/Episodes",
+                path: "Shows/\(sid)/Episodes",
                 query: ["UserId": userID, "Fields": fields]
             )
             all = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items
-            print("FNOSℹ️播放器自拉分集(Shows/Episodes): \(all.count) 集")
+            FNOSDiag.shared.add("分集自拉(Shows/Episodes): \(all.count) 集")
         } catch {
-            print("FNOS⚠️ 播放器自拉分集失败: \(error.localizedDescription)")
+            FNOSDiag.shared.add("分集自拉(Shows/Episodes)失败: \(error.localizedDescription)")
         }
 
         // 端点 C：通用条目查询兜底
@@ -1659,7 +1688,7 @@ struct FNOSPlayerContainerView: View {
                 let data = try await client.get(
                     path: "Users/\(userID)/Items",
                     query: [
-                        "ParentId": seriesId,
+                        "ParentId": sid,
                         "Recursive": "true",
                         "Limit": "500",
                         "SortBy": "ParentIndexNumber,IndexNumber",
@@ -1668,9 +1697,9 @@ struct FNOSPlayerContainerView: View {
                     ]
                 )
                 all = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items
-                print("FNOSℹ️播放器自拉分集(Items 兜底): \(all.count) 集")
+                FNOSDiag.shared.add("分集自拉(Items 兜底): \(all.count) 集")
             } catch {
-                print("FNOS⚠️ 播放器自拉分集兜底失败: \(error.localizedDescription)")
+                FNOSDiag.shared.add("分集自拉(Items 兜底)失败: \(error.localizedDescription)")
             }
         }
 
@@ -1678,6 +1707,7 @@ struct FNOSPlayerContainerView: View {
         if !all.isEmpty {
             all.sort { ($0.ParentIndexNumber ?? 0, $0.IndexNumber ?? 0) < ($1.ParentIndexNumber ?? 0, $1.IndexNumber ?? 0) }
             fetchedEpisodes = all
+            FNOSDiag.shared.add("分集自拉完成: \(all.count) 集 → allEpisodes（KS 选集条/MPV 封面数据源）")
         }
     }
 

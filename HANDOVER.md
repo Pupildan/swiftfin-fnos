@@ -2,7 +2,7 @@
 
 > 仓库：`Pupildan/swiftfin-fnos`（GitHub 私有仓，CI 构建 unsigned ipa）
 > 本地工作区：`C:\Users\Admin\WorkBuddy\fndanmu-tvos\build-package\swiftfin-fnos`
-> 当前版本：**v214**（🆕继续播放选集第三根因：①fetchResumeItems Fields 缺 SeriesId→分集自拉必失败（KS 展不开+MPV 无信息）②MPV 视图 compatEpisodes @State(initialValue:) 首建锁死→容器后拉数据传不进；修=Fields+补查单集元数据+compatEpisodes 改 let；选集链路全景诊断日志已落 9999），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
+> 当前版本：**v215**（🆕继续播放选集第四根因（日志+服务端直探双实锤）：兼容层 `Shows/{sid}/Episodes` **不带 SeasonId 返回 null**（HTTP 200 body=len=4）→ 分集自拉解码报「数据缺失」；修=对齐详情页：Seasons 季列表→逐季带 SeasonId 拉 Episodes。v214 真机日志确认 SeriesId 已有值（Fields 修复生效）、原生分集=12（v213 补拉生效）、卡点只剩 compat 拉取端点），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
 > 交付物命名规则：`output/Swiftfin-FNOS-tvos-unsigned-vXX.ipa`（32MB 左右）
 
 ---
@@ -49,7 +49,9 @@ v130 我为了修「KS 轻微左右抖 + mpv 原地抖后重载」，把小漂�
 
 - **v213：继续播放入口选集失效第二根因（2026-11-13）**。**继续播放条目带 nativePosterURL → openResume 给了 nativeItemGUID → 容器直进 mpvLayer → `mediaRange(itemGUID:)`（换直链专用，`episodes: []` 恒空）→ MPV 选集条 `guard !episodes.isEmpty` 拦死**。修=`mediaRange(itemGUID:)` 用 play/info 的 `parent_guid` 补拉同剧分集（`season/list/{parent}` → `episode/list`）+ 按 guid 反推 episodeNumber。**真机验收（v213）：MPV 选集条能展开了 ✓（补拉生效）但「无信息」、KS 仍展不开 → v214。**
 
-- **v214：继续播放选集第三根因（2026-11-13）**。用户补充现象（MPV 能展开但无信息 / KS 展不开）→ 两根因：①**`fetchResumeItems` 的 Fields 缺 `SeriesId`** → 服务端继续播放条目 SeriesId=nil → `fetchEpisodesIfNeeded` 拿**单集 Id** 查 `Shows/{单集Id}/Episodes` 必失败（KS 展不开+MPV 无封面信息）；修=Fields 加 SeriesId + 自拉时 SeriesId 缺失先补查单集元数据（`Users/{uid}/Items?Ids=`）。②**MPV 视图 `compatEpisodes` 是 `@State(initialValue:)` 首建锁死**——MPV 视图先建（compat 空）、容器 `fetchEpisodesIfNeeded` 完成后 body 重算传入新值**被 State 忽略**；修=**改 let**（只读数据每次容器重算实时传入）。③继续播放选集链路全景诊断日志：容器引擎快照（type/nativeGUID/SeriesId）/分集自拉每一步/MPV init 数据源计数/KS+MPV 展开动作与拦截原因/换集请求——9999 全落盘，再复现必可定位。**通用教训：①Jellyfin 兼容层 Episode 的 SeriesId 需要 Fields 显式请求；②`@State(initialValue:)` 是首建快照，父视图后续传入的新值会被忽略——容器异步拉取后才渲染的子视图数据必须用 let 直传。**
+- **v214：继续播放选集第三根因（2026-11-13）**。用户补充现象（MPV 能展开但无信息 / KS 展不开）→ 两根因：①**`fetchResumeItems` 的 Fields 缺 `SeriesId`** → 服务端继续播放条目 SeriesId=nil → `fetchEpisodesIfNeeded` 拿**单集 Id** 查 `Shows/{单集Id}/Episodes` 必失败（KS 展不开+MPV 无封面信息）；修=Fields 加 SeriesId + 自拉时 SeriesId 缺失先补查单集元数据。②**MPV 视图 `compatEpisodes` 是 `@State(initialValue:)` 首建锁死**——容器拉取完成后传入的新值被 State 忽略；修=**改 let**。③继续播放选集链路全景诊断日志（容器快照/分集自拉每步/MPV init/展开动作/换集）落 9999。**通用教训：①兼容层 Episode 的 SeriesId 需要 Fields 显式请求；②`@State(initialValue:)` 是首建快照，父视图后续传入的新值会被忽略——容器异步拉取后才渲染的子视图数据必须用 let 直传。**真机日志实锤（v214）：SeriesId 已有值 ✓、原生分集=12 ✓（v213 补拉生效）、`分集自拉(Shows/Episodes)失败: 未能读取数据，因为数据缺失`、`Items 兜底: 0 集`、`KS选集条展不开: allEpisodes 为空` → v215。**
+
+- **v215：继续播放选集第四根因（2026-11-13，日志+直探双实锤）**。9999 日志错误原文=`分集自拉(Shows/Episodes)失败: 未能读取数据，因为数据缺失`（URLSession 空 body 的 JSONDecoder 报错）。服务端直探（test 账号 compat token，`_tmp/probe_compat_shows.ps1`）：**`Shows/{sid}/Episodes?UserId`（无 SeasonId）→ HTTP 200 body=`null`（len=4）**；`Shows/{sid}/Seasons?UserId` → 1 季（a3ca636a…）；**`Episodes?UserId&SeasonId={季}` → 12 集**；`Users/{uid}/Items?ParentId={剧}&Recursive=true` → **0 集**（兼容层不支持）。修=`fetchEpisodesIfNeeded` 对齐详情页 loadEpisodes：**Seasons 季列表 → 逐季带 SeasonId 拉 Episodes 拼接**（多季剧全覆盖），Items 兜底保留。**附带修正：`parent_guid` 实测=季级 guid**（单季剧看起来像剧级；跳过配置粒度=季级，同季共享）。**通用教训：兼容层 `Shows/Episodes` 必须带 `SeasonId`，不带返回 `null` 而非报错——异常必须读日志原文，`data couldn't be read because it is missing` = 空 body 解码。**
 
 ---
 

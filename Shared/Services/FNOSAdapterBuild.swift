@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v214"
+    static let version = "v215"
 
     /// 本版主要变更摘要
-    static let changes = "v214:继续播放选集第三根因修复(用户补充:MPV 能展开但无信息,KS 展不开)。两根因:①fetchResumeItems 的 Fields 缺 SeriesId→服务端继续播放条目 SeriesId=nil→分集自拉用单集 Id 查 Shows/Episodes 必失败(KS 展不开+MPV 无信息);修=Fields 加 SeriesId+自拉时 SeriesId 缺失先补查单集元数据;②MPV 视图 compatEpisodes 是 @State(initialValue:) 首建锁死,容器后拉到的分集永远传不进(继续播放入口 MPV 先建/compat 空/拉取完成后无法更新);修=改 let 每次容器重算实时传入。另:继续播放选集链路全景诊断日志(容器引擎快照/分集自拉每步/MPV init 数据源/KS+MPV 展开动作/换集请求)落 9999。"
+    static let changes = "v215:继续播放选集第四根因(9999 日志实锤+服务端直探验证)。v214 日志显示分集自拉(Shows/Episodes)失败「未能读取数据,因为数据缺失」——兼容层 Shows/{sid}/Episodes 不带 SeasonId 时 HTTP 200 但 body=null(len=4),JSONDecoder 对 null 报此错;test 账号直探验证:带 SeasonId 则返回完整分集(12 集)。修=对齐详情页 loadEpisodes:先 Shows/{sid}/Seasons 拿季列表,再逐季带 SeasonId 拉 Episodes 拼接(多季剧全覆盖),Items 兜底保留(实测 0 集无害)。附:兼容层 Episode 的 SeriesId 需 Fields 显式请求(v214 已修);parent_guid 实测为季级 guid(单季剧=剧级效果)。"
 }

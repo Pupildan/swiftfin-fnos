@@ -1646,17 +1646,16 @@ struct FNOSPlayerContainerView: View {
         didFetchEpisodes = true
         FNOSDiag.shared.add("分集自拉启动: id=\(item.Id.prefix(8)) SeriesId=\(item.SeriesId?.prefix(8) ?? "nil") SeriesName=\(item.SeriesName ?? "nil")")
 
-        // SeriesId 缺失（Resume/海报墙查询 Fields 未带）→ 补查一次单集元数据
+        // SeriesId 缺失（Resume/海报墙查询 Fields 未带）→ 补查一次单集元数据（单条端点最稳）
         var seriesId = item.SeriesId
         if (seriesId ?? "").isEmpty {
             do {
                 let data = try await client.get(
-                    path: "Users/\(userID)/Items",
-                    query: ["Ids": item.Id, "Fields": "SeriesId,SeriesName"]
+                    path: "Users/\(userID)/Items/\(item.Id)",
+                    query: ["Fields": "SeriesId,SeriesName"]
                 )
-                if let full = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items.first {
-                    seriesId = full.SeriesId
-                }
+                let full = try JSONDecoder().decode(FNOSItem.self, from: data)
+                seriesId = full.SeriesId
                 FNOSDiag.shared.add("分集自拉补查 SeriesId: \(seriesId?.prefix(8) ?? "仍为 nil")")
             } catch {
                 FNOSDiag.shared.add("分集自拉补查失败: \(error.localizedDescription)")
@@ -1670,19 +1669,35 @@ struct FNOSPlayerContainerView: View {
         let fields = "Overview,RunTimeTicks,OfficialRating,ParentIndexNumber,IndexNumber,PremiereDate,SeriesName"
 
         var all: [FNOSItem] = []
-        // 端点 B：全剧集（带 UserId）
+        // v215: 兼容层 `Shows/{sid}/Episodes` **不带 SeasonId 时返回 null**（实测 HTTP 200
+        // body=len=4），JSONDecoder 对 null 报「数据缺失」——必须与详情页 loadEpisodes 同款：
+        // 先拿季列表（Shows/{sid}/Seasons），再逐季带 SeasonId 拉分集。
         do {
             let data = try await client.get(
-                path: "Shows/\(sid)/Episodes",
-                query: ["UserId": userID, "Fields": fields]
+                path: "Shows/\(sid)/Seasons",
+                query: ["UserId": userID]
             )
-            all = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items
-            FNOSDiag.shared.add("分集自拉(Shows/Episodes): \(all.count) 集")
+            let seasons = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: data).Items
+            FNOSDiag.shared.add("分集自拉季列表: \(seasons.count) 季")
+            for season in seasons {
+                if Task.isCancelled { return }
+                do {
+                    let epData = try await client.get(
+                        path: "Shows/\(sid)/Episodes",
+                        query: ["UserId": userID, "SeasonId": season.Id, "Fields": fields]
+                    )
+                    let list = try JSONDecoder().decode(FNOSItemsEnvelope.self, from: epData).Items
+                    FNOSDiag.shared.add("分集自拉季 \(season.Id.prefix(8)): \(list.count) 集")
+                    all.append(contentsOf: list)
+                } catch {
+                    FNOSDiag.shared.add("分集自拉季 \(season.Id.prefix(8)) 失败: \(error.localizedDescription)")
+                }
+            }
         } catch {
-            FNOSDiag.shared.add("分集自拉(Shows/Episodes)失败: \(error.localizedDescription)")
+            FNOSDiag.shared.add("分集自拉季列表失败: \(error.localizedDescription)")
         }
 
-        // 端点 C：通用条目查询兜底
+        // 端点 C：通用条目查询兜底（实测兼容层对该查询返回 0 集，保留无害）
         if all.isEmpty {
             do {
                 let data = try await client.get(

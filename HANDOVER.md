@@ -2,7 +2,7 @@
 
 > 仓库：`Pupildan/swiftfin-fnos`（GitHub 私有仓，CI 构建 unsigned ipa）
 > 本地工作区：`C:\Users\Admin\WorkBuddy\fndanmu-tvos\build-package\swiftfin-fnos`
-> 当前版本：**v205**（MPV SDR 全链路定稿：hdrPolicy/displayMatching/sdrOutput 三项已定案，弹幕颜色修复 ✓；含官方 searchable 搜索、KS 滑块触摸滑动修复、屏保双保险、MPV 与 KS 1:1 对齐），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
+> 当前版本：**v206**（🆕跳过片头片尾：服务端配置多端同步，独立设置面板；前情=v205 MPV SDR 全链路定稿：hdrPolicy/displayMatching/sdrOutput 三项已定案，弹幕颜色修复 ✓；含官方 searchable 搜索、KS 滑块触摸滑动修复、屏保双保险、MPV 与 KS 1:1 对齐），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
 > 交付物命名规则：`output/Swiftfin-FNOS-tvos-unsigned-vXX.ipa`（32MB 左右）
 
 ---
@@ -32,6 +32,8 @@ v130 我为了修「KS 轻微左右抖 + mpv 原地抖后重载」，把小漂�
 
 - **v167-v187：详情页评论/人物弹窗 + 播放器弹幕渲染重构 + 内嵌字幕（2026-11-07~09 增量，详见文末「评论弹窗·弹幕渲染·播放器」章节）**。关键节点：v168 frodo 签名缺 `/api/v2` 修复（celebrities/reviews/photos 三通道静默 400，一个根因三症状）；v169-v171 hero 弹幕三次重构（TimelineView 逐帧=闪烁 → .position 布局=抖动 → 双拷贝 marquee+精确测宽定稿）；v172/v176/v178/v181 分区 `.focusable()` 与 `.card` 灰底反复（真根因是入库按钮 `.disabled`，v180 实锤）；v180 人物弹窗 + 入库按钮移除 `.disabled`；v183 聚焦白块真修（`FNOSBareButtonStyle`，v76 已知坑重踩）；v184 评论弹窗段落分行 + 删调试区 + 自动跳片头片尾（play_config）；v185 内嵌字幕切换 + 诊断埋点；v186 内嵌字幕渲染层 + 换集面板重做 + 弹层玻璃化（用户要求回滚，v187 仅保留字幕渲染/图标/弹层标题）。
 
+- **v206：跳过片头片尾服务端化 + 独立设置面板（2026-11-12~13）**。协议逆向实锤（fntv-electron Go 代理 + 飞牛 Web JS 互证）：写入端点 `POST /v/api/v1/play/setConfigByItem`，body `{guid: parent_guid, skip_opening, skip_ending}`，挂剧集级 parent_guid；**skip_ending 语义=距结尾剩余秒数**（非绝对时间，v184 误判已修正为 `duration - skip_ending`）；新文件 `FNOSSkipSettingsSheet.swift`（两滑块 0~600s 玻璃面板，复刻弹幕设置）+ KS/MPV 双接线（`tv.inset.filled` 按钮 + overlay + 守卫链 + 0.5s 防抖推服务端 + 切集刷新）；详见 §2.5.1。
+
 ---
 
 ## 一、项目架构与核心文件树
@@ -52,8 +54,9 @@ Shared/Views/FNOSRootView.swift          # 根路由：已登录→FNOSMainView�
 Shared/Views/FNOSLoginView.swift         # 登录界面（服务器地址/用户名/密码）
 Shared/Views/FNOSMainView.swift          # 首页：Hero Banner + 媒体库海报墙 + 三行动态挂载推荐行 + 设置面板(刷新/退出/MP入库)
 Shared/Views/FNOSHeroView.swift          # ATV+ 风格全屏 Hero：自绘轮播+5秒预告(AV/KS双通道)+按钮焦点翻页+onHeroFocusChanged上报
-Shared/Views/FNOSPlayerView.swift        # 播放器：KSPlayer 混合引擎 + 自绘控制条 + 弹幕接线（含 FNOSPlayerContainerView）
-Shared/Views/FNOSMPVPlayerView.swift     # mpv 引擎（MPVUI）：DoVi P5/P7 接管 + tone-mapping
+Shared/Views/FNOSPlayerView.swift        # 播放器：KSPlayer 混合引擎 + 自绘控制条 + 弹幕接线（含 FNOSPlayerContainerView；v206 片头片尾按钮/面板宿主/防抖推服务端）
+Shared/Views/FNOSMPVPlayerView.swift     # mpv 引擎（MPVUI）：DoVi P5/P7 接管 + tone-mapping（v206 同款片头片尾接线）
+Shared/Views/FNOSSkipSettingsSheet.swift # v206：片头片尾设置面板（玻璃风格同弹幕设置；改值交宿主即时生效+防抖推服务端，自身不落盘）
 Shared/Views/FNOSTMDBDetailView.swift    # v113：TMDB 详情页(hero布局+入库状态机)
 Shared/Views/FNOSBangumiDetailView.swift # v115：番剧详情页(同款布局+入库)
 Shared/Views/FNOSDoubanDetailView.swift  # v126/v129：豆瓣详情页(同款布局+frodo数据+按标题入库)
@@ -141,7 +144,9 @@ X-Emby-Token: {token}
 
 ### 2.5.1 v206 落地状态（接手必读）
 
-已落地（可编译状态，未 push、未出包）：
+**✅ 已交付**：commit `2a61d46` push main（2026-11-13）→ CI success（run 43255567700）→ `output/Swiftfin-FNOS-tvos-unsigned-v206.ipa`（32.6MB）。**待真机验证**（清单见下）。
+
+落地内容：
 
 | 位置 | 内容 |
 |---|---|
@@ -363,11 +368,13 @@ xcodebuild -project Swiftfin.xcodeproj -scheme "Swiftfin tvOS" \
 - **v186 方案（已回滚）**：进度 tick 读 `subtitleModel.parts`（`text` 是 NSAttributedString，**按字幕原始信息显示、禁加阴影/字号**）叠加 overlay 渲染层；`select(track:)` 后 MEPlayer 置 isSeek 需小 seek 刷新。
 - **MPV 路径**字幕由 mpv 自渲染（v119 tone-mapping 已修），无需处理。
 
-## 自动跳过片头/片尾（未解决——诊断已埋，等真机数据）
-- fnOS `play/info` 原生携带 `play_config.skip_opening`（片头结束秒）/`skip_ending`（片尾开始秒）——形状来自参考项目 fntv-electron types.ts（该项目仅声明类型未消费）。
-- v184 已实现：playInfo 解析 + MediaRange 携带 + KS（resolveReporter 带回 + tick 自动 seek 单次触发）+ MPV（range 直读 + ticker 相对 seek）。
-- **未生效真因未定位**：v185/v186 诊断埋点（play_config 原始内容上报 FNOSDiag）已就位，但诊断日志（output/tvos-client.log，监听器工作正常）**无任何 play_config 行**——用户测试播放时电视上装的包版本存疑（诊断代码 v185 才有）。**装 v187+ 播一集凡人修仙传 → 读日志 → 实锤后修**。
-- 参考项目 fnos_tv_danmu 的跳过时间是本地 SharedPreferences 手动滑条（非服务器下发），仅交互逻辑（READY 时跳片头、tick 判片尾跳下一集）可参考。
+## 自动跳过片头/片尾（✅ v206 已解决——服务端配置 + 独立设置面板，多端同步）
+- fnOS `play/info` 原生携带 `play_config.skip_opening` / `skip_ending`。v206 协议逆向实锤（fntv-electron Go 代理 `api.go:202` 端点 + 飞牛 Web 播放器 JS 消费端语义互证，**勿再猜测**）：
+  - **写入端点**：`POST /v/api/v1/play/setConfigByItem`，body `{"guid": <parent_guid>, "skip_opening": N, "skip_ending": N}`，`code==0` 成功；Web 端改后 50ms 防抖自动保存。
+  - **语义**：`skip_opening`=片头结束**绝对秒**；`skip_ending`=**距结尾剩余秒数**（片尾开始点 = 总时长 − skip_ending）；两值 0~600（0=关闭）；配置挂**剧集级 parent_guid**（多端共享，换客户端无需重设）。
+  - ⚠️ v184 曾把 `skip_ending` 当绝对时间点判 `currentTime >= se`——服务端有值时会在片头结束处就跳片尾；v206 已修正为 `endingStart = 时长 - se`（KS/MPV 两处）。
+- **v206 落地**（详见 §2.5.1）：服务层 `setSkipConfig(parentGUID:skipOpening:skipEnding:)` + `MediaRange.parentGUID`；新文件 `FNOSSkipSettingsSheet.swift`（两滑块玻璃面板，风格复刻弹幕设置）；KS/MPV 控制条新增 `tv.inset.filled` 按钮；改值=本端立即生效 + 0.5s 防抖推服务端（对齐 Web 语义）；MPV 切集刷新 parentGUID 并重置单次触发标记。
+- 真机验证清单在 §2.5.1（设 90/60 → 重进生效 → Web 端可见 → 改 0 关闭 → 连播回归）。
 
 ## 其他新增结论
 - **豆瓣 frodo 签名必须含 /api/v2**（v168）：celebrities/reviews/photos/celebrity 等全部 frodo GET 通道；frodoGet 统一走 frodoGetAny（数组根响应用它）。
@@ -410,8 +417,8 @@ xcodebuild -project Swiftfin.xcodeproj -scheme "Swiftfin tvOS" \
 9. **用户确认已解决、禁止回滚**：KS 滑块触摸滑动（v197）、MPV 屏保（v201 ZStack+ticker）、弹幕颜色（v205 SDR 三件套）、搜索框（v200 官方 searchable）、弹幕设置滑块手感（v193 直连绑定）。
 10. **FNOSDiag 与 FNOSDiagLog 是两条通道**：FNOSDiag=内存环形缓冲+print（设置面板 FNOSDiagView 用）；FNOSDiagLog.send=POST 9999 落盘。播放侧诊断必须走 FNOSDiagLog（v188 已把 FNOSDiag.add 并入）。
 
-### 待解决问题清单（更新于 v205）
-1. 本地手动跳过片头片尾——服务端 play_config skip 值全 null 已定论（客户端无 bug），fnos_tv_danmu 的本地滑条方案（0-600s/部，READY 跳片头+tick 判片尾）待用户拍板
+### 待解决问题清单（更新于 v206）
+1. **片头片尾真机验证**（v206 刚交付，清单见 §2.5.1）：设 90/60 → 重进生效 → Web 端可见 → 改 0 关闭 → 连播回归。
 2. 续播卡第 3+ 张上键无落点（方案 A 落设置按钮失败、binding 方案真机不完美——需新思路）
 3. TMDB infoSection 死代码清理（未被 body 引用）
 4. 直播/MV 行恢复（数据通道已验证，播放层搁置）
@@ -421,9 +428,9 @@ xcodebuild -project Swiftfin.xcodeproj -scheme "Swiftfin tvOS" \
 8. 弹幕极轻微停顿（v174 后残留，需录屏定位）
 
 ### 未来优化方向（按价值排序，未排期）
-1. **本地手动跳过片头片尾**：参考 fnos_tv_danmu 的 SharedPreferences 滑条（0-600s/部），数据结构=按剧集 guid 存 intro/outro 秒数；入口可放弹幕设置或长按进度条
-2. **搜索增强**：搜索历史（UserDefaults 持久化最近 N 条）/拼音首字母匹配/TMDB 海报预载（点进详情页零等待）
-3. **MPV 选集条补缩略图**：compat 层 Shows/{id}/Episodes 有 still 数据，按 guid 映射回填 4 大卡
-4. **弹幕 EDR 渲染**（远期）：若恢复 HDR 直出，弹幕需渲染进扩展线性空间（tvOS SwiftUI Text 无官方路径，需 CoreText/Metal 自绘，工程量大）
-5. **播放器设置持久化面板**：当前弹幕设置即时生效但无全局预览，可加最小化预览条
-6. **续播体验**：第 3+ 张续播卡上键落点；KS/MPV 续播选择窗样式统一复查
+1. **搜索增强**：搜索历史（UserDefaults 持久化最近 N 条）/拼音首字母匹配/TMDB 海报预载（点进详情页零等待）
+2. **MPV 选集条补缩略图**：compat 层 Shows/{id}/Episodes 有 still 数据，按 guid 映射回填 4 大卡
+3. **弹幕 EDR 渲染**（远期）：若恢复 HDR 直出，弹幕需渲染进扩展线性空间（tvOS SwiftUI Text 无官方路径，需 CoreText/Metal 自绘，工程量大）
+4. **播放器设置持久化面板**：当前弹幕设置即时生效但无全局预览，可加最小化预览条
+5. **续播体验**：第 3+ 张续播卡上键落点；KS/MPV 续播选择窗样式统一复查
+6. **片头片尾面板增强**（远期，用户有需求再做）：长按进度条快捷跳过；「本集不再跳」临时禁用

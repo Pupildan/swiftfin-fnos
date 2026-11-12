@@ -365,8 +365,8 @@ struct FNOSMPVPlayerView: View {
                     // v206: 片头片尾设置按钮（与弹幕设置同款功能键列）
                     controlButton(.skipSettings, icon: "tv.inset.filled") {
                         // v208: 打开瞬间立即同步真实位置（与 KS 同款，不等下一个 ticker tick）
-                        skipPanelPos = seconds(player?.position ?? .zero)
-                        skipPanelDur = seconds(player?.duration ?? .zero)
+                        skipPanelPos = seconds(player.position)
+                        skipPanelDur = seconds(player.duration)
                         withAnimation(.easeInOut(duration: 0.22)) {
                             showDanmuSettings = false
                             showAudioSheet = false

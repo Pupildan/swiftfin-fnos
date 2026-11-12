@@ -591,15 +591,27 @@ extension FNOSNativeClient {
     }
 
     /// 已知条目 guid 时直接换直链（播放器内换集用）
+    /// v212: 补拉同剧分集——此前 `episodes: []` 恒空，继续播放入口（nativeItemGUID 直通链路）
+    /// 的 MPV 选集条被 `guard !episodes.isEmpty` 拦死展不开。play/info 的 parent_guid=剧集/季级，
+    /// 先试 season/list 拿第一季，失败则把 parent_guid 直接当季 guid 用（episode/list 对非季
+    /// guid 返回空=无害）。episodeNumber 从分集列表按 guid 反推（选集条「当前集」高亮）。
     func mediaRange(itemGUID: String) async -> MediaRange? {
         let log = DebugLog()
         guard let info = await playInfo(itemGUID: itemGUID, log: log) else { return nil }
+
+        var episodes: [EpisodeRef] = []
+        if let parent = info.parentGUID, !parent.isEmpty {
+            let seasonGUID = (await firstSeasonGUID(tvGuid: parent, log: log)) ?? parent
+            episodes = await episodeRefs(seasonGuid: seasonGuid, log: log)
+        }
+        let episodeNumber = episodes.first { $0.guid == itemGUID }?.number
+
         return MediaRange(
             url: mediaURL(mediaGUID: info.mediaGUID),
             itemGUID: itemGUID,
             mediaGUID: info.mediaGUID,
-            episodeNumber: nil,
-            episodes: [],
+            episodeNumber: episodeNumber,
+            episodes: episodes,
             skipOpening: info.skipOpening,
             skipEnding: info.skipEnding,
             parentGUID: info.parentGUID

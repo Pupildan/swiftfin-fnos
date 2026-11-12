@@ -2,7 +2,7 @@
 
 > 仓库：`Pupildan/swiftfin-fnos`（GitHub 私有仓，CI 构建 unsigned ipa）
 > 本地工作区：`C:\Users\Admin\WorkBuddy\fndanmu-tvos\build-package\swiftfin-fnos`
-> 当前版本：**v212**（🆕继续播放入口选集失效修复：容器自拉分集兜底（allEpisodes，端点同详情页）+ 首页补 onSelectEpisode（pendingPlaybackTarget 关播重开）。v211 真机结论=**MPV 滑动 ✓ 选集卡数据 ✓ 弹幕不卡 ✓（MPV 交互战役闭环）**），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
+> 当前版本：**v213**（🆕继续播放入口选集失效第二根因：nativeItemGUID 直通走 mediaRange(itemGUID:) 其 episodes 恒空 → MPV 选集条拦死；修=用 parent_guid 补拉原生分集（season/list → episode/list）+ 按 guid 反推当前集号。v212 的容器自拉/首页回调继续保留（KS 路径生效）），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
 > 交付物命名规则：`output/Swiftfin-FNOS-tvos-unsigned-vXX.ipa`（32MB 左右）
 
 ---
@@ -45,7 +45,9 @@ v130 我为了修「KS 轻微左右抖 + mpv 原地抖后重载」，把小漂�
 
 - **v211：滑动真根因（window 级手势必败）+ 选集卡强引用字典（2026-11-13，KS 一行不动）**。①**滑动**：v210 挂载正确后仍收不到事件=**window 级手势在 tvOS 上输给系统手势**（UIKit 触摸链中深层视图的手势先识别；KS 桥挂 videoView 深层所以赢，MPV 桥爬根挂 window 根=最浅层永收不到）。修=**FNOSMPVPanHostView 移到 videoSurface ZStack 顶层（isUserInteractionEnabled=true 成 hit-test 终点）**+手势挂宿主自身不再爬根+`shouldRecognizeSimultaneouslyWith true`+**全程诊断日志**（挂载结果/began 三分支/ended+门控快照落 9999）。②**选集卡一直刷新拖卡弹幕**：FNOSAsyncImage 在 LazyHStack 重建时重置 @State 反复重载（v98 教训）+20+ 张 640 宽并发解码。修=**v110 终极方案**：`preloadEpisodeStills()`（展开选集条触发，串行下载→ImageIO `kCGImageSourceShouldCacheImmediately` 后台急切解码→逐张入 `stillImages: [Int: UIImage]` 强引用字典），卡片 `Image(uiImage:)` 直渲染+占位渐变兜底——零重建零闪烁零解码风暴。**通用教训：UIViewRepresentable 挂 UIKit 手势两铁律=①宿主必须可接收触摸且处于 hit-test 链内（isUserInteractionEnabled=false 或挂 window 根都会让手势必败/不触发）②tvOS 上自定义 pan 手势必须挂深层视图（视频层），window 根挂载会被系统手势饿死。****真机验收（v211）：滑动 ✓ 选集卡数据 ✓ 弹幕不卡 ✓（MPV 交互战役闭环）。**
 
-- **v212：继续播放入口选集失效修复（2026-11-13）**。根因=**首页继续播放入口（FNOSMainView fullScreenCover）构造 `FNOSPlayerContainerView` 时未传 `episodes` 与 `onSelectEpisode`**（详情页入口 FNOSItemDetailView 都有传）：KS 选集条被 `guard !episodes.isEmpty` 拦死展不开、KS 换集回调 nil 点了没反应；MPV 虽能展开（原生 range.episodes）但 compatEpisodes 空=无封面信息。修=①**容器自拉分集兜底**：`fetchedEpisodes` @State + `allEpisodes` 计算属性（外部传入优先），`.task { fetchEpisodesIfNeeded() }` 在 episodes 空+是剧集时按详情页同款端点自拉（`Shows/{SeriesId}/Episodes?UserId` → `Users/{uid}/Items?ParentId` 兜底，ParentIndexNumber+IndexNumber 升序），失败静默；容器内 nextEpisode/选集条 ForEach/.down/mpvLayer compatEpisodes 全部改用 allEpisodes——**任何入口自动生效**。②**首页补 onSelectEpisode**：`pendingPlaybackTarget` @State，回调记目标→关播→onDismiss 里重开（详情页 pendingEpisode 同款机制），换集后从头播新集。**通用教训：给 `FNOSPlayerContainerView` 加/改参数时必须核对全部构造点（详情页/首页继续播放/首页直接开播 1224 行）——多入口参数不齐=只有部分入口的功能正常。**
+- **v212：继续播放入口选集失效修复（2026-11-13）**。根因=**首页继续播放入口（FNOSMainView fullScreenCover）构造 `FNOSPlayerContainerView` 时未传 `episodes` 与 `onSelectEpisode`**（详情页入口 FNOSItemDetailView 都有传）：KS 选集条被 `guard !episodes.isEmpty` 拦死展不开、KS 换集回调 nil 点了没反应；MPV 虽能展开（原生 range.episodes）但 compatEpisodes 空=无封面信息。修=①**容器自拉分集兜底**：`fetchedEpisodes` @State + `allEpisodes` 计算属性（外部传入优先），`.task { fetchEpisodesIfNeeded() }` 在 episodes 空+是剧集时按详情页同款端点自拉（`Shows/{SeriesId}/Episodes?UserId` → `Users/{uid}/Items?ParentId` 兜底，ParentIndexNumber+IndexNumber 升序），失败静默；容器内 nextEpisode/选集条 ForEach/.down/mpvLayer compatEpisodes 全部改用 allEpisodes——**任何入口自动生效**。②**首页补 onSelectEpisode**：`pendingPlaybackTarget` @State，回调记目标→关播→onDismiss 里重开（详情页 pendingEpisode 同款机制），换集后从头播新集。首建失败=onSelectEpisode 必须在 seriesID 之前（memberwise 声明序），4971f3c 修正。**真机验收（v212）：仍失效 → 继续播放条目实际走 nativeItemGUID 直通=mediaRange(itemGUID:)，v212 没修到 → v213。**
+
+- **v213：继续播放入口选集失效第二根因（2026-11-13）**。**继续播放条目带 nativePosterURL → openResume 给了 nativeItemGUID → 容器直进 mpvLayer → `mediaRange(itemGUID:)`（换直链专用，`episodes: []` 恒空）→ MPV 选集条 `guard !episodes.isEmpty` 拦死**——这才是用户看到的现象（继续播放入口几乎全走这条 mpv 直链；v212 修的容器 allEpisodes 只喂 compatEpisodes/KS）。修=`mediaRange(itemGUID:)` 用 play/info 的 `parent_guid`（剧集/季级）补拉同剧分集：先 `season/list/{parent}` 拿第一季 guid，失败把 parent_guid 直接当季 guid（`episode/list` 对非季 guid 返回空=无害）；**episodeNumber 从分集列表按 guid 反推**（选集条「当前集」高亮，此前恒 nil）；电影/直播 parent_guid 无季列表=分集空，行为与旧版一致。**通用教训：继续播放条目几乎必然带 nativePosterURL（v95 sys/img 直通字段）→ nativeItemGUID 非空 → MPV 原生直链——这条链路的数据完整度（分集/跳过配置/封面）必须单独核对，容器侧兜底覆盖不到它。**
 
 ---
 

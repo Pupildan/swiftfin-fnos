@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v212"
+    static let version = "v213"
 
     /// 本版主要变更摘要
-    static let changes = "v212:继续播放入口剧集选集失效修复(用户真机反馈)。根因=首页继续播放入口构造播放容器时未传 episodes 和 onSelectEpisode(详情页入口有传):KS 选集条被 guard !episodes.isEmpty 直接拦死展不开,MPV 虽能展开(原生分集)但无封面信息且 KS 换集回调为 nil 点了没反应。修=①容器自拉分集兜底:episodes 为空且是剧集时按详情页同款端点(Shows/{seriesId}/Episodes → Users/{uid}/Items?ParentId 兜底)自拉,allEpisodes 计算属性外部传入优先,所有入口自动生效,失败静默不影响播放;②首页继续播放入口补 onSelectEpisode 回调(pendingPlaybackTarget 关播重开,详情页 pendingEpisode 同款机制),换集后从头播放新集。"
+    static let changes = "v213:继续播放入口选集失效第二根因修复(v212 未命中)。v212 修的是容器 compat/KS 侧,但继续播放条目带 nativePosterURL→nativeItemGUID 直通→走 mediaRange(itemGUID:) 原生链路,该方法 episodes 恒空(换直链专用),MPV 选集条被 guard !episodes.isEmpty 拦死展不开——这才是用户看到的现象(继续播放入口几乎全走这条 mpv 直链)。修=mediaRange(itemGUID:) 用 play/info 的 parent_guid(剧集/季级)补拉同剧分集:先 season/list 拿第一季 guid,失败把 parent_guid 直接当季 guid(episode/list 对非季 guid 返回空=无害);episodeNumber 从分集列表按 guid 反推(选集条当前集高亮);电影/直播 parent_guid 无季列表=分集空,行为与旧版一致。"
 }

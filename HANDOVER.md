@@ -440,20 +440,45 @@ xcodebuild -project Swiftfin.xcodeproj -scheme "Swiftfin tvOS" \
 9. **用户确认已解决、禁止回滚**：KS 滑块触摸滑动（v197）、MPV 屏保（v201 ZStack+ticker）、弹幕颜色（v205 SDR 三件套）、搜索框（v200 官方 searchable）、弹幕设置滑块手感（v193 直连绑定）。
 10. **FNOSDiag 与 FNOSDiagLog 是两条通道**：FNOSDiag=内存环形缓冲+print（设置面板 FNOSDiagView 用）；FNOSDiagLog.send=POST 9999 落盘。播放侧诊断必须走 FNOSDiagLog（v188 已把 FNOSDiag.add 并入）。
 
-### 待解决问题清单（更新于 v207）
-1. **片头片尾 v207 真机验证**（面板已重做：实时位置 + 取当前位置 + ±1s 微调；清单见 §2.5.1）：播剧集到片头结束处 → 开面板确认「当前位置」在走 → 确认键取当前位置做片头 → 回退重播本集验证片头自动跳 → 同法设片尾（确认片尾开始点显示正确）→ 退出重进验证服务端值回读 → Web 端改值 tvOS 生效 → 连播回归。电影场景：面板应显示「仅本次播放生效」（服务端实测无存储位）。
+---
+
+# 继续播放选集战役（v206-v215）——✅ 已闭环（2026-11-13 用户确认修复）
+
+**现象演进与四层根因**（每层修完才暴露下一层——典型的洋葱问题）：
+
+| 版本 | 用户现象 | 根因 | 修法 |
+|---|---|---|---|
+| v212 | 选集失效 | 首页继续播放入口构造容器**未传 episodes/onSelectEpisode**（详情页入口有传）| 容器自拉分集兜底（allEpisodes）+ 首页补回调（关播重开）|
+| v213 | 仍失效 | 继续播放条目带 nativePosterURL→nativeItemGUID→走 `mediaRange(itemGUID:)` 原生直链，**episodes 恒空**（换直链专用）→ MPV 选集条被拦 | 用 play/info 的 parent_guid 补拉原生分集 + 按 guid 反推集号 |
+| v214 | MPV 能展开但无信息；KS 展不开 | ①`fetchResumeItems` Fields 缺 SeriesId → 分集自拉拿单集 Id 查端点必失败；②MPV `compatEpisodes` 是 `@State(initialValue:)` **首建锁死**，容器后拉数据传不进 | Fields 加 SeriesId + 缺失时补查单集元数据；compatEpisodes 改 let |
+| v215 | 依旧 | **兼容层 `Shows/{sid}/Episodes` 不带 SeasonId 返回 `null`**（HTTP 200 body=len=4）→ 解码报「数据缺失」 | 对齐详情页：Seasons 季列表 → 逐季带 SeasonId 拉取拼接 |
+
+**最终数据流**（v215 定稿）：
+- **KS**：容器 `allEpisodes`（外部传入优先，否则 `fetchEpisodesIfNeeded` 自拉=Seasons→逐季 Episodes）+ `onSelectEpisode` 回调（两入口都已接线）
+- **MPV**：选集条数据=`range.episodes`（原生分集，v213 补拉）；封面/标题/简介=`compatEpisodes`（容器 allEpisodes，**let 直传**）；换集=`switchEpisode` 容器内自切
+
+**铁律沉淀**：
+1. **兼容层 Episode 的 `SeriesId` 需要 Fields 显式请求**（Resume/海报墙/详情页查询都要带）。
+2. **兼容层 `Shows/{sid}/Episodes` 必须带 `SeasonId`**，不带返回 `null`（HTTP 200 body=len=4）——`data couldn't be read because it is missing` = 空 body 解码，不是网络错误。
+3. **`@State(initialValue:)` 是首建快照**，父视图后续传入的新值被静默忽略——容器异步拉取后才渲染的子视图数据**必须用 let 直传**。
+4. **`parent_guid` 实测=季级 guid**（单季剧看起来像剧级；跳过配置粒度=季级，同季共享）。
+5. **给 `FNOSPlayerContainerView` 加/改参数必须核对全部构造点**（详情页/首页继续播放/首页直接开播）——多入口参数不齐=只有部分入口功能正常。
+6. **继续播放条目几乎必然带 nativePosterURL？——错**：nativePosterURL 是**原生行（直播/MV）专用 JSON 字段**（小驼峰 key），普通剧集条目没有 → 继续播放剧集**走 KS**。nativeItemGUID 直通链路只服务直播/MV。
+7. **全景诊断日志是终结洋葱问题的唯一手段**：容器入口快照/分集自拉每步/MPV init 计数/展开拦截原因/换集请求——v214 加齐后 v215 一轮定位。同类问题（多入口×多链路×异步数据）**第一天就该上日志**。
+
+### 待解决问题清单（更新于 v215）
+1. **片头片尾 v207 真机验证**（面板已重做：实时位置 + 取当前位置 + ±1s 微调；清单见 §2.5.1）：播剧集到片头结束处 → 开面板确认「当前位置」在走 → 确认键取当前位置做片头 → 回退重播本集验证片头自动跳 → 同法设片尾（确认片尾开始点显示正确）→ 退出重进验证服务端值回读 → Web 端改值 tvOS 生效 → 连播回归。电影场景：面板应显示「仅本次播放生效」（服务端实测无存储位）。**跳过触发链路 v208-v215 多轮真机验证均工作 ✓**
 2. 续播卡第 3+ 张上键无落点（方案 A 落设置按钮失败、binding 方案真机不完美——需新思路）
 3. TMDB infoSection 死代码清理（未被 body 引用）
 4. 直播/MV 行恢复（数据通道已验证，播放层搁置）
 5. 「已在库中」精细化（MP 转移历史端点未探）
 6. 番剧名匹配边界（MP 转存后以 TMDB 名为准）
-7. MPV 选集条缩略图（原生 EpisodeRef 无缩略图=渐变占位，可从 compat 层补拉）
-8. 弹幕极轻微停顿（v174 后残留，需录屏定位）
+7. 弹幕极轻微停顿（v174 后残留，需录屏定位）
 
 ### 未来优化方向（按价值排序，未排期）
 1. **搜索增强**：搜索历史（UserDefaults 持久化最近 N 条）/拼音首字母匹配/TMDB 海报预载（点进详情页零等待）
-2. **MPV 选集条补缩略图**：compat 层 Shows/{id}/Episodes 有 still 数据，按 guid 映射回填 4 大卡
-3. **弹幕 EDR 渲染**（远期）：若恢复 HDR 直出，弹幕需渲染进扩展线性空间（tvOS SwiftUI Text 无官方路径，需 CoreText/Metal 自绘，工程量大）
-4. **播放器设置持久化面板**：当前弹幕设置即时生效但无全局预览，可加最小化预览条
-5. **续播体验**：第 3+ 张续播卡上键落点；KS/MPV 续播选择窗样式统一复查
-6. **片头片尾面板增强**（远期，用户有需求再做）：长按进度条快捷跳过；「本集不再跳」临时禁用
+2. **弹幕 EDR 渲染**（远期）：若恢复 HDR 直出，弹幕需渲染进扩展线性空间（tvOS SwiftUI Text 无官方路径，需 CoreText/Metal 自绘，工程量大）
+3. **播放器设置持久化面板**：当前弹幕设置即时生效但无全局预览，可加最小化预览条
+4. **续播体验**：第 3+ 张续播卡上键落点；KS/MPV 续播选择窗样式统一复查
+5. **片头片尾面板增强**（远期，用户有需求再做）：长按进度条快捷跳过；「本集不再跳」临时禁用
+6. **App 图标缓存刷新工具**（若用户设备仍显示旧图标）：给 imagestack 换名+改 APPICON_NAME 强制系统重建缓存

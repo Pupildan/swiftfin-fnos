@@ -602,7 +602,7 @@ extension FNOSNativeClient {
         var episodes: [EpisodeRef] = []
         if let parent = info.parentGUID, !parent.isEmpty {
             let seasonGUID = (await firstSeasonGUID(tvGuid: parent, log: log)) ?? parent
-            episodes = await episodeRefs(seasonGuid: seasonGuid, log: log)
+            episodes = await episodeRefs(seasonGuid: seasonGUID, log: log)
         }
         let episodeNumber = episodes.first { $0.guid == itemGUID }?.number
 

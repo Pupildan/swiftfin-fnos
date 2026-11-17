@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v215"
+    static let version = "v216"
 
     /// 本版主要变更摘要
-    static let changes = "v215:继续播放选集第四根因(9999 日志实锤+服务端直探验证)。v214 日志显示分集自拉(Shows/Episodes)失败「未能读取数据,因为数据缺失」——兼容层 Shows/{sid}/Episodes 不带 SeasonId 时 HTTP 200 但 body=null(len=4),JSONDecoder 对 null 报此错;test 账号直探验证:带 SeasonId 则返回完整分集(12 集)。修=对齐详情页 loadEpisodes:先 Shows/{sid}/Seasons 拿季列表,再逐季带 SeasonId 拉 Episodes 拼接(多季剧全覆盖),Items 兜底保留(实测 0 集无害)。附:兼容层 Episode 的 SeriesId 需 Fields 显式请求(v214 已修);parent_guid 实测为季级 guid(单季剧=剧级效果)。"
+    static let changes = "v216:App 图标+顶架图按 brandassets 规范重编。上一版图标未生效根因=旧资产踩格式雷(App Store 层 512x512 RGBA 带透明/主屏层 216x216 尺寸错/顶架混用 tv+tv-marketing 四文件结构),actool 对 document errors 只丢图标不 fail CI。本次:图标=Nbeefin 新图(1280x768+400x240 全不透明 RGB,imagestack 双层+纯黑 Back),顶架=新横图去水印(1920x720+2320x720,左上角 AI 生成水印梯度插值修补,底部水印裁切窗口避开),Contents.json 统一为已真机验证的单 universal 模板。"
 }

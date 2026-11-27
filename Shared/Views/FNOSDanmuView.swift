@@ -144,6 +144,7 @@ final class FNOSDanmuEngine: ObservableObject {
         year: Int? = nil
     ) async {
         status = .loading
+        FNOSDiagLog.send("弹幕诊断: 开始加载 title=\(title) series=\(seriesTitle ?? "-") S\(seasonNumber ?? 0)E\(episodeNumber ?? 0) year=\(year ?? 0)")
 
         do {
             let episodeID: Int
@@ -180,6 +181,7 @@ final class FNOSDanmuEngine: ObservableObject {
             anchorWallTime = Date().timeIntervalSinceReferenceDate
             status = .ready
             print("FNOS✅弹幕: 匹配 episodeId=\(episodeID) 共 \(comments.count) 条")
+            FNOSDiagLog.send("弹幕诊断: 加载完成 episodeId=\(episodeID) 共\(comments.count)条")
         } catch {
             print("FNOS❗️弹幕加载失败: \(error)")
             status = .failed(error.localizedDescription)
@@ -245,24 +247,33 @@ final class FNOSDanmuEngine: ObservableObject {
         throw FNOSDirectError("没有找到匹配的弹幕")
     }
 
-    /// 校验 match 返回的剧集确实是请求的那部剧那一集（防错配核心）。
+    /// 校验 match 返回的剧集确实是请求的那部剧那一集。
+    /// v218 放宽：danmu_api 官方 match 已做剧名+季+集精确匹配（isMatched），
+    /// 客户端只需拦「集号明确矛盾」的硬错误——剧名带别名/年份/译名差异一律放行，
+    /// 否则会误杀「两京十五日」这类返回标题带后缀的剧（v217 矫枉过正真机实锤）。
     private static func isEpisodeConsistent(
         _ ref: FNOSDanmuEpisodeRef, seriesTitle: String, episodeNumber: Int, seasonNumber: Int
     ) -> Bool {
         guard ref.episodeId > 0 else { return false }
-        // 剧名：官方返回的 animeTitle 通常带年份/季后缀，做包含匹配即可
+        // 剧名不一致只记诊断日志，不再拒绝
         if let anime = ref.animeTitle, !anime.isEmpty,
            !normalized(anime).contains(normalized(seriesTitle)),
            !normalized(seriesTitle).contains(normalized(anime)) {
-            print("FNOS⚠️弹幕: 拒绝错配（剧名「\(anime)」≠「\(seriesTitle)」）")
-            return false
+            let msg = "弹幕诊断: 剧名写法差异(不拒绝) 请求「\(seriesTitle)」→ 服务「\(anime)」"
+            print("FNOSℹ️\(msg)")
+            FNOSDiagLog.send(msg)
         }
-        // 集号：返回的 episodeTitle 若含数字，必须等于目标集；无数字则信任服务端精确匹配
+        // 集号：仅当返回的 episodeTitle 里明确带数字、且与请求集号矛盾时才拒绝
         if let title = ref.episodeTitle, let extracted = episodeNumberIn(title), extracted != episodeNumber {
-            print("FNOS⚠️弹幕: 拒绝错配（集标题「\(title)」= 第\(extracted)集 ≠ 第\(episodeNumber)集）")
+            let msg = "弹幕诊断: 拒绝错配 集标题「\(title)」=第\(extracted)集 ≠ 请求第\(episodeNumber)集"
+            print("FNOS⚠️\(msg)")
+            FNOSDiagLog.send(msg)
             return false
         }
-        if let epNum = ref.episodeNumber, epNum != episodeNumber { return false }
+        if let epNum = ref.episodeNumber, epNum != episodeNumber {
+            FNOSDiagLog.send("弹幕诊断: 拒绝错配 episodeNumber=\(epNum) ≠ 请求\(episodeNumber)")
+            return false
+        }
         return true
     }
 
@@ -300,13 +311,15 @@ final class FNOSDanmuEngine: ObservableObject {
         try Self.assertOK(response, url: url, data: data)
         let decoded = try Self.decode(FNOSDanmuSearchResult.self, from: data)
 
-        // 优先挑剧名一致的 anime（官方 search 会返回多个同名/近似结果）
+        // 优先挑剧名一致的 anime；v218 起即便没有一致结果也退回全部候选，
+        // 靠下面「集标题数字 / episodeNumber / 序号」三级精确选集，不再因剧名写法差异直接判死。
         let candidates = (decoded.animes ?? []).filter { anime in
             guard let title = anime.animeTitle else { return true }
             return Self.normalized(title).contains(Self.normalized(seriesTitle))
                 || Self.normalized(seriesTitle).contains(Self.normalized(title))
         }
         let pool = candidates.isEmpty ? (decoded.animes ?? []) : candidates
+        FNOSDiagLog.send("弹幕诊断: search「\(seriesTitle)」anime=\(decoded.animes?.count ?? 0) 剧名一致=\(candidates.count) 采用=\(pool.count)")
 
         for anime in pool {
             guard let episodes = anime.episodes, !episodes.isEmpty else { continue }

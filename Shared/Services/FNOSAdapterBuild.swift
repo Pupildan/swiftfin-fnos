@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v217"
+    static let version = "v218"
 
     /// 本版主要变更摘要
-    static let changes = "v217:三大修复。①弹幕匹配按 danmu-api 官方逻辑重写:构造标准文件名(剧名.S01E02.年份.1080p.WEB-DL.mkv)交 POST /api/v2/match 由服务端 extractTitleSeasonEpisode 解析季集,替换旧版自造候选名盲取 matches.first;新增剧名/集号一致性校验(拒绝错配),search/episodes 兜底按官方优先级(标题数字>episodeNumber字段>序号);KS/MPV 两引擎均传季号+年份。②弹幕渲染换 CATextLayer 图层引擎(本机 FNOSKit/Danmaku 移植,每帧只改 position/GPU 合成/CADisplayLink 120Hz),替掉 SwiftUI TimelineView 每帧重建视图树造成的卡顿;设置面板全部 @AppStorage 项(字号/透明度/速度/区域/垂直偏移/隐藏底部)直连引擎 API;时间源仍走 engine anchor 外推,sync 铁律一行未动。③倍速切速瞬间弹幕错位:KS/MPV/状态回调三处 setRate 改用播放器真实时间重建锚点。"
+    static let changes = "v218:v217 真机回归三修。①骨架字:CATextLayer 的 NSAttributedString 不支持负 strokeWidth 的填充语义(只画轮廓)→删除描边属性,纯实心字。②显示区域滑块失效:引擎轨道分配永远从 lane0 找起,弹幕稀疏时全挤在前几条轨道,area 拉大新增轨道用不上→改轮转分配(nextLane 指针),弹幕均匀铺满所有轨道=真正同屏更多(B站逻辑);area/字号/偏移变化时清屏按新轨道重建,调节立刻可见。③弹幕重叠:旧版 speed=(屏宽+字宽)/时长 让长弹幕更快、后发长弹幕追上前面短弹幕→统一速度(屏宽/时长),同轨间隔恒定不追尾。④两京十五日匹配不出:v217 剧名双向包含校验过严误杀别名/后缀剧→放宽为只拦集号明确矛盾(官方 isMatched 已做精确匹配),search 兜底无剧名一致时也退回全部候选按集号选,全链路加 9999 诊断日志。"
 }

@@ -157,18 +157,27 @@ final class FNOSDanmakuRenderEngine {
 
     func updateStyle(_ newStyle: FNOSDanmakuStyle) {
         let hideBottomChanged = newStyle.hideBottom != style.hideBottom
+        // v218: 显示区域/字号变化会改变轨道数与行高——清掉在屏弹幕并按新布局重建，
+        // 让滑块调节「立刻可见」（旧版只重算数组长度，在飞弹幕仍占旧轨道→看似无反应）。
+        let layoutChangedKey = newStyle.areaRatio != style.areaRatio
+            || newStyle.fontSize != style.fontSize
+            || newStyle.offsetY != style.offsetY
         style = newStyle
         container.opacity = isVisible ? style.opacity : 0
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         if hideBottomChanged {
-            // 隐藏底部开关切换：撤掉在屏的底部弹幕，滚动弹幕不动
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
             for danmaku in activeFixed where danmaku.item.kind == .bottom {
                 danmaku.layer.removeFromSuperlayer()
             }
             activeFixed.removeAll { $0.item.kind == .bottom }
-            CATransaction.commit()
         }
+        if layoutChangedKey {
+            for danmaku in activeScroll { danmaku.layer.removeFromSuperlayer() }
+            activeScroll.removeAll(keepingCapacity: true)
+            nextLane = 0
+        }
+        CATransaction.commit()
         layoutChanged()
     }
 
@@ -249,7 +258,9 @@ final class FNOSDanmakuRenderEngine {
     private func spawnScroll(_ item: FNOSDanmakuItem, at t: Double, screenWidth: CGFloat) {
         guard activeScroll.count + activeFixed.count < style.maxOnScreen else { return }
         let width = measureWidth(of: item)
-        let speed = (screenWidth + width) / CGFloat(style.scrollDuration)
+        // v218: 统一速度——所有弹幕 px/s 完全一致（与 B 站/成熟引擎同款）。
+        // 旧版 speed=(屏宽+字宽)/时长 让长弹幕更快，后发的长弹幕会追上前面的短弹幕→重叠。
+        let speed = screenWidth / CGFloat(style.scrollDuration)
         guard let lane = availableLane(at: t) else { return }
         // 下一条要等本条尾部完全进入屏幕并留出 margin
         laneReadyAt[lane] = t + Double((width + style.laneMargin) / speed)
@@ -278,8 +289,20 @@ final class FNOSDanmakuRenderEngine {
                                   speed: 0, spawnTime: t, expireTime: t + style.fixedDuration))
     }
 
+    /// v218: 轮转分配——从上一再用过的轨道之后开始找空位，弹幕均匀铺满所有轨道。
+    /// 旧版永远从 lane 0 找起：弹幕稀疏时全挤在 lane 0~4，显示区域拉大后新增轨道
+    /// 一条用不上=滑块「失效」。轮转后 area 越大同屏弹幕真变多（B 站逻辑），且不缩放已有弹幕。
+    private var nextLane = 0
     private func availableLane(at t: Double) -> Int? {
-        for lane in laneReadyAt.indices where t >= laneReadyAt[lane] { return lane }
+        let count = laneReadyAt.count
+        guard count > 0 else { return nil }
+        for offset in 0..<count {
+            let lane = (nextLane + offset) % count
+            if t >= laneReadyAt[lane] {
+                nextLane = (lane + 1) % count
+                return lane
+            }
+        }
         return nil
     }
 
@@ -333,18 +356,16 @@ final class FNOSDanmakuRenderEngine {
         let color = UIColor(red: CGFloat((item.rgb >> 16) & 0xFF) / 255,
                             green: CGFloat((item.rgb >> 8) & 0xFF) / 255,
                             blue: CGFloat(item.rgb & 0xFF) / 255, alpha: 1)
-        var attrs: [NSAttributedString.Key: Any] = [
+        // v218: 去掉描边。CATextLayer 渲染 NSAttributedString 时不认负 strokeWidth 的
+        // 「填充+描边」语义，只画轮廓 → 骨架字（v217 真机截图实锤）。纯实心字。
+        let attrs: [NSAttributedString.Key: Any] = [
             .font: font, .foregroundColor: color, .paragraphStyle: paragraph
         ]
-        if style.strokeWidth > 0 {
-            attrs[.strokeWidth] = -style.strokeWidth       // 负宽度 = 填充 + 描边
-            attrs[.strokeColor] = UIColor.black.withAlphaComponent(0.85)
-        }
         return NSAttributedString(string: item.text, attributes: attrs)
     }
 
     private func measureWidth(of item: FNOSDanmakuItem) -> CGFloat {
-        ceil(attributedString(for: item).size().width) + style.strokeWidth
+        ceil(attributedString(for: item).size().width)
     }
 
     // MARK: 轨道几何（顶部 110 + offsetY、底部 260 字幕保护区）

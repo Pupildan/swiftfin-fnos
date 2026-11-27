@@ -10,7 +10,7 @@
 //  本引擎的性能设计：
 //  - 每条弹幕一个 CATextLayer，生成时一次性光栅化，之后每帧只改 position.x；
 //  - CATransaction.setDisableActions(true) 关掉隐式动画，主线程零绘制；
-//  - CADisplayLink preferredFrameRateRange 显式请求 60~120Hz（设备自动钳制）；
+//  - CADisplayLink preferredFrameRateRange 锁 60Hz（v219：tvOS 输出帧率不确定，避免不规则回调）；
 //  - 时间源是 FNOSDanmuEngine 的 anchor 外推时钟（sync 铁律原封不动）；
 //  - 开关弹幕只切容器 opacity，时间轴永不暂停 → 关掉再开会无缝接续。
 //
@@ -211,7 +211,10 @@ final class FNOSDanmakuRenderEngine {
         // .common：拖进度条（手势追踪）期间也不掉帧
         link.add(to: .main, forMode: .common)
         if #available(tvOS 15.0, *) {
-            link.preferredFrameRateRange = CAFrameRateRange(minimum: 24, maximum: 120, preferred: 120)
+            // v219: 显式锁 60Hz。tvOS 是否真的在 120Hz 输出不确定（电视支持≠Apple TV 输出），
+            // 在 60Hz 设备上请求 120 可能让 CADisplayLink 回调不规则→视觉卡顿。
+            // 60 是 tvOS 确定稳定支持的帧率；如确认设备跑 120 再改回。
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
         }
         displayLink = link
     }

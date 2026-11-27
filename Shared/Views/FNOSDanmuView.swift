@@ -56,6 +56,9 @@ struct FNOSDanmuEpisodeRef: Decodable {
     let episodeTitle: String?
     /// danmu_api search/episodes 直接给出的集号（有就优先用它校验）
     let episodeNumber: Int?
+    /// v219: 弹幕源站 URL（爱奇艺等）。comment/{episodeId} 首次请求会因
+    /// danmu_api 服务端 decode 端点超时返回 0 条；用此 URL 走 comment?url= 可绕过解析拿到弹幕。
+    let url: String?
 }
 
 private struct FNOSDanmuCommentEnvelope: Decodable {
@@ -147,10 +150,10 @@ final class FNOSDanmuEngine: ObservableObject {
         FNOSDiagLog.send("弹幕诊断: 开始加载 title=\(title) series=\(seriesTitle ?? "-") S\(seasonNumber ?? 0)E\(episodeNumber ?? 0) year=\(year ?? 0)")
 
         do {
-            let episodeID: Int
+            let match: FNOSDanmuEpisodeRef
             let isSeries = (seriesTitle?.isEmpty == false) && episodeNumber != nil
             if isSeries {
-                episodeID = try await matchEpisodeID(
+                match = try await matchEpisodeID(
                     seriesTitle: seriesTitle!,
                     seasonNumber: seasonNumber ?? 1,
                     episodeNumber: episodeNumber!,
@@ -158,9 +161,11 @@ final class FNOSDanmuEngine: ObservableObject {
                     fallbackTitle: title
                 )
             } else {
-                episodeID = try await matchEpisodeID(title: title, year: year)
+                match = try await matchEpisodeID(title: title, year: year)
             }
-            let fetched = try await fetchComments(episodeID: episodeID)
+            let episodeID = match.episodeId
+            // v219: 双路径兜底——comment/{id} 返回 0 条时用匹配返回的源站 URL 再取一次
+            let fetched = try await fetchComments(episodeID: episodeID, sourceURL: match.url)
 
             comments = fetched.sorted { $0.time < $1.time }
             commentCount = comments.count
@@ -208,7 +213,7 @@ final class FNOSDanmuEngine: ObservableObject {
     private func matchEpisodeID(
         seriesTitle: String, seasonNumber: Int, episodeNumber: Int,
         year: Int?, fallbackTitle: String
-    ) async throws -> Int {
+    ) async throws -> FNOSDanmuEpisodeRef {
         let fileName = Self.canonicalFileName(
             title: seriesTitle, season: seasonNumber, episode: episodeNumber, year: year
         )
@@ -218,16 +223,16 @@ final class FNOSDanmuEngine: ObservableObject {
         if let hit = try? await matchViaMatchAPI(fileName: fileName),
            Self.isEpisodeConsistent(hit, seriesTitle: seriesTitle, episodeNumber: episodeNumber,
                                     seasonNumber: seasonNumber) {
-            return hit.episodeId
+            return hit
         }
 
         // ② search/episodes：按官方 findEpisodeByNumber 优先级——
         //    集标题中提取的数字 > episodeNumber 字段 > 数组序号；同时校验剧名
-        if let id = try? await searchEpisodeID(
+        if let ref = try? await searchEpisodeID(
             seriesTitle: seriesTitle, seasonNumber: seasonNumber,
             episodeNumber: episodeNumber, year: year
         ) {
-            return id
+            return ref
         }
 
         // ③ 最后才退单集标题（可能是特别篇/电影式命名），仍走官方 match
@@ -236,13 +241,13 @@ final class FNOSDanmuEngine: ObservableObject {
     }
 
     /// 电影/单集：标准文件名（带年份）→ match → search 兜底。
-    private func matchEpisodeID(title: String, year: Int?) async throws -> Int {
+    private func matchEpisodeID(title: String, year: Int?) async throws -> FNOSDanmuEpisodeRef {
         let fileName = Self.canonicalFileName(title: title, year: year)
         if let hit = try? await matchViaMatchAPI(fileName: fileName) {
-            return hit.episodeId
+            return hit
         }
-        if let id = try? await matchViaSearchAPI(title: title) {
-            return id
+        if let ref = try? await searchEpisodeID(title: title) {
+            return ref
         }
         throw FNOSDirectError("没有找到匹配的弹幕")
     }
@@ -300,7 +305,7 @@ final class FNOSDanmuEngine: ObservableObject {
     /// 按剧名搜索所有剧集，再用官方优先级选集（标题数字 > episodeNumber > 序号）。
     private func searchEpisodeID(
         seriesTitle: String, seasonNumber: Int, episodeNumber: Int, year: Int?
-    ) async throws -> Int? {
+    ) async throws -> FNOSDanmuEpisodeRef? {
         let encoded = seriesTitle.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? seriesTitle
         guard let url = URL(string: "\(Self.defaultBaseURL)/api/v2/search/episodes?anime=\(encoded)") else {
             throw FNOSDirectError("弹幕搜索 URL 非法")
@@ -329,18 +334,18 @@ final class FNOSDanmuEngine: ObservableObject {
                 return Self.episodeNumberIn(t) == episodeNumber
             }) {
                 print("FNOS✅弹幕 search 命中(标题): \(hit.episodeTitle ?? "?")")
-                return hit.episodeId
+                return hit
             }
             // 2) 结构化 episodeNumber 字段
             if let hit = episodes.first(where: { $0.episodeNumber == episodeNumber }) {
                 print("FNOS✅弹幕 search 命中(字段): \(hit.episodeTitle ?? "?")")
-                return hit.episodeId
+                return hit
             }
             // 3) 数组序号兜底（danmu_api 官方最后一级策略）
             if episodes.count >= episodeNumber {
                 let hit = episodes[episodeNumber - 1]
                 print("FNOS✅弹幕 search 命中(序号): \(hit.episodeTitle ?? "?")")
-                return hit.episodeId
+                return hit
             }
         }
         return nil
@@ -367,7 +372,7 @@ final class FNOSDanmuEngine: ObservableObject {
         return nil
     }
 
-    private func matchViaSearchAPI(title: String) async throws -> Int? {
+    private func matchViaSearchAPI(title: String) async throws -> FNOSDanmuEpisodeRef? {
         let encoded = title.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? title
         guard let url = URL(string: "\(Self.defaultBaseURL)/api/v2/search/episodes?anime=\(encoded)") else {
             throw FNOSDirectError("弹幕搜索 URL 非法")
@@ -382,18 +387,40 @@ final class FNOSDanmuEngine: ObservableObject {
             return nil
         }
         print("FNOSℹ️弹幕 search 命中: \(anime.animeTitle ?? "?") / \(episode.episodeTitle ?? "?")")
-        return episode.episodeId
+        return episode
     }
 
-    private func fetchComments(episodeID: Int) async throws -> [FNOSDanmuComment] {
-        guard let url = URL(string: "\(Self.defaultBaseURL)/api/v2/comment/\(episodeID)?withRelated=true&chConvert=1") else {
+    private func fetchCommentEnvelope(path: String) async throws -> FNOSDanmuCommentEnvelope {
+        guard let url = URL(string: Self.defaultBaseURL + path) else {
             throw FNOSDirectError("弹幕评论 URL 非法")
         }
         var request = URLRequest(url: url)
-        request.timeoutInterval = 30
+        request.timeoutInterval = 40
         let (data, response) = try await URLSession.shared.data(for: request)
         try Self.assertOK(response, url: url, data: data)
-        let decoded = try Self.decode(FNOSDanmuCommentEnvelope.self, from: data)
+        return try Self.decode(FNOSDanmuCommentEnvelope.self, from: data)
+    }
+
+    /// v219: 双路径取弹幕。
+    /// 主路径 comment/{episodeId}：danmu_api 靠 episodeId 反查源站 URL 时，爱奇艺
+    /// decode 端点（modeCode=intl）会超时→返回 0 条（两京十五日实锤）。
+    /// 兜底 comment?url=<匹配返回的源站URL> 直接用 URL 取，绕过 decode→实测 16384 条。
+    private func fetchComments(episodeID: Int, sourceURL: String?) async throws -> [FNOSDanmuComment] {
+        var decoded = try await fetchCommentEnvelope(
+            path: "/api/v2/comment/\(episodeID)?withRelated=true&chConvert=1"
+        )
+        if (decoded.comments?.isEmpty ?? true), let sourceURL, !sourceURL.isEmpty {
+            let encoded = sourceURL.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? sourceURL
+            FNOSDiagLog.send("弹幕诊断: comment/\(episodeID)=0条，兜底 comment?url=\(sourceURL)")
+            do {
+                let fallback = try await fetchCommentEnvelope(
+                    path: "/api/v2/comment?url=\(encoded)&format=json"
+                )
+                if !(fallback.comments?.isEmpty ?? true) { decoded = fallback }
+            } catch {
+                FNOSDiagLog.send("弹幕诊断: URL兜底失败 \(error.localizedDescription)")
+            }
+        }
 
         var result: [FNOSDanmuComment] = []
         var colorSamples: [UInt32] = []

@@ -236,8 +236,8 @@ final class FNOSDanmuEngine: ObservableObject {
     /// 电影/单集：标准文件名（带年份）→ match → search 兜底。
     private func matchEpisodeID(title: String, year: Int?) async throws -> Int {
         let fileName = Self.canonicalFileName(title: title, year: year)
-        if let id = try? await matchViaMatchAPI(fileName: fileName) {
-            return id
+        if let hit = try? await matchViaMatchAPI(fileName: fileName) {
+            return hit.episodeId
         }
         if let id = try? await matchViaSearchAPI(title: title) {
             return id

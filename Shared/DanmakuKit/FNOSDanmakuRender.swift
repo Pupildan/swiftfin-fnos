@@ -1,27 +1,24 @@
 //
 //  FNOSDanmakuRender.swift
-//  飞牛影视 tvOS —— 弹幕渲染引擎（v221：修复 v220 发射即清屏死循环）
+//  飞牛影视 tvOS —— 弹幕渲染引擎（v222：CATextLayer 内容 + CAAnimation 移动）
 //
 //  来源：ATV-Bilibili-demo (yichengchen) 内置 DanmakuKit 的成熟方案 + 本机 FNOSKit。
 //
-//  v220 致命 bug（弹幕完全不显示的根因）：
-//  弹幕 cell 直接 addSubview 到宿主自身 → UIKit 的 addSubview 触发宿主
-//  setNeedsLayout → layoutSubviews → layoutChanged() → clearAll()。
-//  发射与清屏互相打架 = 弹幕刚加上去就被删，屏幕永远空白。
-//  （v219 用 addSublayer 加到普通 CALayer 上，没有这个坑——改 UIView 时踩了。）
+//  版本历史教训：
+//  - v217-v219：CADisplayLink 主线程每帧改 position.x → 主线程被占用就掉帧卡顿。
+//  - v220：改 UIView cell + 自定义异步光栅化 layer + CABasicAnimation，
+//    但 addSubview 到宿主自身触发 layoutSubviews→clearAll 死循环 → 全不显示（v221 修复）。
+//  - v221：修复死循环后日志证明发射/回收/速度全部正常（在屏16 发射点推进 speed=1.0），
+//    但屏幕仍无像素 → 嫌疑锁定自定义 FNOSDanmakuAsyncLayer 的异步光栅化不上屏。
+//  - v222（本版）：**内容回退到 v219 验证过可见的 CATextLayer**（同步渲染，
+//    v218 教训=纯实心字不加描边），**移动保留 CABasicAnimation**（v220 的丝滑机制）。
+//    弹幕 layer 用 addSublayer 加到独立普通 UIView 容器（不触发布局回调，v219 同款）。
 //
-//  v221 修复：
-//  1. 弹幕 cell 放进独立普通 UIView 容器 danmakuContainer（无 layoutSubviews 重载）；
-//  2. 宿主 layoutSubviews 只在尺寸真正变化时才重建轨道（控制条显隐/焦点变化不再清屏）；
-//  3. setRate 值不变时跳过（避免 4Hz 反复重映射 layer 时间轴）；
-//  4. 新增 9999 渲染诊断日志（2s 节流）：在屏数/发射点/速度，不显示时可直接定位。
-//
-//  丝滑机制（继承 v220，DanmakuKit 式）：
+//  丝滑机制（v220/v221 继承）：
 //  1. 每条弹幕发射时挂一个 CABasicAnimation(position.x)，动画由 render server
-//     进程独立插值，**主线程零逐帧位置计算** → 不受主线程负载影响。
-//  2. 播放器周期回调（100/250ms）只负责「到点发射新弹幕」，不再管位置。
+//     进程独立插值，主线程零逐帧位置计算 → 不受主线程负载影响。
+//  2. 播放器周期回调（100/250ms）只负责「到点发射新弹幕」，不管位置。
 //  3. 播放/暂停/倍速用容器 layer.speed（Core Animation 原生时间缩放）。
-//  4. 文本用异步光栅化（CGContext 先 stroke 再 fill），不会出现骨架字。
 //
 //  ⚠️ 不碰 FNOSDanmuEngine.sync/anchor 铁律（v130 教训）——那套只决定「何时发射」。
 //  轨道几何保留项目死规则：顶部 110pt + offsetY，底部 260pt 字幕保护区。
@@ -82,85 +79,36 @@ protocol FNOSDanmakuClock: AnyObject {
     var playbackRate: Double { get }
 }
 
-// MARK: - 异步光栅化 Layer（对标 DanmakuAsyncLayer）
+// MARK: - 文本图层（v222：CATextLayer 同步渲染，v219 真机验证可见）
 
-private final class FNOSDanmakuAsyncLayer: CALayer {
-    var drawText: ((_ ctx: CGContext, _ size: CGSize) -> Void)?
-
-    override init() {
-        super.init()
-        contentsScale = UIScreen.main.scale
-    }
-    override init(layer: Any) { super.init(layer: layer) }
-    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
-
-    override func display() {
-        guard let drawText else { contents = nil; return }
-        let size = bounds.size
-        let scale = contentsScale
-        // 后台线程光栅化，不占主线程
-        DispatchQueue.global(qos: .userInteractive).async {
-            let format = UIGraphicsImageRendererFormat.preferred()
-            format.opaque = false
-            format.scale = scale
-            let renderer = UIGraphicsImageRenderer(size: size, format: format)
-            let image = renderer.image { ctx in
-                drawText(ctx.cgContext, size)
-            }
-            DispatchQueue.main.async { self.contents = image.cgImage }
-        }
-    }
+private func makeDanmakuTextLayer(item: FNOSDanmakuItem, fontSize: CGFloat,
+                                  width: CGFloat, height: CGFloat,
+                                  contentsScale: CGFloat) -> CATextLayer {
+    let layer = CATextLayer()
+    let font = UIFont.boldSystemFont(ofSize: fontSize)
+    let paragraph = NSMutableParagraphStyle()
+    paragraph.lineBreakMode = .byClipping
+    let color = UIColor(red: CGFloat((item.rgb >> 16) & 0xFF) / 255,
+                        green: CGFloat((item.rgb >> 8) & 0xFF) / 255,
+                        blue: CGFloat(item.rgb & 0xFF) / 255, alpha: 1)
+    // v218 教训：CATextLayer 不认「填充+描边」语义（只画轮廓=骨架字）→ 纯实心字
+    let attrs: [NSAttributedString.Key: Any] = [
+        .font: font, .foregroundColor: color, .paragraphStyle: paragraph
+    ]
+    layer.string = NSAttributedString(string: item.text, attributes: attrs)
+    layer.contentsScale = contentsScale
+    layer.isOpaque = false
+    layer.masksToBounds = false
+    layer.backgroundColor = UIColor.clear.cgColor
+    layer.bounds.size = CGSize(width: width, height: height)
+    return layer
 }
 
-// MARK: - 弹幕 Cell（UIView + 异步 layer）
-
-private final class FNOSDanmakuCell: UIView {
-    let item: FNOSDanmakuItem
-    let lane: Int
-    let style: FNOSDanmakuStyle
-    var textWidth: CGFloat = 0
-    /// 媒体时间轴上的发射时刻，用于回收（不依赖墙钟，暂停/倍速都对）
-    var bornAt: Double = 0
-
-    override class var layerClass: AnyClass { FNOSDanmakuAsyncLayer.self }
-
-    init(item: FNOSDanmakuItem, lane: Int, style: FNOSDanmakuStyle, width: CGFloat) {
-        self.item = item
-        self.lane = lane
-        self.style = style
-        self.textWidth = width
-        super.init(frame: CGRect(x: 0, y: 0, width: width, height: style.fontSize * style.lineHeightFactor))
-        backgroundColor = .clear
-        isUserInteractionEnabled = false
-        let asyncLayer = layer as! FNOSDanmakuAsyncLayer
-        asyncLayer.contentsScale = UIScreen.main.scale
-        asyncLayer.drawText = { [weak self] ctx, size in
-            guard let self else { return }
-            self.draw(into: ctx, size: size)
-        }
-        setNeedsDisplay()
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
-
-    /// CGContext 正确画法：先 stroke 描边，再 fill 填充（不会出骨架字）
-    private func draw(into ctx: CGContext, size: CGSize) {
-        let text = NSString(string: item.text)
-        let font = UIFont.boldSystemFont(ofSize: style.fontSize)
-        let textColor = UIColor(
-            red: CGFloat((item.rgb >> 16) & 0xFF) / 255,
-            green: CGFloat((item.rgb >> 8) & 0xFF) / 255,
-            blue: CGFloat(item.rgb & 0xFF) / 255, alpha: 1
-        )
-        ctx.setLineWidth(2.5)
-        ctx.setLineJoin(.round)
-        ctx.setTextDrawingMode(.stroke)
-        NSString(string: item.text).draw(at: .zero, withAttributes: [
-            .font: font, .foregroundColor: UIColor.black.withAlphaComponent(0.85)
-        ])
-        ctx.setTextDrawingMode(.fill)
-        text.draw(at: .zero, withAttributes: [.font: font, .foregroundColor: textColor])
-    }
+private func measureTextWidth(item: FNOSDanmakuItem, fontSize: CGFloat) -> CGFloat {
+    let font = UIFont.boldSystemFont(ofSize: fontSize)
+    let paragraph = NSMutableParagraphStyle()
+    paragraph.lineBreakMode = .byClipping
+    return ceil(NSString(string: item.text).size(withAttributes: [.font: font]).width) + 8
 }
 
 // MARK: - 渲染引擎（CAAnimation 驱动）
@@ -171,9 +119,16 @@ final class FNOSDanmakuRenderEngine {
     weak var clock: FNOSDanmakuClock?
     private let container: UIView
     private var style: FNOSDanmakuStyle
+    var contentsScale: CGFloat = 2
     private var timeline: FNOSDanmakuTimeline?
     private var spawnIndex = 0
-    private var active: [FNOSDanmakuCell] = []
+    /// v222: 在屏弹幕（CATextLayer + 媒体时间轴发射时刻，用于按寿命回收）
+    private struct ActiveCell {
+        let layer: CATextLayer
+        let kind: FNOSDanmakuLaneKind
+        let bornAt: Double
+    }
+    private var active: [ActiveCell] = []
     private var laneReadyAt: [Double] = []
     private var fixedBusyUntil: [Double] = []
     private var nextLane = 0
@@ -202,11 +157,10 @@ final class FNOSDanmakuRenderEngine {
     /// 播放器周期回调调用（100/250ms）——只负责到点发射，不算位置
     func sync(mediaTime: Double) {
         guard let timeline else { return }
-        // v221: 渲染诊断（4Hz 泵 × 8 ≈ 2s 节流）——不显示时能从日志直接看出是
-        // 「没发射」还是「发射了但被清屏」还是「layer.speed=0 冻结」
+        // 渲染诊断（4Hz 泵 × 8 ≈ 2s 节流）
         diagTick += 1
         if diagTick % 8 == 0 {
-            FNOSDiagLog.send("弹幕渲染: 在屏\(active.count) 发射点\(spawnIndex)/\(timeline.items.count) t=\(Int(mediaTime)) lanes=\(laneReadyAt.count) speed=\(container.layer.speed)")
+            FNOSDiagLog.send("弹幕渲染: 在屏\(active.count) 发射点\(spawnIndex)/\(timeline.items.count) t=\(Int(mediaTime)) lanes=\(laneReadyAt.count) speed=\(container.layer.speed) size=\(Int(container.bounds.width))x\(Int(container.bounds.height))")
         }
         if abs(mediaTime - lastTime) > 0.8 {
             clearAll()
@@ -217,15 +171,15 @@ final class FNOSDanmakuRenderEngine {
         emitFrom(mediaTime, backfill: false)
         // 回收：滚动弹幕跑完时长 / 固定弹幕超过停留时长
         let expired = active.filter { cell in
-            let lifespan = cell.item.kind == .scroll ? style.scrollDuration : style.fixedDuration
+            let lifespan = cell.kind == .scroll ? style.scrollDuration : style.fixedDuration
             return mediaTime - cell.bornAt > lifespan + 0.5
         }
         for cell in expired { remove(cell) }
     }
 
-    /// v220: 播放/暂停/倍速——改容器 layer.speed，Core Animation 原生时间缩放，
+    /// 播放/暂停/倍速——改容器 layer.speed，Core Animation 原生时间缩放，
     /// 不用重新计算任何位置，也不会打断正在跑的动画。
-    /// v221: 值不变时跳过——4Hz 泵反复设 speed 会不断重映射 layer 时间轴。
+    /// 值不变时跳过——4Hz 泵反复设 speed 会不断重映射 layer 时间轴。
     func setRate(_ rate: Double) {
         let s = Float(max(0, rate))
         guard container.layer.speed != s else { return }
@@ -249,7 +203,7 @@ final class FNOSDanmakuRenderEngine {
         style = newStyle
         container.alpha = isVisible ? CGFloat(style.opacity) : 0
         if hideKey {
-            for cell in active where cell.item.kind == .bottom { remove(cell) }
+            for cell in active where cell.kind == .bottom { remove(cell) }
         }
         if layoutKey {
             clearAll()
@@ -268,6 +222,7 @@ final class FNOSDanmakuRenderEngine {
 
     private func emitFrom(_ t: Double, backfill: Bool) {
         guard let timeline else { return }
+        guard container.bounds.width > 100 else { return }   // 布局未就绪，防退化几何
         var budget = 50   // 单帧发射上限，防尖峰
         let screenWidth = container.bounds.width
         while spawnIndex < timeline.items.count, budget > 0 {
@@ -287,18 +242,21 @@ final class FNOSDanmakuRenderEngine {
 
     private func shootScroll(_ item: FNOSDanmakuItem, at t: Double, lateness: Double, screenWidth: CGFloat) {
         guard active.count < style.maxOnScreen else { return }
-        guard item.kind != .bottom || !style.hideBottom else { return }
-        let width = measureWidth(item)
+        let width = measureTextWidth(item: item, fontSize: style.fontSize)
         guard let lane = availableLane(at: t) else { return }
         laneReadyAt[lane] = t + Double((width + style.laneMargin) / speed)
 
-        let cell = FNOSDanmakuCell(item: item, lane: lane, style: style, width: width)
-        cell.bornAt = item.time
+        let layer = makeDanmakuTextLayer(item: item, fontSize: style.fontSize,
+                                         width: width, height: laneHeight,
+                                         contentsScale: contentsScale)
         let y = laneCenterY(lane)
         let startX = screenWidth + width / 2 - speed * CGFloat(lateness)
-        cell.center = CGPoint(x: startX, y: y)
-        container.addSubview(cell)
-        active.append(cell)
+        layer.position = CGPoint(x: startX, y: y)
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        container.layer.addSublayer(layer)
+        CATransaction.commit()
+        active.append(ActiveCell(layer: layer, kind: item.kind, bornAt: item.time))
 
         // 剩余路程 = 从 startX 到完全出屏 (x = -width/2)
         let remaining = Double(startX + width / 2)
@@ -311,7 +269,7 @@ final class FNOSDanmakuRenderEngine {
         anim.beginTime = CACurrentMediaTime()
         anim.isRemovedOnCompletion = false
         anim.fillMode = .forwards
-        cell.layer.add(anim, forKey: "fnos.scroll")
+        layer.add(anim, forKey: "fnos.scroll")
     }
 
     private func shootFixed(_ item: FNOSDanmakuItem, at t: Double, lateness: Double) {
@@ -320,12 +278,16 @@ final class FNOSDanmakuRenderEngine {
         guard let lane = fixedBusyUntil.firstIndex(where: { t >= $0 }) else { return }
         fixedBusyUntil[lane] = t + style.fixedDuration
 
-        let width = measureWidth(item)
-        let cell = FNOSDanmakuCell(item: item, lane: lane, style: style, width: width)
-        cell.bornAt = item.time
-        cell.center = CGPoint(x: container.bounds.width / 2, y: fixedCenterY(item.kind))
-        container.addSubview(cell)
-        active.append(cell)
+        let width = measureTextWidth(item: item, fontSize: style.fontSize)
+        let layer = makeDanmakuTextLayer(item: item, fontSize: style.fontSize,
+                                         width: width, height: laneHeight,
+                                         contentsScale: contentsScale)
+        layer.position = CGPoint(x: container.bounds.width / 2, y: fixedCenterY(item.kind))
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        container.layer.addSublayer(layer)
+        CATransaction.commit()
+        active.append(ActiveCell(layer: layer, kind: item.kind, bornAt: item.time))
 
         let remain = max(0.1, style.fixedDuration - lateness)
         let anim = CAKeyframeAnimation(keyPath: "opacity")
@@ -334,20 +296,23 @@ final class FNOSDanmakuRenderEngine {
         anim.duration = remain
         anim.isRemovedOnCompletion = false
         anim.fillMode = .forwards
-        cell.layer.add(anim, forKey: "fnos.fixed")
+        layer.add(anim, forKey: "fnos.fixed")
     }
 
-    private func remove(_ cell: FNOSDanmakuCell) {
+    private func remove(_ cell: ActiveCell) {
         cell.layer.removeAllAnimations()
-        cell.removeFromSuperview()
-        active.removeAll { $0 === cell }
+        cell.layer.removeFromSuperlayer()
+        active.removeAll { $0.layer === cell.layer }
     }
 
     private func clearAll() {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
         for cell in active {
             cell.layer.removeAllAnimations()
-            cell.removeFromSuperview()
+            cell.layer.removeFromSuperlayer()
         }
+        CATransaction.commit()
         active.removeAll(keepingCapacity: true)
         rebuildLanes()
     }
@@ -391,11 +356,6 @@ final class FNOSDanmakuRenderEngine {
                    container.bounds.height - 260)
     }
 
-    private func measureWidth(_ item: FNOSDanmakuItem) -> CGFloat {
-        let font = UIFont.boldSystemFont(ofSize: style.fontSize)
-        return ceil(NSString(string: item.text).size(withAttributes: [.font: font]).width) + 8
-    }
-
     private func currentTime() -> TimeInterval { clock?.danmakuTime ?? lastTime }
 }
 
@@ -403,12 +363,9 @@ final class FNOSDanmakuRenderEngine {
 
 final class FNOSDanmakuHostView: UIView {
     private(set) var engine: FNOSDanmakuRenderEngine!
-    /// v221 修复 v220「弹幕完全不显示」的致命 bug：
-    /// v220 把弹幕 cell 直接 addSubview 到宿主自身，而 UIKit 中 addSubview 会触发
-    /// 宿主 setNeedsLayout → layoutSubviews → layoutChanged() → clearAll()。
-    /// 死循环 = 发射即清屏，屏幕上永远看不到弹幕（v219 用 addSublayer 无此问题）。
-    /// 修复：cell 放进独立普通 UIView 容器（无 layoutSubviews 重载），
-    /// 宿主 layoutSubviews 只在尺寸真正变化时才重建轨道。
+    /// 弹幕容器：独立普通 UIView（无 layoutSubviews 重载）。
+    /// v220 教训：cell 若 addSubview 到宿主自身，addSubview 触发宿主
+    /// layoutSubviews→clearAll 死循环=发射即清屏。
     private let danmakuContainer = UIView()
     private var lastSize: CGSize = .zero
     private var emitter: CADisplayLink?
@@ -424,7 +381,8 @@ final class FNOSDanmakuHostView: UIView {
         danmakuContainer.layer.masksToBounds = false
         addSubview(danmakuContainer)
         engine = FNOSDanmakuRenderEngine(container: danmakuContainer)
-        // v220: 4Hz 低频发射泵——只查「有没有新弹幕到点」，位置由 CAAnimation 负责。
+        engine.contentsScale = traitCollection.displayScale > 0 ? traitCollection.displayScale : 1
+        // 4Hz 低频发射泵——只查「有没有新弹幕到点」，位置由 CAAnimation 负责。
         let link = CADisplayLink(target: self, selector: #selector(emitTick))
         link.add(to: .main, forMode: .common)
         if #available(tvOS 15.0, *) {
@@ -458,6 +416,11 @@ final class FNOSDanmakuHostView: UIView {
         guard bounds.size != lastSize else { return }
         lastSize = bounds.size
         engine.layoutChanged()
+    }
+
+    override func traitCollectionDidChange(_ previous: UITraitCollection?) {
+        super.traitCollectionDidChange(previous)
+        if traitCollection.displayScale > 0 { engine.contentsScale = traitCollection.displayScale }
     }
 }
 
@@ -511,9 +474,4 @@ struct FNOSDanmakuOverlay: UIViewRepresentable {
             self.lastVisible = visible
         }
     }
-}
-
-private extension FNOSDanmakuHostView {
-    func setTimeline(_ timeline: FNOSDanmakuTimeline?) { engine.setTimeline(timeline) }
-    func setVisible(_ visible: Bool) { engine.setVisible(visible) }
 }

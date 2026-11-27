@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v221"
+    static let version = "v222"
 
     /// 本版主要变更摘要
-    static let changes = "v221:修复 v220 弹幕完全不显示的致命 bug——v220 把弹幕 cell 直接 addSubview 到宿主视图自身,而 UIKit 中 addSubview 会触发宿主 setNeedsLayout→layoutSubviews→layoutChanged()→clearAll(),形成「发射即清屏」死循环,弹幕刚加上就被删,屏幕永远空白(v219 用 addSublayer 加到普通 CALayer 上无此坑,v220 改 UIView 时踩了)。修复:①弹幕 cell 移入独立普通 UIView 容器 danmakuContainer(无 layoutSubviews 重载);②宿主 layoutSubviews 只在尺寸真正变化时重建轨道,控制条显隐/焦点变化不再清屏;③setRate 值不变时跳过,避免 4Hz 反复重映射 layer 时间轴;④新增 9999 渲染诊断日志(2s 节流:在屏数/发射点/速度),不显示时可直接定位是没发射、被清屏还是 speed=0 冻结。CAAnimation 丝滑机制原样保留。"
+    static let changes = "v222:修复 v221 弹幕仍不显示——v221 日志证明发射/回收/速度全部正常(在屏16条 发射点推进 speed=1.0)但屏幕无像素,嫌疑锁定 v220 引入的自定义异步光栅化 layer(FNOSDanmakuAsyncLayer 后台渲染 contents 疑似不上屏)。本版内容回退到 v219 真机验证可见的 CATextLayer 同步渲染(v218 教训=纯实心字不加描边,无骨架字),移动保留 CABasicAnimation(v220 丝滑机制:render server 独立插值,主线程零逐帧计算);弹幕 layer 用 addSublayer 加到独立普通 UIView 容器(v219 同款,不触发布局回调);v221 的死循环修复/尺寸守卫/渲染诊断全部保留,诊断行新增容器尺寸字段。"
 }

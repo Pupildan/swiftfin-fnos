@@ -179,7 +179,7 @@ final class FNOSDanmakuRenderEngine {
 
     // MARK: 对外接口（与 FNOSDanmuView 对接）
 
-    func load(timeline: FNOSDanmakuTimeline?) {
+    func setTimeline(_ timeline: FNOSDanmakuTimeline?) {
         clearAll()
         self.timeline = timeline
         spawnIndex = timeline.map { $0.lowerBound(currentTime() + 0.001) } ?? 0
@@ -474,6 +474,6 @@ struct FNOSDanmakuOverlay: UIViewRepresentable {
 }
 
 private extension FNOSDanmakuHostView {
-    func setTimeline(_ timeline: FNOSDanmakuTimeline?) { engine.load(timeline: timeline) }
+    func setTimeline(_ timeline: FNOSDanmakuTimeline?) { engine.setTimeline(timeline) }
     func setVisible(_ visible: Bool) { engine.setVisible(visible) }
 }

@@ -210,7 +210,7 @@ final class FNOSDanmakuRenderEngine {
         }
         if abs(mediaTime - lastTime) > 0.8 {
             clearAll()
-            spawnIndex = timeline!.lowerBound(mediaTime)
+            spawnIndex = timeline.lowerBound(mediaTime)
             emitFrom(mediaTime, backfill: true)
         }
         lastTime = mediaTime

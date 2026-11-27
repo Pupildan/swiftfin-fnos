@@ -2,7 +2,9 @@
 
 > 仓库：`Pupildan/swiftfin-fnos`（GitHub 私有仓，CI 构建 unsigned ipa）
 > 本地工作区：`C:\Users\Admin\WorkBuddy\fndanmu-tvos\build-package\swiftfin-fnos`
-> 当前版本：**v215**（🆕继续播放选集第四根因（日志+服务端直探双实锤）：兼容层 `Shows/{sid}/Episodes` **不带 SeasonId 返回 null**（HTTP 200 body=len=4）→ 分集自拉解码报「数据缺失」；修=对齐详情页：Seasons 季列表→逐季带 SeasonId 拉 Episodes。v214 真机日志确认 SeriesId 已有值（Fields 修复生效）、原生分集=12（v213 补拉生效）、卡点只剩 compat 拉取端点），版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
+> 当前版本：**v217**（🆕三修：①弹幕匹配按 danmu_api 官方逻辑重写（标准文件名 S##E##+year 交服务端解析、剧名/集号一致性校验拒绝错配）②弹幕渲染换 CATextLayer 图层引擎（60-120fps GPU 合成，替掉 SwiftUI 逐帧重建），设置面板全部 @AppStorage 直连引擎 API ③倍速切速瞬间弹幕错位=setRate 改用播放器真实时间重建锚点）。v216=图标重编。v215 及以前的历史见下方版本演进。版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
+>
+> ⚠️ **v217 CI 卡在 GitHub Actions 账户层**：push/dispatch 均秒失败（job 零 step、runner_id=0、日志 blob 不存在，GitHub 官方 status 全绿）→ 判定为私有仓 Actions 分钟数/账单问题，非代码编译错误。代码已 commit 推送（c076967 + 9f6f5bb），待额度恢复后 dispatch 重编即可。
 > 交付物命名规则：`output/Swiftfin-FNOS-tvos-unsigned-vXX.ipa`（32MB 左右）
 
 ---
@@ -50,6 +52,14 @@ v130 我为了修「KS 轻微左右抖 + mpv 原地抖后重载」，把小漂�
 - **v213：继续播放入口选集失效第二根因（2026-11-13）**。**继续播放条目带 nativePosterURL → openResume 给了 nativeItemGUID → 容器直进 mpvLayer → `mediaRange(itemGUID:)`（换直链专用，`episodes: []` 恒空）→ MPV 选集条 `guard !episodes.isEmpty` 拦死**。修=`mediaRange(itemGUID:)` 用 play/info 的 `parent_guid` 补拉同剧分集（`season/list/{parent}` → `episode/list`）+ 按 guid 反推 episodeNumber。**真机验收（v213）：MPV 选集条能展开了 ✓（补拉生效）但「无信息」、KS 仍展不开 → v214。**
 
 - **v214：继续播放选集第三根因（2026-11-13）**。用户补充现象（MPV 能展开但无信息 / KS 展不开）→ 两根因：①**`fetchResumeItems` 的 Fields 缺 `SeriesId`** → 服务端继续播放条目 SeriesId=nil → `fetchEpisodesIfNeeded` 拿**单集 Id** 查 `Shows/{单集Id}/Episodes` 必失败（KS 展不开+MPV 无封面信息）；修=Fields 加 SeriesId + 自拉时 SeriesId 缺失先补查单集元数据。②**MPV 视图 `compatEpisodes` 是 `@State(initialValue:)` 首建锁死**——容器拉取完成后传入的新值被 State 忽略；修=**改 let**。③继续播放选集链路全景诊断日志（容器快照/分集自拉每步/MPV init/展开动作/换集）落 9999。**通用教训：①兼容层 Episode 的 SeriesId 需要 Fields 显式请求；②`@State(initialValue:)` 是首建快照，父视图后续传入的新值会被忽略——容器异步拉取后才渲染的子视图数据必须用 let 直传。**真机日志实锤（v214）：SeriesId 已有值 ✓、原生分集=12 ✓（v213 补拉生效）、`分集自拉(Shows/Episodes)失败: 未能读取数据，因为数据缺失`、`Items 兜底: 0 集`、`KS选集条展不开: allEpisodes 为空` → v215。**
+
+- **v216**：App 图标+顶架图按 brandassets 规范重编（修 actool document errors 导致图标被静默丢弃）。仅图标，无功能改动。
+
+- **v217：弹幕三修（2026-11-27，用户日常使用反馈）**。用户报三 bug：①倍速播放音画不同步 ②弹幕匹配经常错剧集 ③弹幕渲染卡顿。**源码级根因与修法**：
+  - **②错配根因**：旧 `matchEpisodeID` 自造 4 个候选名（`剧名 第N集`/`S01E02`/`EPn`/`0N`）逐个试 match 并盲取 `matches.first`——而 danmu_api 官方 `matchAnime` 是把 `fileName` 交给 `extractTitleSeasonEpisode`（正则 `^(.+?)[.\s]+S(\d+)E(\d+)` + 年份）解析季集后做精确匹配。自造候选里的「第N集」无 S##E##，服务端当成无季集标题搜到同名剧第一集→错配。**修法**：`FNOSDanmuEngine.load` 新增 `seasonNumber/year` 参数（KS/MPV 两处都传 `item.ParentIndexNumber/ProductionYear`），构造官方标准文件名 `剧名.S01E02.年份.1080p.WEB-DL.mkv` 一次 match；新增 `isEpisodeConsistent` 校验返回的 animeTitle 含剧名 + episodeTitle 集号相等（拒绝错配）；search/episodes 兜底按官方 `findEpisodeByNumber` 优先级（标题数字 > episodeNumber 字段 > 数组序号）且先筛剧名一致的 anime。
+  - **③卡顿根因**：旧 `FNOSDanmuView` 用 `TimelineView(.animation) + ForEach(active) + Text.offset`，每帧 SwiftUI 重建整棵视图树（几十条=几十次布局/差分）。**修法**：移植本机 `FNOSKit/Danmaku` 的成熟图层方案到 `Shared/DanmakuKit/FNOSDanmakuRender.swift`——每条弹幕一个 CATextLayer 生成时一次性光栅化，每帧只改 `position.x`，`CATransaction.setDisableActions(true)` 关隐式动画，CADisplayLink preferredFrameRateRange 请求 120Hz（设备钳制），单帧生成上限 80、同屏上限 300。**时间源仍是 `FNOSDanmuEngine.mediaTime(at:)` 的 anchor 外推（`FNOSDanmuRenderClock` 桥接），sync 铁律一行未动**。设置面板 6 项（字号/透明度/速度/区域/垂直偏移/隐藏底部）从 @AppStorage 映射成 `FNOSDanmakuStyle` 直连引擎；速度换算 `scrollDuration = 12/speed`；底部 260pt 字幕保护区保留（laneTop=110+offsetY，laneBottom=min(屏高×area, 屏高−260)）。
+  - **①倍速错位根因**：两套引擎音视频同源不会真错位；问题是弹幕独立外推时钟在切速瞬间用**旧倍速外推值**当新锚点，而播放器 rate 异步生效→100~250ms 错位窗口（KS 路径尤甚，cycleRate 缺切速前对齐）。**修法**：`setRate(_:realTime:)` 新增可选真实时间参数，KS 的 cycleRate/onStateChanged、MPV 的 cycleRate/ticker 共 4 处全部传播放器真实时间（KS=`timemodel.currentTime`，MPV=`seconds(player.position)`）重建锚点。
+  - **未落地/待真机验证**：新渲染引擎的真机流畅度、错配拒绝是否误伤（如 animeTitle 带别名/繁体）、倍速错位是否消除。**CI 状态**：commit c076967+9f6f5bb 已推送，GitHub Actions 秒失败（零 step、runner_id=0、空日志包，官方 status 全绿）=账户层问题非代码，待额度恢复 dispatch 重编。
 
 - **v215：继续播放选集第四根因（2026-11-13，日志+直探双实锤）**。9999 日志错误原文=`分集自拉(Shows/Episodes)失败: 未能读取数据，因为数据缺失`（URLSession 空 body 的 JSONDecoder 报错）。服务端直探（test 账号 compat token，`_tmp/probe_compat_shows.ps1`）：**`Shows/{sid}/Episodes?UserId`（无 SeasonId）→ HTTP 200 body=`null`（len=4）**；`Shows/{sid}/Seasons?UserId` → 1 季（a3ca636a…）；**`Episodes?UserId&SeasonId={季}` → 12 集**；`Users/{uid}/Items?ParentId={剧}&Recursive=true` → **0 集**（兼容层不支持）。修=`fetchEpisodesIfNeeded` 对齐详情页 loadEpisodes：**Seasons 季列表 → 逐季带 SeasonId 拉 Episodes 拼接**（多季剧全覆盖），Items 兜底保留。**附带修正：`parent_guid` 实测=季级 guid**（单季剧看起来像剧级；跳过配置粒度=季级，同季共享）。**通用教训：兼容层 `Shows/Episodes` 必须带 `SeasonId`，不带返回 `null` 而非报错——异常必须读日志原文，`data couldn't be read because it is missing` = 空 body 解码。**
 
@@ -473,7 +483,8 @@ xcodebuild -project Swiftfin.xcodeproj -scheme "Swiftfin tvOS" \
 4. 直播/MV 行恢复（数据通道已验证，播放层搁置）
 5. 「已在库中」精细化（MP 转移历史端点未探）
 6. 番剧名匹配边界（MP 转存后以 TMDB 名为准）
-7. 弹幕极轻微停顿（v174 后残留，需录屏定位）
+7. ~~弹幕极轻微停顿~~ → v217 已换 CATextLayer 图层引擎重构（本机 FNOSKit/Danmaku 成熟方案），待真机验证流畅度；若仍卡先查 FNOSDiagLog 9999 的「弹幕诊断」行 + 录屏
+8. v217 倍速错位/错配修复待真机验收：①0.5/1.5/2.0x 切换瞬间弹幕是否还飘 ②多季同名剧（如「庆余年 第一季/第二季」各第 3 集）是否还错配 ③设置面板 6 项调节是否即时生效（尤其速度/区域/隐藏底部）
 
 ### 未来优化方向（按价值排序，未排期）
 1. **搜索增强**：搜索历史（UserDefaults 持久化最近 N 条）/拼音首字母匹配/TMDB 海报预载（点进详情页零等待）

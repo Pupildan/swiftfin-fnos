@@ -246,7 +246,7 @@ final class FNOSDanmuEngine: ObservableObject {
         if let hit = try? await matchViaMatchAPI(fileName: fileName) {
             return hit
         }
-        if let ref = try? await searchEpisodeID(title: title) {
+        if let ref = try? await matchViaSearchAPI(title: title) {
             return ref
         }
         throw FNOSDirectError("没有找到匹配的弹幕")

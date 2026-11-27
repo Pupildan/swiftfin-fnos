@@ -2,9 +2,9 @@
 
 > 仓库：`Pupildan/swiftfin-fnos`（GitHub 私有仓，CI 构建 unsigned ipa）
 > 本地工作区：`C:\Users\Admin\WorkBuddy\fndanmu-tvos\build-package\swiftfin-fnos`
-> 当前版本：**v217**（🆕三修：①弹幕匹配按 danmu_api 官方逻辑重写（标准文件名 S##E##+year 交服务端解析、剧名/集号一致性校验拒绝错配）②弹幕渲染换 CATextLayer 图层引擎（60-120fps GPU 合成，替掉 SwiftUI 逐帧重建），设置面板全部 @AppStorage 直连引擎 API ③倍速切速瞬间弹幕错位=setRate 改用播放器真实时间重建锚点）。v216=图标重编。v215 及以前的历史见下方版本演进。版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
+> 当前版本：**v218**（🆕v217 真机回归四修：①骨架字=CATextLayer 不支持负 strokeWidth 填充语义→删描边纯实心 ②显示区域滑块失效=轨道分配永远从 lane0 找起→改轮转分配(nextLane)，area/字号/偏移变化清屏重建即时可见 ③弹幕重叠=旧版长弹幕速度更快追尾→统一速度(屏宽/时长) ④「两京十五日」匹配不出=v217 剧名双向包含校验过严误杀别名剧→只拦集号矛盾+search 兜底退回全部候选+全链路 9999 诊断）。v217=弹幕三改（匹配官方化/CATextLayer 渲染/倍速锚点），v216=图标重编。版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
 >
-> ⚠️ **v217 CI 卡在 GitHub Actions 账户层**：push/dispatch 均秒失败（job 零 step、runner_id=0、日志 blob 不存在，GitHub 官方 status 全绿）→ 判定为私有仓 Actions 分钟数/账单问题，非代码编译错误。代码已 commit 推送（c076967 + 9f6f5bb），待额度恢复后 dispatch 重编即可。
+> ⚠️ **仓库已转公开**（2026-11-27）：私有仓 Actions 分钟数耗尽→CI 秒失败（job 零 step、runner_id=0）。转公开后免费无限额度，CI 正常。交付脚本读 token 仍从 `.git/config` 的 remote URL 取。
 > 交付物命名规则：`output/Swiftfin-FNOS-tvos-unsigned-vXX.ipa`（32MB 左右）
 
 ---
@@ -53,6 +53,14 @@ v130 我为了修「KS 轻微左右抖 + mpv 原地抖后重载」，把小漂�
 
 - **v214：继续播放选集第三根因（2026-11-13）**。用户补充现象（MPV 能展开但无信息 / KS 展不开）→ 两根因：①**`fetchResumeItems` 的 Fields 缺 `SeriesId`** → 服务端继续播放条目 SeriesId=nil → `fetchEpisodesIfNeeded` 拿**单集 Id** 查 `Shows/{单集Id}/Episodes` 必失败（KS 展不开+MPV 无封面信息）；修=Fields 加 SeriesId + 自拉时 SeriesId 缺失先补查单集元数据。②**MPV 视图 `compatEpisodes` 是 `@State(initialValue:)` 首建锁死**——容器拉取完成后传入的新值被 State 忽略；修=**改 let**。③继续播放选集链路全景诊断日志（容器快照/分集自拉每步/MPV init/展开动作/换集）落 9999。**通用教训：①兼容层 Episode 的 SeriesId 需要 Fields 显式请求；②`@State(initialValue:)` 是首建快照，父视图后续传入的新值会被忽略——容器异步拉取后才渲染的子视图数据必须用 let 直传。**真机日志实锤（v214）：SeriesId 已有值 ✓、原生分集=12 ✓（v213 补拉生效）、`分集自拉(Shows/Episodes)失败: 未能读取数据，因为数据缺失`、`Items 兜底: 0 集`、`KS选集条展不开: allEpisodes 为空` → v215。**
 
+- **v218：v217 真机回归四修（2026-11-27 用户实测反馈）**。用户测 v217 报：弹幕变骨架字、显示区域滑块失效、部分剧集（两京十五日）匹配不出、弹幕重叠。逐条根因与修法：
+  - **骨架字**：`FNOSDanmakuRender.swift` 的 `attributedString` 用了 `.strokeWidth = -2.5` + `.strokeColor`（想实现「填充+描边」），但 **CATextLayer 渲染 NSAttributedString 时不认负 strokeWidth 的填充语义，只画轮廓**→空心骨架字（截图实锤）。与 v186 内嵌字幕踩过的坑同源。**修=删掉描边属性，纯实心字**；`measureWidth` 同步去掉 `+ strokeWidth`。
+  - **显示区域滑块失效**：引擎轨道数算了（area 0.3→5 轨、0.75→19 轨），但 `availableLane` **永远从 lane 0 找起**，弹幕稀疏时全挤在 lane 0~4，新增轨道一条用不上→滑块看似无反应。**修=轮转分配**（`nextLane` 指针，从上次轨道之后开始扫描，弹幕均匀铺满所有轨道=B 站逻辑，不缩放已有弹幕）；`updateStyle` 检测 area/fontSize/offsetY 变化时清掉在屏滚动弹幕按新轨道重建，调节立刻可见。
+  - **弹幕重叠（追尾）**：旧版 `speed=(屏宽+字宽)/scrollDuration` 让长弹幕更快，后发的长弹幕追上前面短弹幕。**修=统一速度** `speed=屏宽/scrollDuration`，所有弹幕 px/s 一致，同轨间隔恒定（laneReadyAt=(字宽+margin)/speed 仍正确）。
+  - **两京十五日匹配不出**：v217 的 `isEpisodeConsistent` 要求 animeTitle 与剧名双向包含，服务端返回带别名/年份/译名后缀时被判「错配」丢弃；search 兜底 also 过滤剧名不一致 anime→无候选。**修=只拦集号明确矛盾（官方 isMatched 已做精确匹配），剧名差异只记日志不拒绝；search 无剧名一致时退回全部候选按集号三级选；load 全程加 9999 诊断日志**。
+  - **交付**：commit f4837dd，CI run 45981896664 success，`output/Swiftfin-FNOS-tvos-unsigned-v218.ipa`（37.8MB），待真机验收。
+
+- **v217**：弹幕三改（匹配官方化/CATextLayer 渲染/倍速锚点），真机发现上述回归→v218。
 - **v216**：App 图标+顶架图按 brandassets 规范重编（修 actool document errors 导致图标被静默丢弃）。仅图标，无功能改动。
 
 - **v217：弹幕三修（2026-11-27，用户日常使用反馈）**。用户报三 bug：①倍速播放音画不同步 ②弹幕匹配经常错剧集 ③弹幕渲染卡顿。**源码级根因与修法**：

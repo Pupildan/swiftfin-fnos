@@ -2,7 +2,9 @@
 
 > 仓库：`Pupildan/swiftfin-fnos`（GitHub 私有仓，CI 构建 unsigned ipa）
 > 本地工作区：`C:\Users\Admin\WorkBuddy\fndanmu-tvos\build-package\swiftfin-fnos`
-> 当前版本：**v219**（🆕两京十五日弹幕双路径兜底：服务端直探实锤匹配成功 epId=12104 但 danmu_api 国际版 decode 端点超时→comment/{epId} 首取 0 条；comment?url=<源站URL> 绕过 decode 实测 16384 条。修=EpisodeRef 加 url + fetchComments 双路径。另渲染帧率从请求120改锁60。**不动 sync/anchor 铁律——v130 渐进校正灾难教训**）。v218=骨架字/区域/重叠/匹配四修。v217=弹幕三改。版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
+> 当前版本：**v220**（🆕弹幕渲染彻底重写=移植 ATV-Bilibili-demo 的 DanmakuKit CAAnimation 方案：每条弹幕 CABasicAnimation(position.x) 由 render server 进程独立插值，主线程零逐帧位置计算；v217-v219 的 CADisplayLink 主线程每帧改 position.x 是卡顿根源，v219 锁 60Hz 反而更卡。4Hz 发射泵只管到点发射；播放/暂停/倍速用 layer.speed；文本异步光栅化 CGContext 先 stroke 再 fill 根治骨架字。sync/anchor 铁律未动）。v219=两京十五日 URL 兜底。版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
+>
+> 旧版本说明：**v219**（服务端直探实锤匹配成功 epId=12104 但 danmu_api 国际版 decode 端点超时→comment/{epId} 首取 0 条；comment?url=<源站URL> 绕过 decode 实测 16384 条。修=EpisodeRef 加 url + fetchComments 双路径。另渲染帧率从请求120改锁60。**不动 sync/anchor 铁律——v130 渐进校正灾难教训**）。v218=骨架字/区域/重叠/匹配四修。v217=弹幕三改。版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
 >
 > 旧版本说明：**v218**（①骨架字=CATextLayer 不支持负 strokeWidth 填充语义→删描边纯实心 ②显示区域滑块失效=轨道分配永远从 lane0 找起→改轮转分配(nextLane)，area/字号/偏移变化清屏重建即时可见 ③弹幕重叠=旧版长弹幕速度更快追尾→统一速度(屏宽/时长) ④「两京十五日」匹配不出=v217 剧名双向包含校验过严误杀别名剧→只拦集号矛盾+search 兜底退回全部候选+全链路 9999 诊断）。v217=弹幕三改（匹配官方化/CATextLayer 渲染/倍速锚点），v216=图标重编。版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
 >
@@ -54,6 +56,12 @@ v130 我为了修「KS 轻微左右抖 + mpv 原地抖后重载」，把小漂�
 - **v213：继续播放入口选集失效第二根因（2026-11-13）**。**继续播放条目带 nativePosterURL → openResume 给了 nativeItemGUID → 容器直进 mpvLayer → `mediaRange(itemGUID:)`（换直链专用，`episodes: []` 恒空）→ MPV 选集条 `guard !episodes.isEmpty` 拦死**。修=`mediaRange(itemGUID:)` 用 play/info 的 `parent_guid` 补拉同剧分集（`season/list/{parent}` → `episode/list`）+ 按 guid 反推 episodeNumber。**真机验收（v213）：MPV 选集条能展开了 ✓（补拉生效）但「无信息」、KS 仍展不开 → v214。**
 
 - **v214：继续播放选集第三根因（2026-11-13）**。用户补充现象（MPV 能展开但无信息 / KS 展不开）→ 两根因：①**`fetchResumeItems` 的 Fields 缺 `SeriesId`** → 服务端继续播放条目 SeriesId=nil → `fetchEpisodesIfNeeded` 拿**单集 Id** 查 `Shows/{单集Id}/Episodes` 必失败（KS 展不开+MPV 无封面信息）；修=Fields 加 SeriesId + 自拉时 SeriesId 缺失先补查单集元数据。②**MPV 视图 `compatEpisodes` 是 `@State(initialValue:)` 首建锁死**——容器拉取完成后传入的新值被 State 忽略；修=**改 let**。③继续播放选集链路全景诊断日志（容器快照/分集自拉每步/MPV init/展开动作/换集）落 9999。**通用教训：①兼容层 Episode 的 SeriesId 需要 Fields 显式请求；②`@State(initialValue:)` 是首建快照，父视图后续传入的新值会被忽略——容器异步拉取后才渲染的子视图数据必须用 let 直传。**真机日志实锤（v214）：SeriesId 已有值 ✓、原生分集=12 ✓（v213 补拉生效）、`分集自拉(Shows/Episodes)失败: 未能读取数据，因为数据缺失`、`Items 兜底: 0 集`、`KS选集条展不开: allEpisodes 为空` → v215。**
+
+- **v220：弹幕渲染重写——移植 DanmakuKit CAAnimation 方案（2026-11-27 深夜）**。用户测 v219 反馈「弹幕出来了但卡段抖动更严重」，并指定参考 `yichengchen/ATV-Bilibili-demo`。clone 官方仓库读源码（`BilibiliLive/Vendor/DanmakuKit/` + `Component/Player/Plugins/DanmuViewPlugin.swift`），找到丝滑根因：
+  - **旧方案（v217-v219）卡顿根因**：CADisplayLink 在**主线程每帧改 position.x**，主线程被播放器回调/UI/网络占用就掉帧→抖动。v219 把请求 120Hz 改锁 60Hz 反而更卡（回调更不均匀）。
+  - **DanmakuKit 丝滑机制**：①每条弹幕发射时挂 `CABasicAnimation(position.x)`（`DanmakuTrack.addAnimation`），动画在 **render server 进程独立插值**，主线程零逐帧位置计算；②播放器 `addPeriodicTimeObserver(1s)` 只负责「到点发射新弹幕」；③播放/暂停/倍速用 `layer.speed`（Core Animation 原生时间缩放）；④文本 `DanmakuAsyncLayer` 后台 CGContext 光栅化，**先 stroke 再 fill**（根治 v217 骨架字）。
+  - **落地**：重写 `Shared/DanmakuKit/FNOSDanmakuRender.swift`：FNOSDanmakuCell(UIView + 自定义异步 layerClass)、`shootScroll` 挂 CABasicAnimation、`shootFixed` 挂 opacity 动画、`FNOSDanmakuHostView` 内置 4Hz 发射泵（CADisplayLink preferredFrameRateRange=4，只查到点发射）、emitTick 同步 `layer.speed = clock.playbackRate`。**FNOSDanmuEngine.sync/anchor 铁律一行未动**——那套只决定「何时发射」。轨道轮转/字幕保护区/统一速度全部保留。
+  - **交付**：commit f8c4f58（含 build-fix），CI run 46016102147 success，`output/Swiftfin-FNOS-tvos-unsigned-v220.ipa`（37.8MB），待真机验收丝滑度。
 
 - **v219：两京十五日弹幕双路径兜底 + 帧率保守化（2026-11-27 深夜）**。用户质疑「热剧不可能没弹幕」+「别的剧能出弹幕说明不是网络问题」——两个质疑都对，我先前「NAS 网络不通」结论错误，撤回。逐条查证：
   - **服务端直探**：`POST /api/v2/match {fileName:"两京十五日.S01E01..."}` → `isMatched=true, epId=12104, animeTitle=两京十五日(2026)...from iqiyi, url=https://www.iqiyi.com/v_1ewmjgivkm4.html`。匹配完全正确。

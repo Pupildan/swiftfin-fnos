@@ -986,7 +986,9 @@ struct FNOSPlayerContainerView: View {
                 case .paused, .error:
                     danmuEngine.setRate(0)
                 default:
-                    danmuEngine.setRate(Double(coordinator.playbackRate))
+                    // v217: 真实时间重建锚点（与各处 setRate 口径一致）
+                    danmuEngine.setRate(Double(coordinator.playbackRate),
+                                        realTime: Double(coordinator.timemodel.currentTime))
                 }
             }
             .ignoresSafeArea()
@@ -1433,7 +1435,9 @@ struct FNOSPlayerContainerView: View {
         let index = rateOptions.firstIndex(of: coordinator.playbackRate) ?? 1
         let next = rateOptions[(index + 1) % rateOptions.count]
         coordinator.playbackRate = next
-        danmuEngine.setRate(Double(next))
+        // v217: 用播放器真实时间重建弹幕锚点，消除切速瞬间「弹幕先按新倍速跑、
+        // 播放器 rate 异步生效」的错位窗口（旧版用旧倍速外推值当新锚点）
+        danmuEngine.setRate(Double(next), realTime: Double(coordinator.timemodel.currentTime))
         print("FNOSℹ️倍速: \(next)")
         revealControls()
     }
@@ -1769,11 +1773,15 @@ struct FNOSPlayerContainerView: View {
         let title = item.Name ?? "视频"
         let isEpisode = item.type == "Episode"
         let episodeNumber: Int? = isEpisode ? item.IndexNumber : nil
+        let seasonNumber: Int? = isEpisode ? item.ParentIndexNumber : nil
         let serieTitleResolved: String? = isEpisode
             ? ((item.SeriesName?.isEmpty == false ? item.SeriesName : seriesName))
             : nil
         notice = "弹幕匹配中…"
-        await danmuEngine.load(title: title, seriesTitle: serieTitleResolved, episodeNumber: episodeNumber)
+        // v217: 季号/年份传给 danmu_api 官方文件名匹配（S##E## + year 消歧）
+        await danmuEngine.load(title: title, seriesTitle: serieTitleResolved,
+                               seasonNumber: seasonNumber, episodeNumber: episodeNumber,
+                               year: item.ProductionYear)
         switch danmuEngine.status {
         case .ready:
             notice = "弹幕 \(danmuEngine.commentCount) 条" + formatBadge

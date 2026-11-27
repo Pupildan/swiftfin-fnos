@@ -700,7 +700,8 @@ struct FNOSMPVPlayerView: View {
         let index = rateOptions.firstIndex(of: player.playbackRate) ?? 1
         let next = rateOptions[(index + 1) % rateOptions.count]
         player.setPlaybackRate(next)
-        danmu.setRate(player.isPaused ? 0 : next)
+        // v217: 用播放器真实位置重建弹幕锚点，消除切速瞬间的错位窗口
+        danmu.setRate(player.isPaused ? 0 : next, realTime: seconds(player.position))
         bumpActivity()
     }
 
@@ -1048,10 +1049,13 @@ struct FNOSMPVPlayerView: View {
 
     private func loadDanmu() {
         Task { @MainActor in
+            // v217: 季号/年份传官方文件名匹配（S##E## + year 消歧，防错配到别的剧/集）
             await danmu.load(
                 title: item.Name ?? title,
                 seriesTitle: item.SeriesName,
-                episodeNumber: currentNumber ?? item.IndexNumber
+                seasonNumber: item.ParentIndexNumber,
+                episodeNumber: currentNumber ?? item.IndexNumber,
+                year: item.ProductionYear
             )
         }
     }
@@ -1067,7 +1071,8 @@ struct FNOSMPVPlayerView: View {
                 let position = seconds(player.position)
                 danmu.sync(mediaTime: position)
                 // v191 修复: 之前硬编码 1.0——倍速播放时弹幕速度不同步
-                danmu.setRate(player.isPaused ? 0.0 : player.playbackRate)
+                // v217: 传真实位置，避免周期 setRate 用外推值重建锚点带来的抖动
+                danmu.setRate(player.isPaused ? 0.0 : player.playbackRate, realTime: position)
                 // v200: 每 tick 重申禁屏保（250ms 一次）——双保险，即使任何代码路径
                 // 把 isIdleTimerDisabled 重置（如 Group 修饰符分发导致的内核切换残留），
                 // 也在 250ms 内恢复为 true，播放中永不进系统屏保（用户实测两轮未修好）

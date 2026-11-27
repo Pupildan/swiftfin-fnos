@@ -1,9 +1,17 @@
 //
-// Swiftfin is subject to the terms of the Mozilla Public
-// License, v2.0. If a copy of the MPL was not distributed with this
-// file, can be obtained one at https://mozilla.org/MPL/2.0/.
+//  FNOSDanmuView.swift
+//  飞牛影视 tvOS —— 弹幕数据层 + 设置面板接线
 //
-// Copyright (c) 2026 Jellyfin & Jellyfin Contributors
+//  v217 两大改造：
+//  1) 匹配：完全按 danmu_api 官方逻辑——构造标准文件名 `剧名.S01E02.1080p.WEB-DL.mkv`
+//     交给 POST /api/v2/match，服务端 extractTitleSeasonEpisode 解析季/集后做精确匹配。
+//     旧版自造「剧名 第N集 / S01E02 / EPn」逐个试、并盲取 matches.first，是错配根因。
+//  2) 渲染：换用 Shared/DanmakuKit/FNOSDanmakuRender.swift 的 CATextLayer 图层引擎
+//     （每帧只改 position、GPU 合成），替掉 SwiftUI TimelineView 每帧重建的卡顿方案。
+//
+//  ⚠️🚨 sync 铁律：FNOSDanmuEngine.sync(mediaTime:) 里 anchorMediaTime = mediaTime
+//  是 v130 灾难回归后真机验证的唯一正确做法，v217 一行未动。新渲染引擎的时间源
+//  就是 engine.mediaTime(at:)（同一 anchor 外推），不是另起一套时钟。
 //
 
 import AVFoundation
@@ -17,12 +25,14 @@ struct FNOSDanmuComment {
     /// 视频内时间（秒）
     let time: Double
     let text: String
-    /// 1=滚动 4=底部 5=顶部（dandanplay 约定）
+    /// 1~3=滚动 4=底部 5=顶部（dandanplay 约定）
     let mode: Int
     let color: Color
+    /// dandanplay p 字段的原始十进制 RGB（新渲染引擎直接用）
+    let rgb: UInt32
 }
 
-// MARK: - 服务端 JSON（dandanplay 兼容 API，已实测响应形状）
+// MARK: - 服务端 JSON（danmu_api / dandanplay 兼容协议）
 
 private struct FNOSDanmuMatchResult: Decodable {
     let isMatched: Bool?
@@ -41,8 +51,11 @@ struct FNOSDanmuAnime: Decodable {
 
 struct FNOSDanmuEpisodeRef: Decodable {
     let episodeId: Int
+    let animeId: Int?
     let animeTitle: String?
     let episodeTitle: String?
+    /// danmu_api search/episodes 直接给出的集号（有就优先用它校验）
+    let episodeNumber: Int?
 }
 
 private struct FNOSDanmuCommentEnvelope: Decodable {
@@ -56,7 +69,20 @@ private struct FNOSDanmuRawComment: Decodable {
     let m: String?
 }
 
-// MARK: - 弹幕引擎（时钟绑定 AVPlayer，5 轨道防重叠）
+// MARK: - 渲染时钟桥接（复用引擎 anchor 外推，不碰 sync）
+
+/// 把 FNOSDanmuEngine 的 anchor 外推时间暴露给图层引擎。
+/// 每帧读同一个外推值 → 播放/暂停/倍速/seek 全部自然生效。
+final class FNOSDanmuRenderClock: FNOSDanmakuClock {
+    weak var engine: FNOSDanmuEngine?
+    init(engine: FNOSDanmuEngine) { self.engine = engine }
+    var danmakuTime: TimeInterval {
+        guard let engine else { return 0 }
+        return engine.mediaTime(at: Date())
+    }
+}
+
+// MARK: - 弹幕引擎（匹配 / 拉取 / 时间轴锚点）
 
 @MainActor
 final class FNOSDanmuEngine: ObservableObject {
@@ -64,35 +90,10 @@ final class FNOSDanmuEngine: ObservableObject {
     /// 用户自建弹幕服务（含 Key）
     static let defaultBaseURL = "http://192.168.10.120:9321/199780jjj"
 
-    /// v190: 泳道池上限（laneLastEntry 定长，显示区域变化无需重排）
-    private let maxLanePool = 20
-    /// v190: 滚动泳道数由「显示区域」设置动态决定（安卓 TV 弹幕客户端同款语义：
-    /// 区域 = 弹幕可占屏高比例，默认 30% ≈ 旧版 5 泳道密度）。泳道高 = 字号*1.4、
-    /// 顶部基准 110 与渲染层（FNOSDanmuView）完全一致；屏高按 tvOS 固定 1080 坐标系取值。
-    private var laneCount: Int {
-        let stored = UserDefaults.standard.double(forKey: "fnos.danmu.area")
-        let area = stored > 0.05 ? min(max(stored, 0.2), 1.0) : 0.3
-        let storedFS = UserDefaults.standard.double(forKey: "fnos.danmu.fontSize")
-        let laneH = (storedFS > 8 ? storedFS : 26) * 1.4
-        // v190: 字幕保护区——泳道下限封顶 屏高-260（底部字幕区域严禁弹幕，用户死规则）
-        let cap = min(1080.0 * area, 1080.0 - 260.0)
-        return max(1, min(maxLanePool, Int((cap - 110.0) / laneH)))
-    }
-    /// 滚动弹幕全程耗时上限（秒）——按最慢速度 0.5x 估算，快速时绘制端会跳过出屏弹幕
-    private let travelDuration: Double = 30
-    /// 同轨道两次弹幕的最小间隔（秒）——防重叠核心
-    private let laneGap: Double = 3.5
-    /// 底部/顶部固定弹幕停留时间（秒）
-    private let fixedDuration: Double = 5
-
-    struct ActiveComment: Identifiable {
-        let comment: FNOSDanmuComment
-        /// 滚动弹幕所在轨道（0..<泳道数，由显示区域决定），固定弹幕为 -1
-        let lane: Int
-        /// 唯一序号（渲染层 ForEach 稳定身份，纯递增不参与时间逻辑）
-        let seq: Int
-        var id: Int { seq }
-    }
+    @Published var status: Status = .idle
+    @Published var commentCount = 0
+    /// 新渲染引擎的时间轴（一次构造，换集才重建）
+    @Published private(set) var timeline: FNOSDanmakuTimeline?
 
     enum Status: Equatable {
         case idle
@@ -103,87 +104,191 @@ final class FNOSDanmuEngine: ObservableObject {
 
     private var comments: [FNOSDanmuComment] = []
     private var nextIndex = 0
+    private let maxLanePool = 20
     private var laneLastEntry: [Double] = []
-    /// 激活弹幕唯一序号（渲染层 ForEach 身份用，纯递增）
     private var nextSeq = 0
-    /// 正在画面上的弹幕（Canvas 每帧读取）
     private(set) var active: [ActiveComment] = []
-    /// 上一次同步到的媒体时间
     private var lastSyncMediaTime: Double = 0
+    private let travelDuration: Double = 30
+    private let laneGap: Double = 3.5
+    private let fixedDuration: Double = 5
+
+    struct ActiveComment: Identifiable {
+        let comment: FNOSDanmuComment
+        let lane: Int
+        let seq: Int
+        var id: Int { seq }
+    }
 
     /// 同步锚点：媒体时间 ↔ 墙钟时间 ↔ 倍速
     private var anchorMediaTime: Double = 0
     private var anchorWallTime: TimeInterval = Date().timeIntervalSinceReferenceDate
     private var anchorRate: Double = 1
 
-    @Published var status: Status = .idle
-    @Published var commentCount = 0
-
-    init() {
-        laneLastEntry = Array(repeating: -999, count: maxLanePool)
-    }
+    init() { laneLastEntry = Array(repeating: -999, count: maxLanePool) }
 
     // MARK: 服务端加载
 
-    func load(title: String, seriesTitle: String? = nil, episodeNumber: Int? = nil) async {
+    /// - Parameters:
+    ///   - title: 单集标题（电影直接用它匹配）
+    ///   - seriesTitle: 剧名（剧集匹配的权威字段）
+    ///   - seasonNumber: 季号（danmu_api 官方 S##E## 文件名需要）
+    ///   - episodeNumber: 集号
+    ///   - year: 发行年份（官方用于消歧同名剧）
+    func load(
+        title: String,
+        seriesTitle: String? = nil,
+        seasonNumber: Int? = nil,
+        episodeNumber: Int? = nil,
+        year: Int? = nil
+    ) async {
         status = .loading
 
         do {
             let episodeID: Int
-            if let seriesTitle, !seriesTitle.isEmpty, let episodeNumber {
-                // 剧集：剧名 + 集数匹配（单集标题在弹幕库里几乎不存在）
-                print("FNOSℹ️弹幕: 剧集匹配「\(seriesTitle)」第 \(episodeNumber) 集")
+            let isSeries = (seriesTitle?.isEmpty == false) && episodeNumber != nil
+            if isSeries {
                 episodeID = try await matchEpisodeID(
-                    seriesTitle: seriesTitle,
-                    episodeNumber: episodeNumber,
+                    seriesTitle: seriesTitle!,
+                    seasonNumber: seasonNumber ?? 1,
+                    episodeNumber: episodeNumber!,
+                    year: year,
                     fallbackTitle: title
                 )
             } else {
-                print("FNOSℹ️弹幕: 开始匹配「\(title)」")
-                episodeID = try await matchEpisodeID(title: title)
+                episodeID = try await matchEpisodeID(title: title, year: year)
             }
             let fetched = try await fetchComments(episodeID: episodeID)
 
             comments = fetched.sorted { $0.time < $1.time }
             commentCount = comments.count
+            timeline = FNOSDanmakuTimeline(items: fetched.map { comment in
+                let kind: FNOSDanmakuLaneKind
+                switch comment.mode {
+                case 4: kind = .bottom
+                case 5: kind = .top
+                default: kind = .scroll
+                }
+                return FNOSDanmakuItem(time: comment.time, text: comment.text,
+                                       kind: kind, rgb: comment.rgb)
+            })
             nextIndex = 0
             active.removeAll()
             laneLastEntry = Array(repeating: -999, count: maxLanePool)
             anchorMediaTime = 0
             anchorWallTime = Date().timeIntervalSinceReferenceDate
             status = .ready
-            print("FNOS✅弹幕: 共 \(comments.count) 条")
+            print("FNOS✅弹幕: 匹配 episodeId=\(episodeID) 共 \(comments.count) 条")
         } catch {
             print("FNOS❗️弹幕加载失败: \(error)")
             status = .failed(error.localizedDescription)
         }
     }
 
-    /// 剧集匹配：match 接口按「剧名+集数」多命名尝试 → search 按集号挑选 → 退单集标题
-    private func matchEpisodeID(seriesTitle: String, episodeNumber: Int, fallbackTitle: String) async throws -> Int {
-        let padded = String(format: "%02d", episodeNumber)
-        let candidates = [
-            "\(seriesTitle) 第\(episodeNumber)集",
-            "\(seriesTitle) S01E\(padded)",
-            "\(seriesTitle) EP\(episodeNumber)",
-            "\(seriesTitle) \(padded)",
-        ]
-        for candidate in candidates {
-            if let id = try? await matchViaMatchAPI(title: candidate) {
-                return id
-            }
+    // MARK: - 官方匹配（严格对齐 danmu_api / matchAnime）
+
+    /// 构造 danmu_api 官方可解析的标准文件名。
+    /// 官方 extractTitleSeasonEpisode 用 `^(.+?)[.\s]+S(\d+)E(\d+)` 解析季集，
+    /// 年份用 `(?:\.|\()(19|20)\d{2}` 提取——所以文件名必须是这个形状。
+    private static func canonicalFileName(
+        title: String, season: Int? = nil, episode: Int? = nil, year: Int? = nil
+    ) -> String {
+        var name = title
+        if let season, let episode {
+            name += String(format: ".S%02dE%02d", season, episode)
+        }
+        if let year { name += ".\(year)" }
+        return name + ".1080p.WEB-DL.mkv"
+    }
+
+    /// 剧集：一次标准文件名 match → 严格校验返回的剧名/集号；失败再用 search/episodes 精确定位。
+    private func matchEpisodeID(
+        seriesTitle: String, seasonNumber: Int, episodeNumber: Int,
+        year: Int?, fallbackTitle: String
+    ) async throws -> Int {
+        let fileName = Self.canonicalFileName(
+            title: seriesTitle, season: seasonNumber, episode: episodeNumber, year: year
+        )
+        print("FNOSℹ️弹幕: 官方 match「\(fileName)」")
+
+        // ① 标准文件名直接 match（服务端已经做了剧名+季+集的精确匹配）
+        if let hit = try? await matchViaMatchAPI(fileName: fileName),
+           Self.isEpisodeConsistent(hit, seriesTitle: seriesTitle, episodeNumber: episodeNumber,
+                                    seasonNumber: seasonNumber) {
+            return hit.episodeId
         }
 
-        if let id = try await searchEpisodeID(seriesTitle: seriesTitle, episodeNumber: episodeNumber) {
+        // ② search/episodes：按官方 findEpisodeByNumber 优先级——
+        //    集标题中提取的数字 > episodeNumber 字段 > 数组序号；同时校验剧名
+        if let id = try? await searchEpisodeID(
+            seriesTitle: seriesTitle, seasonNumber: seasonNumber,
+            episodeNumber: episodeNumber, year: year
+        ) {
             return id
         }
 
-        print("FNOS⚠️弹幕: 剧名匹配全失败，退回单集标题「\(fallbackTitle)」")
-        return try await matchEpisodeID(title: fallbackTitle)
+        // ③ 最后才退单集标题（可能是特别篇/电影式命名），仍走官方 match
+        print("FNOS⚠️弹幕: 剧名+集号匹配失败，退回单集标题「\(fallbackTitle)」")
+        return try await matchEpisodeID(title: fallbackTitle, year: year)
     }
 
-    /// 按剧名搜索，再从结果里按集号挑（匹配"第N集/第N话/EPn/E0n"，失败按序号取第 n 条）
-    private func searchEpisodeID(seriesTitle: String, episodeNumber: Int) async throws -> Int? {
+    /// 电影/单集：标准文件名（带年份）→ match → search 兜底。
+    private func matchEpisodeID(title: String, year: Int?) async throws -> Int {
+        let fileName = Self.canonicalFileName(title: title, year: year)
+        if let id = try? await matchViaMatchAPI(fileName: fileName) {
+            return id
+        }
+        if let id = try? await matchViaSearchAPI(title: title) {
+            return id
+        }
+        throw FNOSDirectError("没有找到匹配的弹幕")
+    }
+
+    /// 校验 match 返回的剧集确实是请求的那部剧那一集（防错配核心）。
+    private static func isEpisodeConsistent(
+        _ ref: FNOSDanmuEpisodeRef, seriesTitle: String, episodeNumber: Int, seasonNumber: Int
+    ) -> Bool {
+        guard ref.episodeId > 0 else { return false }
+        // 剧名：官方返回的 animeTitle 通常带年份/季后缀，做包含匹配即可
+        if let anime = ref.animeTitle, !anime.isEmpty,
+           !normalized(anime).contains(normalized(seriesTitle)),
+           !normalized(seriesTitle).contains(normalized(anime)) {
+            print("FNOS⚠️弹幕: 拒绝错配（剧名「\(anime)」≠「\(seriesTitle)」）")
+            return false
+        }
+        // 集号：返回的 episodeTitle 若含数字，必须等于目标集；无数字则信任服务端精确匹配
+        if let title = ref.episodeTitle, let extracted = episodeNumberIn(title), extracted != episodeNumber {
+            print("FNOS⚠️弹幕: 拒绝错配（集标题「\(title)」= 第\(extracted)集 ≠ 第\(episodeNumber)集）")
+            return false
+        }
+        if let epNum = ref.episodeNumber, epNum != episodeNumber { return false }
+        return true
+    }
+
+    private static func normalized(_ s: String) -> String {
+        s.lowercased()
+            .replacingOccurrences(of: " ", with: "")
+            .replacingOccurrences(of: "　", with: "")
+    }
+
+    /// 从集标题提取数字（第N集 / 第N话 / EPN / SxxEyy / 纯数字）
+    private static func episodeNumberIn(_ title: String) -> Int? {
+        let patterns = ["第\\s*(\\d+)\\s*[集话]", "[EPep]\\s*(\\d+)", "S\\d+E(\\d+)", "#(\\d+)"]
+        for pattern in patterns {
+            guard let regex = try? NSRegularExpression(pattern: pattern),
+                  let match = regex.firstMatch(in: title, range: NSRange(title.startIndex..., in: title)),
+                  match.numberOfRanges > 1,
+                  let range = Range(match.range(at: 1), in: title),
+                  let value = Int(title[range]) else { continue }
+            return value
+        }
+        return nil
+    }
+
+    /// 按剧名搜索所有剧集，再用官方优先级选集（标题数字 > episodeNumber > 序号）。
+    private func searchEpisodeID(
+        seriesTitle: String, seasonNumber: Int, episodeNumber: Int, year: Int?
+    ) async throws -> Int? {
         let encoded = seriesTitle.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? seriesTitle
         guard let url = URL(string: "\(Self.defaultBaseURL)/api/v2/search/episodes?anime=\(encoded)") else {
             throw FNOSDirectError("弹幕搜索 URL 非法")
@@ -194,42 +299,40 @@ final class FNOSDanmuEngine: ObservableObject {
         try Self.assertOK(response, url: url, data: data)
         let decoded = try Self.decode(FNOSDanmuSearchResult.self, from: data)
 
-        guard let anime = decoded.animes?.first, let episodes = anime.episodes, !episodes.isEmpty else {
-            return nil
+        // 优先挑剧名一致的 anime（官方 search 会返回多个同名/近似结果）
+        let candidates = (decoded.animes ?? []).filter { anime in
+            guard let title = anime.animeTitle else { return true }
+            return Self.normalized(title).contains(Self.normalized(seriesTitle))
+                || Self.normalized(seriesTitle).contains(Self.normalized(title))
         }
-        print("FNOSℹ️弹幕 search「\(seriesTitle)」候选 \(episodes.count) 集")
+        let pool = candidates.isEmpty ? (decoded.animes ?? []) : candidates
 
-        // 1) 标题里含集号
-        let markers = ["第\(episodeNumber)集", "第\(episodeNumber)话", "EP\(episodeNumber)", "E\(episodeNumber)", String(format: "%02d", episodeNumber)]
-        if let hit = episodes.first(where: { ref in
-            guard let t = ref.episodeTitle else { return false }
-            return markers.contains { t.localizedCaseInsensitiveContains($0) }
-        }) {
-            print("FNOS✅弹幕 search 命中(标题): \(hit.episodeTitle ?? "?")")
-            return hit.episodeId
-        }
-
-        // 2) 标题不含集号时按序号取第 n 条（弹幕库一般按集顺序返回）
-        if episodes.count >= episodeNumber {
-            let ref = episodes[episodeNumber - 1]
-            print("FNOS✅弹幕 search 命中(序号): \(ref.episodeTitle ?? "?")")
-            return ref.episodeId
+        for anime in pool {
+            guard let episodes = anime.episodes, !episodes.isEmpty else { continue }
+            // 1) 集标题数字精确命中
+            if let hit = episodes.first(where: {
+                guard let t = $0.episodeTitle else { return false }
+                return Self.episodeNumberIn(t) == episodeNumber
+            }) {
+                print("FNOS✅弹幕 search 命中(标题): \(hit.episodeTitle ?? "?")")
+                return hit.episodeId
+            }
+            // 2) 结构化 episodeNumber 字段
+            if let hit = episodes.first(where: { $0.episodeNumber == episodeNumber }) {
+                print("FNOS✅弹幕 search 命中(字段): \(hit.episodeTitle ?? "?")")
+                return hit.episodeId
+            }
+            // 3) 数组序号兜底（danmu_api 官方最后一级策略）
+            if episodes.count >= episodeNumber {
+                let hit = episodes[episodeNumber - 1]
+                print("FNOS✅弹幕 search 命中(序号): \(hit.episodeTitle ?? "?")")
+                return hit.episodeId
+            }
         }
         return nil
     }
 
-    /// 优先精确 match，失败退回 search
-    private func matchEpisodeID(title: String) async throws -> Int {
-        if let id = try await matchViaMatchAPI(title: title) {
-            return id
-        }
-        if let id = try await matchViaSearchAPI(title: title) {
-            return id
-        }
-        throw FNOSDirectError("没有找到匹配的弹幕")
-    }
-
-    private func matchViaMatchAPI(title: String) async throws -> Int? {
+    private func matchViaMatchAPI(fileName: String) async throws -> FNOSDanmuEpisodeRef? {
         guard let url = URL(string: "\(Self.defaultBaseURL)/api/v2/match") else {
             throw FNOSDirectError("弹幕 match URL 非法")
         }
@@ -237,13 +340,7 @@ final class FNOSDanmuEngine: ObservableObject {
         request.httpMethod = "POST"
         request.timeoutInterval = 15
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        do {
-            request.httpBody = try JSONSerialization.data(withJSONObject: ["fileName": title])
-        } catch {
-            print("FNOS❗️弹幕 match 请求体编码失败: \(error)")
-            throw error
-        }
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["fileName": fileName])
 
         let (data, response) = try await URLSession.shared.data(for: request)
         try Self.assertOK(response, url: url, data: data)
@@ -251,7 +348,7 @@ final class FNOSDanmuEngine: ObservableObject {
 
         if decoded.isMatched == true, let first = decoded.matches?.first {
             print("FNOSℹ️弹幕 match 命中: \(first.animeTitle ?? "?") / \(first.episodeTitle ?? "?")")
-            return first.episodeId
+            return first
         }
         return nil
     }
@@ -261,7 +358,6 @@ final class FNOSDanmuEngine: ObservableObject {
         guard let url = URL(string: "\(Self.defaultBaseURL)/api/v2/search/episodes?anime=\(encoded)") else {
             throw FNOSDirectError("弹幕搜索 URL 非法")
         }
-
         var request = URLRequest(url: url)
         request.timeoutInterval = 15
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -279,7 +375,6 @@ final class FNOSDanmuEngine: ObservableObject {
         guard let url = URL(string: "\(Self.defaultBaseURL)/api/v2/comment/\(episodeID)?withRelated=true&chConvert=1") else {
             throw FNOSDirectError("弹幕评论 URL 非法")
         }
-
         var request = URLRequest(url: url)
         request.timeoutInterval = 30
         let (data, response) = try await URLSession.shared.data(for: request)
@@ -300,10 +395,9 @@ final class FNOSDanmuEngine: ObservableObject {
                 green: Double((colorValue >> 8) & 0xFF) / 255.0,
                 blue: Double(colorValue & 0xFF) / 255.0
             )
-            result.append(FNOSDanmuComment(time: time, text: text, mode: mode, color: color))
+            result.append(FNOSDanmuComment(time: time, text: text, mode: mode,
+                                           color: color, rgb: colorValue))
         }
-        // v203 诊断: 弹幕数据层的真实颜色分布 + 用户不透明度设置（落 9999 日志，
-        // 用于定位 MPV 路径白弹幕发灰——数据层 or 渲染合成层）
         if !result.isEmpty {
             let whites = colorSamples.filter { $0 == 0xFFFFFF }.count
             let samples = colorSamples.prefix(5).map { String($0, radix: 16) }.joined(separator: "/")
@@ -315,14 +409,23 @@ final class FNOSDanmuEngine: ObservableObject {
 
     // MARK: 播放器时钟绑定
 
-    /// 倍速/暂停变化时重建锚点（暂停 → rate 0，外推冻结）
-    func setRate(_ rate: Double) {
-        anchorMediaTime = mediaTime(at: Date())
-        anchorWallTime = Date().timeIntervalSinceReferenceDate
+    /// 倍速/暂停变化时重建锚点。
+    /// v217：传入播放器真实时间（KS 的 timemodel / MPV 的 position）作为新锚点，
+    /// 消除旧版「用旧倍速外推值重建锚点」造成的切速瞬间弹幕错位。
+    /// 不传时保留旧行为（外推），兼容既有调用点。
+    func setRate(_ rate: Double, realTime: Double? = nil) {
+        let now = Date().timeIntervalSinceReferenceDate
+        if let realTime {
+            anchorMediaTime = realTime
+        } else {
+            anchorMediaTime = anchorMediaTime + (now - anchorWallTime) * anchorRate
+        }
+        anchorWallTime = now
         anchorRate = rate
     }
 
-    /// 播放器周期回调（0.25 秒）：校准锚点、激活新弹幕、驱逐过期弹幕
+    /// 播放器周期回调：校准锚点、激活新弹幕、驱逐过期弹幕。
+    /// 🚨 sync 铁律：anchorMediaTime = mediaTime 精确等于播放器时间，严禁改动。
     func sync(mediaTime: Double) {
         let wallNow = Date().timeIntervalSinceReferenceDate
         let extrapolated = anchorMediaTime + (wallNow - anchorWallTime) * anchorRate
@@ -339,16 +442,12 @@ final class FNOSDanmuEngine: ObservableObject {
         anchorMediaTime = mediaTime
         anchorWallTime = wallNow
 
-        // 激活到达时间的弹幕
         while nextIndex < comments.count, comments[nextIndex].time <= mediaTime {
             let comment = comments[nextIndex]
             nextIndex += 1
             activate(comment, at: mediaTime)
         }
-
-        // 驱逐已滚出画面的滚动弹幕
         active.removeAll { mediaTime - $0.comment.time > travelDuration }
-
         lastSyncMediaTime = mediaTime
     }
 
@@ -363,29 +462,29 @@ final class FNOSDanmuEngine: ObservableObject {
         laneLastEntry = Array(repeating: -999, count: maxLanePool)
     }
 
-    // MARK: 5 轨道防重叠分配
+    private func laneCount() -> Int {
+        let stored = UserDefaults.standard.double(forKey: "fnos.danmu.area")
+        let area = stored > 0.05 ? min(max(stored, 0.2), 1.0) : 0.3
+        let storedFS = UserDefaults.standard.double(forKey: "fnos.danmu.fontSize")
+        let laneH = (storedFS > 8 ? storedFS : 26) * 1.4
+        let cap = min(1080.0 * area, 1080.0 - 260.0)
+        return max(1, min(maxLanePool, Int((cap - 110.0) / laneH)))
+    }
 
     private func activate(_ comment: FNOSDanmuComment, at mediaTime: Double) {
         if comment.mode == 4 || comment.mode == 5 {
-            // v190: 底部固定弹幕可整体隐藏（弹幕设置开关，即时生效）
             if comment.mode == 4, UserDefaults.standard.bool(forKey: "fnos.danmu.hideBottom") {
                 return
             }
-            // 底部/顶部固定弹幕：同区同屏最多 1 条
             let occupied = active.contains {
                 $0.comment.mode == comment.mode && (mediaTime - $0.comment.time) < fixedDuration
             }
-            if occupied {
-                print("FNOSℹ️弹幕: 丢弃重叠固定弹幕「\(comment.text)」")
-                return
-            }
+            if occupied { return }
             active.append(ActiveComment(comment: comment, lane: -1, seq: nextSeq))
             nextSeq += 1
             return
         }
-
-        // 滚动弹幕：找一条「上一条已经走远」的轨道
-        for lane in 0..<laneCount {
+        for lane in 0..<laneCount() {
             if mediaTime - laneLastEntry[lane] >= laneGap {
                 laneLastEntry[lane] = mediaTime
                 active.append(ActiveComment(comment: comment, lane: lane, seq: nextSeq))
@@ -393,10 +492,9 @@ final class FNOSDanmuEngine: ObservableObject {
                 return
             }
         }
-        print("FNOSℹ️弹幕: 轨道已满，丢弃「\(comment.text)」")
     }
 
-    // MARK: 工具（全 do-catch，打印真实报错）
+    // MARK: 工具
 
     private static func assertOK(_ response: URLResponse, url: URL, data: Data) throws {
         guard let http = response as? HTTPURLResponse else {
@@ -419,84 +517,40 @@ final class FNOSDanmuEngine: ObservableObject {
     }
 }
 
-// MARK: - 弹幕渲染（Canvas + TimelineView，60fps，不吃焦点）
+// MARK: - 弹幕渲染层（图层引擎 + 设置面板 API 全接线）
 
 struct FNOSDanmuView: View {
 
     @ObservedObject var engine: FNOSDanmuEngine
 
+    // 与 FNOSDanmuSettingsSheet 完全同一组 @AppStorage key —— 面板调节即时生效
     @AppStorage("fnos.danmu.fontSize") private var fontSize: Double = 26
     @AppStorage("fnos.danmu.opacity") private var opacity: Double = 1
     @AppStorage("fnos.danmu.speed") private var speed: Double = 1
     @AppStorage("fnos.danmu.offsetY") private var offsetY: Double = 0
-    /// v190: 弹幕显示区域（屏高比例，与引擎泳道数共用同一设置）
     @AppStorage("fnos.danmu.area") private var area: Double = 0.3
-    private var laneHeight: CGFloat { CGFloat(fontSize) * 1.4 }
-    /// v190: 有效显示区域（0.2-1.0 兜底，默认 30% ≈ 旧版 5 泳道密度）
-    private var displayArea: Double { area > 0.05 ? min(max(area, 0.2), 1.0) : 0.3 }
-    /// 顶部基准线（垂直位置偏移会叠加在这里）
-    private var laneTopInset: CGFloat { 110 + CGFloat(offsetY) }
+    @AppStorage("fnos.danmu.hideBottom") private var hideBottom = false
+
+    private var style: FNOSDanmakuStyle {
+        var s = FNOSDanmakuStyle()
+        s.fontSize = CGFloat(fontSize)
+        s.opacity = Float(min(max(opacity, 0.2), 1.0))
+        // 速度面板用倍率 0.5~2.5：倍率越大横穿越快 = 耗时越短
+        s.scrollDuration = 12 / min(max(speed, 0.1), 10)
+        s.areaRatio = CGFloat(area > 0.05 ? min(max(area, 0.2), 1.0) : 0.3)
+        s.offsetY = CGFloat(offsetY)
+        s.hideBottom = hideBottom
+        return s
+    }
 
     var body: some View {
-        // v174: 弹幕用 .offset（纯 transform，GPU 合成、不触发布局）而非 .position（布局属性，
-        // 每帧改会触发宿主重新布局 → 叠在视频层上表现为抖动/步进）。去掉左右出画 guard
-        // （估宽≠实宽会在屏边突然出现/消失=跳变），出画后由 30s 驱逐兜底，远屏外渲染开销可忽略。
-        // 引擎（时间轴/锚点/轨道）零改动，仅渲染层换皮。
-        TimelineView(.animation) { timeline in
-            GeometryReader { geo in
-                let mediaNow = engine.mediaTime(at: timeline.date)
-                ForEach(engine.active) { entry in
-                    if let origin = screenOrigin(for: entry, mediaNow: mediaNow, size: geo.size) {
-                        Text(entry.comment.text)
-                            .font(.system(size: CGFloat(fontSize), weight: .medium))
-                            .foregroundColor(entry.comment.color)
-                            .opacity(opacity)
-                            .lineLimit(1)
-                            .fixedSize()
-                            .offset(x: origin.x, y: origin.y)
-                    }
-                }
-            }
-        }
+        FNOSDanmakuOverlay(
+            clock: FNOSDanmuRenderClock(engine: engine),
+            timeline: engine.timeline,
+            style: style,
+            isVisible: true
+        )
         .allowsHitTesting(false)
         .accessibilityHidden(true)
-    }
-
-    /// 计算单条弹幕左上角的 offset（纯 transform，无出画 guard → 无边缘跳变）
-    private func screenOrigin(for entry: FNOSDanmuEngine.ActiveComment, mediaNow: Double, size: CGSize) -> CGPoint? {
-        let comment = entry.comment
-
-        if comment.mode == 4 || comment.mode == 5 {
-            // 底部 / 顶部固定弹幕（水平居中：offset 从左上起算，减半个估宽）
-            let elapsed = mediaNow - comment.time
-            guard elapsed >= 0, elapsed <= 5 else { return nil }
-            let rawY = comment.mode == 4
-                // v190: 底部固定弹幕上移到字幕保护区（底部 260pt）之上，禁止压字幕
-                ? size.height - 290 + CGFloat(offsetY)
-                : laneTopInset
-            let y = min(max(rawY, 60), size.height - 60)
-            let textW = estimatedWidth(of: comment.text)
-            return CGPoint(x: size.width / 2 - textW / 2, y: y - CGFloat(fontSize) * 0.6)
-        }
-
-        // 滚动弹幕：左边缘从屏宽起、匀速向左（speed 为用户设置倍率）
-        let textWidth = estimatedWidth(of: comment.text)
-        let velocity = (size.width + textWidth) / (12 / max(speed, 0.1))
-        let distance = CGFloat(mediaNow - comment.time) * velocity
-        let leadingX = size.width - distance
-
-        // v190: 显示区域保护——引擎泳道数按 1080 基准算，容器实际更矮时裁掉区域外弹幕；
-        // 字幕保护区（底部 260pt）同样对滚动弹幕封顶
-        let laneBottom = min(size.height * CGFloat(displayArea), size.height - 260)
-        let visibleLanes = max(1, Int((laneBottom - laneTopInset) / laneHeight))
-        if entry.lane >= visibleLanes { return nil }
-
-        let y = laneTopInset + CGFloat(entry.lane) * laneHeight
-        return CGPoint(x: leadingX, y: y - CGFloat(fontSize) * 0.6)
-    }
-
-    /// CJK 全角估算：每字符 ≈ 1.0 倍字号
-    private func estimatedWidth(of text: String) -> CGFloat {
-        CGFloat(text.count) * CGFloat(fontSize)
     }
 }

@@ -84,6 +84,8 @@ final class FNOSDanmuRenderClock: FNOSDanmakuClock {
         guard let engine else { return 0 }
         return engine.mediaTime(at: Date())
     }
+    /// v220: 播放器当前倍速（0=暂停），供渲染层同步 CAAnimation layer.speed
+    var playbackRate: Double { engine?.currentRate ?? 1 }
 }
 
 // MARK: - 弹幕引擎（匹配 / 拉取 / 时间轴锚点）
@@ -496,6 +498,9 @@ final class FNOSDanmuEngine: ObservableObject {
     func mediaTime(at date: Date) -> Double {
         anchorMediaTime + (date.timeIntervalSinceReferenceDate - anchorWallTime) * anchorRate
     }
+
+    /// v220: 当前倍速（0=暂停），渲染层用它同步 CAAnimation 容器 layer.speed
+    var currentRate: Double { anchorRate }
 
     private func reset() {
         active.removeAll()

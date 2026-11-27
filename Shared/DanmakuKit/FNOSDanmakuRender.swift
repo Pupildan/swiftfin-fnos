@@ -1,20 +1,20 @@
 //
 //  FNOSDanmakuRender.swift
-//  飞牛影视 tvOS —— 弹幕图层渲染引擎
+//  飞牛影视 tvOS —— 弹幕渲染引擎（v220：DanmakuKit 式 CAAnimation 驱动）
 //
-//  来源：本机 FNOSKit/Danmaku（对标 B 站 iOS / DanmakuKit 的成熟图层方案），
-//  2026-11-27 移植进 tvOS target。为什么换掉旧的 TimelineView + Text.offset：
-//  旧方案每帧由 SwiftUI 重建整棵 Text 视图树（ForEach + 布局 + 差分），
-//  同屏几十条就是几十次视图重建 → 肉眼可见的停顿。
+//  来源：ATV-Bilibili-demo (yichengchen) 内置 DanmakuKit 的成熟方案 + 本机 FNOSKit。
+//  为什么 v220 重写：v217-v219 用 CADisplayLink 在主线程每帧改 position.x，
+//  主线程被播放器/UI 占用就掉帧→真机「卡段抖动更严重」。
 //
-//  本引擎的性能设计：
-//  - 每条弹幕一个 CATextLayer，生成时一次性光栅化，之后每帧只改 position.x；
-//  - CATransaction.setDisableActions(true) 关掉隐式动画，主线程零绘制；
-//  - CADisplayLink preferredFrameRateRange 锁 60Hz（v219：tvOS 输出帧率不确定，避免不规则回调）；
-//  - 时间源是 FNOSDanmuEngine 的 anchor 外推时钟（sync 铁律原封不动）；
-//  - 开关弹幕只切容器 opacity，时间轴永不暂停 → 关掉再开会无缝接续。
+//  v220 核心机制（丝滑的根本）：
+//  1. 每条弹幕发射时挂一个 CABasicAnimation(position.x)，动画由 render server
+//     进程独立插值，**主线程零逐帧位置计算** → 不受主线程负载影响。
+//  2. 播放器周期回调（100/250ms）只负责「到点发射新弹幕」，不再管位置。
+//  3. 播放/暂停/倍速用容器 layer.speed（Core Animation 原生时间缩放）。
+//  4. 文本用异步光栅化（CGContext 先 stroke 再 fill），不会出现骨架字。
 //
-//  轨道几何遵守项目死规则：顶部基准 110pt + offsetY，底部 260pt 字幕保护区。
+//  ⚠️ 不碰 FNOSDanmuEngine.sync/anchor 铁律（v130 教训）——那套只决定「何时发射」。
+//  轨道几何保留项目死规则：顶部 110pt + offsetY，底部 260pt 字幕保护区。
 //
 
 import AVFoundation
@@ -34,22 +34,14 @@ struct FNOSDanmakuItem {
     let time: Double
     let text: String
     let kind: FNOSDanmakuLaneKind
-    /// dandanplay p 字段里的十进制 RGB（16777215 = 白）
     let rgb: UInt32
 }
 
-/// 一集弹幕的不可变时间轴。class 身份用于 SwiftUI 侧判断「是否换集」。
 final class FNOSDanmakuTimeline {
     let items: [FNOSDanmakuItem]
-
-    init(items: [FNOSDanmakuItem]) {
-        self.items = items.sorted { $0.time < $1.time }
-    }
-
-    /// 第一个 time >= t 的下标（seek 时二分定位）
+    init(items: [FNOSDanmakuItem]) { self.items = items.sorted { $0.time < $1.time } }
     func lowerBound(_ t: Double) -> Int {
-        var lo = 0
-        var hi = items.count
+        var lo = 0, hi = items.count
         while lo < hi {
             let mid = (lo + hi) / 2
             if items[mid].time < t { lo = mid + 1 } else { hi = mid }
@@ -58,127 +50,166 @@ final class FNOSDanmakuTimeline {
     }
 }
 
-// MARK: - 样式（设置面板的 @AppStorage 全部映射到这里）
-
 struct FNOSDanmakuStyle: Equatable {
     var fontSize: CGFloat = 26
-    var strokeWidth: CGFloat = 2.5
     var opacity: Float = 1
-    /// 横穿屏幕耗时（秒）。由设置面板 speed 换算：scrollDuration = 12 / speed
+    /// 横穿屏幕耗时（秒），由设置面板 speed 换算：scrollDuration = 12 / speed
     var scrollDuration: Double = 12
     var fixedDuration: Double = 5
-    /// 显示区域（屏高比例）
     var areaRatio: CGFloat = 0.3
-    /// 垂直偏移（pt）
     var offsetY: CGFloat = 0
     var lineHeightFactor: CGFloat = 1.4
     var laneMargin: CGFloat = 16
     var maxOnScreen: Int = 300
     var hideBottom: Bool = false
-
-    /// 顶部基准线（与旧渲染层完全一致，避免换引擎后整片弹幕上移）
     var laneTop: CGFloat { 110 + offsetY }
 }
-
-// MARK: - 时钟协议（由 FNOSDanmuEngine 的 anchor 外推实现）
 
 @MainActor
 protocol FNOSDanmakuClock: AnyObject {
     var danmakuTime: TimeInterval { get }
+    /// 播放器倍速（0=暂停）；渲染层用它同步 CAAnimation layer.speed
+    var playbackRate: Double { get }
 }
 
-// MARK: - 渲染引擎
+// MARK: - 异步光栅化 Layer（对标 DanmakuAsyncLayer）
+
+private final class FNOSDanmakuAsyncLayer: CALayer {
+    var drawText: ((_ ctx: CGContext, _ size: CGSize) -> Void)?
+
+    override init() {
+        super.init()
+        contentsScale = UIScreen.main.scale
+    }
+    override init(layer: Any) { super.init(layer: layer) }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    override func display() {
+        guard let drawText else { contents = nil; return }
+        let size = bounds.size
+        let scale = contentsScale
+        // 后台线程光栅化，不占主线程
+        DispatchQueue.global(qos: .userInteractive).async {
+            let format = UIGraphicsImageRendererFormat.preferred()
+            format.opaque = false
+            format.scale = scale
+            let renderer = UIGraphicsImageRenderer(size: size, format: format)
+            let image = renderer.image { ctx in
+                drawText(ctx.cgContext, size)
+            }
+            DispatchQueue.main.async { self.contents = image.cgImage }
+        }
+    }
+}
+
+// MARK: - 弹幕 Cell（UIView + 异步 layer）
+
+private final class FNOSDanmakuCell: UIView {
+    let item: FNOSDanmakuItem
+    let lane: Int
+    let style: FNOSDanmakuStyle
+    var textWidth: CGFloat = 0
+    /// 媒体时间轴上的发射时刻，用于回收（不依赖墙钟，暂停/倍速都对）
+    var bornAt: Double = 0
+
+    override class var layerClass: AnyClass { FNOSDanmakuAsyncLayer.self }
+
+    init(item: FNOSDanmakuItem, lane: Int, style: FNOSDanmakuStyle, width: CGFloat) {
+        self.item = item
+        self.lane = lane
+        self.style = style
+        self.textWidth = width
+        super.init(frame: CGRect(x: 0, y: 0, width: width, height: style.fontSize * style.lineHeightFactor))
+        backgroundColor = .clear
+        isUserInteractionEnabled = false
+        let asyncLayer = layer as! FNOSDanmakuAsyncLayer
+        asyncLayer.contentsScale = UIScreen.main.scale
+        asyncLayer.drawText = { [weak self] ctx, size in
+            guard let self else { return }
+            self.draw(into: ctx, size: size)
+        }
+        setNeedsDisplay()
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+
+    /// CGContext 正确画法：先 stroke 描边，再 fill 填充（不会出骨架字）
+    private func draw(into ctx: CGContext, size: CGSize) {
+        let text = NSString(string: item.text)
+        let font = UIFont.boldSystemFont(ofSize: style.fontSize)
+        let textColor = UIColor(
+            red: CGFloat((item.rgb >> 16) & 0xFF) / 255,
+            green: CGFloat((item.rgb >> 8) & 0xFF) / 255,
+            blue: CGFloat(item.rgb & 0xFF) / 255, alpha: 1
+        )
+        ctx.setLineWidth(2.5)
+        ctx.setLineJoin(.round)
+        ctx.setTextDrawingMode(.stroke)
+        NSString(string: item.text).draw(at: .zero, withAttributes: [
+            .font: font, .foregroundColor: UIColor.black.withAlphaComponent(0.85)
+        ])
+        ctx.setTextDrawingMode(.fill)
+        text.draw(at: .zero, withAttributes: [.font: font, .foregroundColor: textColor])
+    }
+}
+
+// MARK: - 渲染引擎（CAAnimation 驱动）
 
 @MainActor
 final class FNOSDanmakuRenderEngine {
 
     weak var clock: FNOSDanmakuClock?
-    private let container: CALayer
+    private let container: UIView
     private var style: FNOSDanmakuStyle
-
     private var timeline: FNOSDanmakuTimeline?
     private var spawnIndex = 0
-
-    private final class Active {
-        let layer: CATextLayer
-        let item: FNOSDanmakuItem
-        let lane: Int
-        let width: CGFloat
-        let speed: CGFloat
-        let spawnTime: Double
-        let expireTime: Double
-
-        init(layer: CATextLayer, item: FNOSDanmakuItem, lane: Int, width: CGFloat,
-             speed: CGFloat, spawnTime: Double, expireTime: Double) {
-            self.layer = layer
-            self.item = item
-            self.lane = lane
-            self.width = width
-            self.speed = speed
-            self.spawnTime = spawnTime
-            self.expireTime = expireTime
-        }
-    }
-
-    private var activeScroll: [Active] = []
-    private var activeFixed: [Active] = []
-    /// 该轨道下一次可容纳新弹幕的时刻（同速弹幕右缘间距恒定，O(轨道数) 分配）
+    private var active: [FNOSDanmakuCell] = []
     private var laneReadyAt: [Double] = []
     private var fixedBusyUntil: [Double] = []
-
-    private var displayLink: CADisplayLink?
+    private var nextLane = 0
     private var lastTime: Double = 0
     private var isVisible = true
-    var contentsScale: CGFloat = 2
 
-    init(container: CALayer, style: FNOSDanmakuStyle = FNOSDanmakuStyle()) {
+    init(container: UIView, style: FNOSDanmakuStyle = FNOSDanmakuStyle()) {
         self.container = container
         self.style = style
-        rebuildLaneCapacity()
-        startDisplayLink()
+        container.layer.speed = 1
+        rebuildLanes()
     }
 
-    deinit {
-        // deinit 非隔离：直接取底层对象避免 actor 隔离检查（CADisplayLink 在主线程创建）
-        displayLink?.invalidate()
-    }
-
-    // MARK: 生命周期
+    // MARK: 对外接口（与 FNOSDanmuView 对接）
 
     func load(timeline: FNOSDanmakuTimeline?) {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
         clearAll()
-        CATransaction.commit()
         self.timeline = timeline
         spawnIndex = timeline.map { $0.lowerBound(currentTime() + 0.001) } ?? 0
         lastTime = currentTime()
+        // 换集/seek 时把「此刻应在屏上」的一批弹幕补发射出去（带 progress 偏移）
+        emitFrom(currentTime(), backfill: true)
     }
 
-    func updateStyle(_ newStyle: FNOSDanmakuStyle) {
-        let hideBottomChanged = newStyle.hideBottom != style.hideBottom
-        // v218: 显示区域/字号变化会改变轨道数与行高——清掉在屏弹幕并按新布局重建，
-        // 让滑块调节「立刻可见」（旧版只重算数组长度，在飞弹幕仍占旧轨道→看似无反应）。
-        let layoutChangedKey = newStyle.areaRatio != style.areaRatio
-            || newStyle.fontSize != style.fontSize
-            || newStyle.offsetY != style.offsetY
-        style = newStyle
-        container.opacity = isVisible ? style.opacity : 0
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        if hideBottomChanged {
-            for danmaku in activeFixed where danmaku.item.kind == .bottom {
-                danmaku.layer.removeFromSuperlayer()
-            }
-            activeFixed.removeAll { $0.item.kind == .bottom }
+    /// 播放器周期回调调用（100/250ms）——只负责到点发射，不算位置
+    func sync(mediaTime: Double) {
+        guard timeline != nil else { return }
+        if abs(mediaTime - lastTime) > 0.8 {
+            clearAll()
+            spawnIndex = timeline!.lowerBound(mediaTime)
+            emitFrom(mediaTime, backfill: true)
         }
-        if layoutChangedKey {
-            for danmaku in activeScroll { danmaku.layer.removeFromSuperlayer() }
-            activeScroll.removeAll(keepingCapacity: true)
-            nextLane = 0
+        lastTime = mediaTime
+        emitFrom(mediaTime, backfill: false)
+        // 回收：滚动弹幕跑完时长 / 固定弹幕超过停留时长
+        let expired = active.filter { cell in
+            let lifespan = cell.item.kind == .scroll ? style.scrollDuration : style.fixedDuration
+            return mediaTime - cell.bornAt > lifespan + 0.5
         }
-        CATransaction.commit()
-        layoutChanged()
+        for cell in expired { remove(cell) }
+    }
+
+    /// v220: 播放/暂停/倍速——改容器 layer.speed，Core Animation 原生时间缩放，
+    /// 不用重新计算任何位置，也不会打断正在跑的动画。
+    func setRate(_ rate: Double) {
+        container.layer.speed = Float(max(0, rate))
     }
 
     func setVisible(_ visible: Bool) {
@@ -186,116 +217,137 @@ final class FNOSDanmakuRenderEngine {
         isVisible = visible
         CATransaction.begin()
         CATransaction.setAnimationDuration(0.2)
-        container.opacity = visible ? style.opacity : 0
+        container.alpha = visible ? CGFloat(style.opacity) : 0
         CATransaction.commit()
+    }
+
+    func updateStyle(_ newStyle: FNOSDanmakuStyle) {
+        let layoutKey = newStyle.areaRatio != style.areaRatio
+            || newStyle.fontSize != style.fontSize
+            || newStyle.offsetY != style.offsetY
+        let hideKey = newStyle.hideBottom != style.hideBottom
+        style = newStyle
+        container.alpha = isVisible ? CGFloat(style.opacity) : 0
+        if hideKey {
+            for cell in active where cell.item.kind == .bottom { remove(cell) }
+        }
+        if layoutKey {
+            clearAll()
+            emitFrom(currentTime(), backfill: true)
+        } else {
+            rebuildLanes()
+        }
     }
 
     func layoutChanged() {
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        rebuildLaneCapacity()
-        for danmaku in activeScroll {
-            danmaku.layer.position.y = laneCenterY(danmaku.lane)
-        }
-        for danmaku in activeFixed {
-            danmaku.layer.position.y = fixedCenterY(danmaku.item.kind)
-        }
-        CATransaction.commit()
+        clearAll()
+        emitFrom(currentTime(), backfill: true)
     }
 
-    // MARK: 帧循环
+    // MARK: 发射逻辑
 
-    private func startDisplayLink() {
-        guard displayLink == nil else { return }
-        let link = CADisplayLink(target: WeakProxy(self), selector: #selector(WeakProxy.tick))
-        // .common：拖进度条（手势追踪）期间也不掉帧
-        link.add(to: .main, forMode: .common)
-        if #available(tvOS 15.0, *) {
-            // v219: 显式锁 60Hz。tvOS 是否真的在 120Hz 输出不确定（电视支持≠Apple TV 输出），
-            // 在 60Hz 设备上请求 120 可能让 CADisplayLink 回调不规则→视觉卡顿。
-            // 60 是 tvOS 确定稳定支持的帧率；如确认设备跑 120 再改回。
-            link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 60, preferred: 60)
-        }
-        displayLink = link
-    }
-
-    fileprivate func tick() {
+    private func emitFrom(_ t: Double, backfill: Bool) {
         guard let timeline else { return }
-        let t = currentTime()
-        // seek / 跳集 / 卡顿：|Δt| > 0.8s → 清屏 + 二分定位
-        if abs(t - lastTime) > 0.8 {
-            CATransaction.begin()
-            CATransaction.setDisableActions(true)
-            clearAll()
-            CATransaction.commit()
-            spawnIndex = timeline.lowerBound(t)
-            lastTime = t
-            return
-        }
-        lastTime = t
-
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        defer { CATransaction.commit() }
-
-        // 单帧生成上限，极端密集时分帧入场，避免单帧尖峰
-        var budget = 80
+        var budget = 50   // 单帧发射上限，防尖峰
         let screenWidth = container.bounds.width
         while spawnIndex < timeline.items.count, budget > 0 {
             let item = timeline.items[spawnIndex]
             if item.time > t { break }
             spawnIndex += 1
             budget -= 1
-            if t - item.time > style.scrollDuration { continue }
+            let lateness = t - item.time
+            if lateness > style.scrollDuration { continue }   // 太旧，跳过
             switch item.kind {
-            case .scroll: spawnScroll(item, at: t, screenWidth: screenWidth)
-            case .top, .bottom: spawnFixed(item, at: t)
+            case .scroll: shootScroll(item, at: t, lateness: lateness, screenWidth: screenWidth)
+            case .top, .bottom: shootFixed(item, at: t, lateness: lateness)
             }
         }
-        updateScrollPositions(at: t)
-        removeExpiredFixed(at: t)
+        _ = backfill  // 两种模式共用（背填靠 lateness 决定初始位置）
     }
 
-    // MARK: 生成
-
-    private func spawnScroll(_ item: FNOSDanmakuItem, at t: Double, screenWidth: CGFloat) {
-        guard activeScroll.count + activeFixed.count < style.maxOnScreen else { return }
-        let width = measureWidth(of: item)
-        // v218: 统一速度——所有弹幕 px/s 完全一致（与 B 站/成熟引擎同款）。
-        // 旧版 speed=(屏宽+字宽)/时长 让长弹幕更快，后发的长弹幕会追上前面的短弹幕→重叠。
-        let speed = screenWidth / CGFloat(style.scrollDuration)
+    private func shootScroll(_ item: FNOSDanmakuItem, at t: Double, lateness: Double, screenWidth: CGFloat) {
+        guard active.count < style.maxOnScreen else { return }
+        guard item.kind != .bottom || !style.hideBottom else { return }
+        let width = measureWidth(item)
         guard let lane = availableLane(at: t) else { return }
-        // 下一条要等本条尾部完全进入屏幕并留出 margin
         laneReadyAt[lane] = t + Double((width + style.laneMargin) / speed)
 
-        let layer = makeTextLayer(for: item)
-        layer.bounds.size = CGSize(width: width, height: laneHeight)
-        let x = screenWidth + width / 2 - speed * CGFloat(t - item.time)
-        layer.position = CGPoint(x: x, y: laneCenterY(lane))
-        container.addSublayer(layer)
-        activeScroll.append(Active(layer: layer, item: item, lane: lane, width: width,
-                                   speed: speed, spawnTime: item.time, expireTime: .infinity))
+        let cell = FNOSDanmakuCell(item: item, lane: lane, style: style, width: width)
+        cell.bornAt = item.time
+        let y = laneCenterY(lane)
+        let startX = screenWidth + width / 2 - speed * CGFloat(lateness)
+        cell.center = CGPoint(x: startX, y: y)
+        container.addSubview(cell)
+        active.append(cell)
+
+        // 剩余路程 = 从 startX 到完全出屏 (x = -width/2)
+        let remaining = Double(startX + width / 2)
+        let duration = max(0.1, remaining / speed)
+        let anim = CABasicAnimation(keyPath: "position.x")
+        anim.fromValue = startX
+        anim.toValue = -width / 2
+        // duration 不除 layer.speed——Core Animation 会按 layer 时间缩放自动变速
+        anim.duration = duration
+        anim.beginTime = CACurrentMediaTime()
+        anim.isRemovedOnCompletion = false
+        anim.fillMode = .forwards
+        cell.layer.add(anim, forKey: "fnos.scroll")
     }
 
-    private func spawnFixed(_ item: FNOSDanmakuItem, at t: Double) {
+    private func shootFixed(_ item: FNOSDanmakuItem, at t: Double, lateness: Double) {
+        guard active.count < style.maxOnScreen else { return }
         guard !(item.kind == .bottom && style.hideBottom) else { return }
-        guard activeScroll.count + activeFixed.count < style.maxOnScreen else { return }
         guard let lane = fixedBusyUntil.firstIndex(where: { t >= $0 }) else { return }
         fixedBusyUntil[lane] = t + style.fixedDuration
 
-        let width = measureWidth(of: item)
-        let layer = makeTextLayer(for: item)
-        layer.bounds.size = CGSize(width: width, height: laneHeight)
-        layer.position = CGPoint(x: container.bounds.width / 2, y: fixedCenterY(item.kind))
-        container.addSublayer(layer)
-        activeFixed.append(Active(layer: layer, item: item, lane: lane, width: width,
-                                  speed: 0, spawnTime: t, expireTime: t + style.fixedDuration))
+        let width = measureWidth(item)
+        let cell = FNOSDanmakuCell(item: item, lane: lane, style: style, width: width)
+        cell.bornAt = item.time
+        cell.center = CGPoint(x: container.bounds.width / 2, y: fixedCenterY(item.kind))
+        container.addSubview(cell)
+        active.append(cell)
+
+        let remain = max(0.1, style.fixedDuration - lateness)
+        let anim = CAKeyframeAnimation(keyPath: "opacity")
+        anim.values = [1, 1, 0]
+        anim.keyTimes = [0, 0.8, 1]
+        anim.duration = remain
+        anim.isRemovedOnCompletion = false
+        anim.fillMode = .forwards
+        cell.layer.add(anim, forKey: "fnos.fixed")
     }
 
-    /// v218: 轮转分配——从上一再用过的轨道之后开始找空位，弹幕均匀铺满所有轨道。
-    /// 旧版永远从 lane 0 找起：弹幕稀疏时全挤在 lane 0~4，显示区域拉大后新增轨道
-    /// 一条用不上=滑块「失效」。轮转后 area 越大同屏弹幕真变多（B 站逻辑），且不缩放已有弹幕。
-    private var nextLane = 0
+    private func remove(_ cell: FNOSDanmakuCell) {
+        cell.layer.removeAllAnimations()
+        cell.removeFromSuperview()
+        active.removeAll { $0 === cell }
+    }
+
+    private func clearAll() {
+        for cell in active {
+            cell.layer.removeAllAnimations()
+            cell.removeFromSuperview()
+        }
+        active.removeAll(keepingCapacity: true)
+        rebuildLanes()
+    }
+
+    // MARK: 轨道 / 几何
+
+    private var speed: Double { Double(container.bounds.width) / style.scrollDuration }
+
+    private var laneHeight: CGFloat { style.fontSize * style.lineHeightFactor }
+    private var laneBottom: CGFloat {
+        min(container.bounds.height * style.areaRatio, container.bounds.height - 260)
+    }
+
+    private func rebuildLanes() {
+        let count = max(1, min(20, Int((laneBottom - style.laneTop) / laneHeight)))
+        laneReadyAt = Array(repeating: 0, count: count)
+        fixedBusyUntil = Array(repeating: 0, count: count)
+        nextLane = 0
+    }
+
     private func availableLane(at t: Double) -> Int? {
         let count = laneReadyAt.count
         guard count > 0 else { return nil }
@@ -309,149 +361,63 @@ final class FNOSDanmakuRenderEngine {
         return nil
     }
 
-    private func updateScrollPositions(at t: Double) {
-        let screenWidth = container.bounds.width
-        var write = 0
-        for danmaku in activeScroll {
-            let elapsed = CGFloat(t - danmaku.spawnTime)
-            let x = screenWidth + danmaku.width / 2 - danmaku.speed * elapsed
-            if x + danmaku.width / 2 < 0 {
-                danmaku.layer.removeFromSuperlayer()
-                continue
-            }
-            danmaku.layer.position.x = x
-            activeScroll[write] = danmaku
-            write += 1
-        }
-        if write != activeScroll.count { activeScroll.removeSubrange(write...) }
-    }
-
-    private func removeExpiredFixed(at t: Double) {
-        var write = 0
-        for danmaku in activeFixed {
-            if t >= danmaku.expireTime {
-                danmaku.layer.removeFromSuperlayer()
-                continue
-            }
-            activeFixed[write] = danmaku
-            write += 1
-        }
-        if write != activeFixed.count { activeFixed.removeSubrange(write...) }
-    }
-
-    // MARK: 图层
-
-    private func makeTextLayer(for item: FNOSDanmakuItem) -> CATextLayer {
-        let layer = CATextLayer()
-        layer.string = attributedString(for: item)
-        layer.contentsScale = contentsScale
-        layer.isOpaque = false
-        layer.masksToBounds = false
-        layer.alignmentMode = .left
-        layer.truncationMode = .none
-        return layer
-    }
-
-    private func attributedString(for item: FNOSDanmakuItem) -> NSAttributedString {
-        let font = UIFont.boldSystemFont(ofSize: style.fontSize)
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.lineBreakMode = .byClipping
-        let color = UIColor(red: CGFloat((item.rgb >> 16) & 0xFF) / 255,
-                            green: CGFloat((item.rgb >> 8) & 0xFF) / 255,
-                            blue: CGFloat(item.rgb & 0xFF) / 255, alpha: 1)
-        // v218: 去掉描边。CATextLayer 渲染 NSAttributedString 时不认负 strokeWidth 的
-        // 「填充+描边」语义，只画轮廓 → 骨架字（v217 真机截图实锤）。纯实心字。
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: font, .foregroundColor: color, .paragraphStyle: paragraph
-        ]
-        return NSAttributedString(string: item.text, attributes: attrs)
-    }
-
-    private func measureWidth(of item: FNOSDanmakuItem) -> CGFloat {
-        ceil(attributedString(for: item).size().width)
-    }
-
-    // MARK: 轨道几何（顶部 110 + offsetY、底部 260 字幕保护区）
-
-    private var laneHeight: CGFloat { style.fontSize * style.lineHeightFactor }
-
-    private var laneBottom: CGFloat {
-        min(container.bounds.height * style.areaRatio, container.bounds.height - 260)
-    }
-
-    private func rebuildLaneCapacity() {
-        let count = max(1, min(20, Int((laneBottom - style.laneTop) / laneHeight)))
-        laneReadyAt = Array(repeating: 0, count: count)
-        fixedBusyUntil = Array(repeating: 0, count: max(1, count))
-    }
-
     private func laneCenterY(_ lane: Int) -> CGFloat {
         style.laneTop + (CGFloat(lane) + 0.5) * laneHeight
     }
 
     private func fixedCenterY(_ kind: FNOSDanmakuLaneKind) -> CGFloat {
         if kind == .top { return style.laneTop + laneHeight / 2 }
-        // 底部固定弹幕上移到字幕保护区之上（与旧渲染层 height-290 一致）
         return min(max(container.bounds.height - 290 + style.offsetY, style.laneTop),
                    container.bounds.height - 260)
     }
 
-    private func clearAll() {
-        for danmaku in activeScroll + activeFixed { danmaku.layer.removeFromSuperlayer() }
-        activeScroll.removeAll(keepingCapacity: true)
-        activeFixed.removeAll(keepingCapacity: true)
-        rebuildLaneCapacity()
+    private func measureWidth(_ item: FNOSDanmakuItem) -> CGFloat {
+        let font = UIFont.boldSystemFont(ofSize: style.fontSize)
+        return ceil(NSString(string: item.text).size(withAttributes: [.font: font]).width) + 8
     }
 
     private func currentTime() -> TimeInterval { clock?.danmakuTime ?? lastTime }
 }
 
-// MARK: - 弱代理（打破 CADisplayLink 与引擎的强引用环）
-
-private final class WeakProxy: NSObject {
-    private weak var target: FNOSDanmakuRenderEngine?
-    init(_ target: FNOSDanmakuRenderEngine) {
-        self.target = target
-        super.init()
-    }
-    @objc func tick() {
-        // CADisplayLink 回调本就在主线程；显式派发满足 @MainActor 隔离检查
-        MainActor.assumeIsolated { target?.tick() }
-    }
-}
-
 // MARK: - 宿主 UIView + SwiftUI 桥接
 
 final class FNOSDanmakuHostView: UIView {
-    private let danmakuContainer = CALayer()
     private(set) var engine: FNOSDanmakuRenderEngine!
+    private var emitter: CADisplayLink?
+    private var lastEmit: CFTimeInterval = 0
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        isUserInteractionEnabled = false   // 不参与 hit-testing / tvOS 焦点引擎
+        isUserInteractionEnabled = false
         backgroundColor = .clear
         layer.masksToBounds = false
-        danmakuContainer.masksToBounds = false
-        danmakuContainer.isOpaque = false
-        layer.addSublayer(danmakuContainer)
-        engine = FNOSDanmakuRenderEngine(container: danmakuContainer)
-        engine.contentsScale = traitCollection.displayScale > 0 ? traitCollection.displayScale : 2
+        engine = FNOSDanmakuRenderEngine(container: self)
+        // v220: 4Hz 低频发射泵——只查「有没有新弹幕到点」，位置由 CAAnimation 负责。
+        let link = CADisplayLink(target: self, selector: #selector(emitTick))
+        link.add(to: .main, forMode: .common)
+        if #available(tvOS 15.0, *) {
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 4, maximum: 4, preferred: 4)
+        }
+        emitter = link
     }
 
-    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+    deinit { emitter?.invalidate() }
+
+    @objc private func emitTick() {
+        let now = CACurrentMediaTime()
+        guard now - lastEmit >= 0.25 else { return }
+        lastEmit = now
+        guard let clock = engine.clock else { return }
+        // 播放/暂停/倍速 → CAAnimation 容器时间缩放（已在飞的动画平滑变速/冻结）
+        engine.setRate(clock.playbackRate)
+        engine.sync(mediaTime: clock.danmakuTime)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        danmakuContainer.frame = bounds
-        CATransaction.commit()
         engine.layoutChanged()
-    }
-
-    override func traitCollectionDidChange(_ previous: UITraitCollection?) {
-        super.traitCollectionDidChange(previous)
-        if traitCollection.displayScale > 0 { engine.contentsScale = traitCollection.displayScale }
     }
 }
 
@@ -465,8 +431,8 @@ struct FNOSDanmakuOverlay: UIViewRepresentable {
         let view = FNOSDanmakuHostView(frame: .zero)
         view.engine.clock = clock
         view.engine.updateStyle(style)
-        view.setTimeline(timeline)
-        view.setVisible(isVisible)
+        view.engine.setTimeline(timeline)
+        view.engine.setVisible(isVisible)
         context.coordinator.lastTimeline = timeline
         context.coordinator.lastStyle = style
         context.coordinator.lastVisible = isVisible
@@ -476,19 +442,21 @@ struct FNOSDanmakuOverlay: UIViewRepresentable {
     func updateUIView(_ uiView: FNOSDanmakuHostView, context: Context) {
         let c = context.coordinator
         uiView.engine.clock = clock
-        // 只有时间轴引用变化（换集/重新匹配）才重载
         if c.lastTimeline !== timeline {
             c.lastTimeline = timeline
-            uiView.setTimeline(timeline)
+            uiView.engine.setTimeline(timeline)
         }
         if c.lastStyle != style {
             c.lastStyle = style
             uiView.engine.updateStyle(style)
+            // 弹幕速度设置通过 scrollDuration 影响新发射弹幕的 duration；
+            // 容器 layer.speed 只由播放器倍速控制（emitTick），两者不冲突。
         }
         if c.lastVisible != isVisible {
             c.lastVisible = isVisible
-            uiView.setVisible(isVisible)
+            uiView.engine.setVisible(isVisible)
         }
+        // 播放器时间由 FNOSDanmuView 的 sync 通过 clock 读取；这里只做到点发射
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(timeline: timeline, style: style, visible: isVisible) }

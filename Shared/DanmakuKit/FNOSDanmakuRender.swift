@@ -1,12 +1,22 @@
 //
 //  FNOSDanmakuRender.swift
-//  飞牛影视 tvOS —— 弹幕渲染引擎（v220：DanmakuKit 式 CAAnimation 驱动）
+//  飞牛影视 tvOS —— 弹幕渲染引擎（v221：修复 v220 发射即清屏死循环）
 //
 //  来源：ATV-Bilibili-demo (yichengchen) 内置 DanmakuKit 的成熟方案 + 本机 FNOSKit。
-//  为什么 v220 重写：v217-v219 用 CADisplayLink 在主线程每帧改 position.x，
-//  主线程被播放器/UI 占用就掉帧→真机「卡段抖动更严重」。
 //
-//  v220 核心机制（丝滑的根本）：
+//  v220 致命 bug（弹幕完全不显示的根因）：
+//  弹幕 cell 直接 addSubview 到宿主自身 → UIKit 的 addSubview 触发宿主
+//  setNeedsLayout → layoutSubviews → layoutChanged() → clearAll()。
+//  发射与清屏互相打架 = 弹幕刚加上去就被删，屏幕永远空白。
+//  （v219 用 addSublayer 加到普通 CALayer 上，没有这个坑——改 UIView 时踩了。）
+//
+//  v221 修复：
+//  1. 弹幕 cell 放进独立普通 UIView 容器 danmakuContainer（无 layoutSubviews 重载）；
+//  2. 宿主 layoutSubviews 只在尺寸真正变化时才重建轨道（控制条显隐/焦点变化不再清屏）；
+//  3. setRate 值不变时跳过（避免 4Hz 反复重映射 layer 时间轴）；
+//  4. 新增 9999 渲染诊断日志（2s 节流）：在屏数/发射点/速度，不显示时可直接定位。
+//
+//  丝滑机制（继承 v220，DanmakuKit 式）：
 //  1. 每条弹幕发射时挂一个 CABasicAnimation(position.x)，动画由 render server
 //     进程独立插值，**主线程零逐帧位置计算** → 不受主线程负载影响。
 //  2. 播放器周期回调（100/250ms）只负责「到点发射新弹幕」，不再管位置。
@@ -169,6 +179,7 @@ final class FNOSDanmakuRenderEngine {
     private var nextLane = 0
     private var lastTime: Double = 0
     private var isVisible = true
+    private var diagTick = 0
 
     init(container: UIView, style: FNOSDanmakuStyle = FNOSDanmakuStyle()) {
         self.container = container
@@ -190,7 +201,13 @@ final class FNOSDanmakuRenderEngine {
 
     /// 播放器周期回调调用（100/250ms）——只负责到点发射，不算位置
     func sync(mediaTime: Double) {
-        guard timeline != nil else { return }
+        guard let timeline else { return }
+        // v221: 渲染诊断（4Hz 泵 × 8 ≈ 2s 节流）——不显示时能从日志直接看出是
+        // 「没发射」还是「发射了但被清屏」还是「layer.speed=0 冻结」
+        diagTick += 1
+        if diagTick % 8 == 0 {
+            FNOSDiagLog.send("弹幕渲染: 在屏\(active.count) 发射点\(spawnIndex)/\(timeline.items.count) t=\(Int(mediaTime)) lanes=\(laneReadyAt.count) speed=\(container.layer.speed)")
+        }
         if abs(mediaTime - lastTime) > 0.8 {
             clearAll()
             spawnIndex = timeline!.lowerBound(mediaTime)
@@ -208,8 +225,11 @@ final class FNOSDanmakuRenderEngine {
 
     /// v220: 播放/暂停/倍速——改容器 layer.speed，Core Animation 原生时间缩放，
     /// 不用重新计算任何位置，也不会打断正在跑的动画。
+    /// v221: 值不变时跳过——4Hz 泵反复设 speed 会不断重映射 layer 时间轴。
     func setRate(_ rate: Double) {
-        container.layer.speed = Float(max(0, rate))
+        let s = Float(max(0, rate))
+        guard container.layer.speed != s else { return }
+        container.layer.speed = s
     }
 
     func setVisible(_ visible: Bool) {
@@ -383,6 +403,14 @@ final class FNOSDanmakuRenderEngine {
 
 final class FNOSDanmakuHostView: UIView {
     private(set) var engine: FNOSDanmakuRenderEngine!
+    /// v221 修复 v220「弹幕完全不显示」的致命 bug：
+    /// v220 把弹幕 cell 直接 addSubview 到宿主自身，而 UIKit 中 addSubview 会触发
+    /// 宿主 setNeedsLayout → layoutSubviews → layoutChanged() → clearAll()。
+    /// 死循环 = 发射即清屏，屏幕上永远看不到弹幕（v219 用 addSublayer 无此问题）。
+    /// 修复：cell 放进独立普通 UIView 容器（无 layoutSubviews 重载），
+    /// 宿主 layoutSubviews 只在尺寸真正变化时才重建轨道。
+    private let danmakuContainer = UIView()
+    private var lastSize: CGSize = .zero
     private var emitter: CADisplayLink?
     private var lastEmit: CFTimeInterval = 0
 
@@ -391,7 +419,11 @@ final class FNOSDanmakuHostView: UIView {
         isUserInteractionEnabled = false
         backgroundColor = .clear
         layer.masksToBounds = false
-        engine = FNOSDanmakuRenderEngine(container: self)
+        danmakuContainer.isUserInteractionEnabled = false
+        danmakuContainer.backgroundColor = .clear
+        danmakuContainer.layer.masksToBounds = false
+        addSubview(danmakuContainer)
+        engine = FNOSDanmakuRenderEngine(container: danmakuContainer)
         // v220: 4Hz 低频发射泵——只查「有没有新弹幕到点」，位置由 CAAnimation 负责。
         let link = CADisplayLink(target: self, selector: #selector(emitTick))
         link.add(to: .main, forMode: .common)
@@ -417,6 +449,14 @@ final class FNOSDanmakuHostView: UIView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
+        // 容器始终跟住宿主尺寸（这一步不触发弹幕引擎）
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        danmakuContainer.frame = CGRect(origin: .zero, size: bounds.size)
+        CATransaction.commit()
+        // 只在尺寸真正变化时重建轨道——绝不在「子视图变化」时清屏
+        guard bounds.size != lastSize else { return }
+        lastSize = bounds.size
         engine.layoutChanged()
     }
 }

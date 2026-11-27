@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v220"
+    static let version = "v221"
 
     /// 本版主要变更摘要
-    static let changes = "v220:弹幕渲染彻底重写=移植 ATV-Bilibili-demo 内置 DanmakuKit 的 CAAnimation 方案。旧版(v217-v219) CADisplayLink 主线程每帧改 position.x,主线程被播放器/UI 占用就掉帧抖动→v219 锁60Hz 反而更卡。新版:每条弹幕发射时挂 CABasicAnimation(position.x) 由 render server 进程独立插值,主线程零逐帧位置计算;4Hz 低频发射泵只管到点发射;播放/暂停/倍速用容器 layer.speed(Core Animation 原生时间缩放);文本异步光栅化 CGContext 先 stroke 再 fill(根治骨架字)。sync/anchor 铁律一行未动,只决定何时发射。v219:服务端直探+日志实锤:匹配成功(epId=12104),但 danmu_api 国际版 decode 端点超时→comment/{epId} 首次0条;comment?url=源站URL 绕过 decode 实测16384条。修=FNOSDanmuEpisodeRef 加 url,fetchComments 双路径(epId=0 时用 url 兜底)。不动 sync/anchor 铁律(v130),渲染帧率从请求120改锁60(tvOS 输出帧率不确定)。v218:①骨架字:CATextLayer 的 NSAttributedString 不支持负 strokeWidth 的填充语义(只画轮廓)→删除描边属性,纯实心字。②显示区域滑块失效:引擎轨道分配永远从 lane0 找起,弹幕稀疏时全挤在前几条轨道,area 拉大新增轨道用不上→改轮转分配(nextLane 指针),弹幕均匀铺满所有轨道=真正同屏更多(B站逻辑);area/字号/偏移变化时清屏按新轨道重建,调节立刻可见。③弹幕重叠:旧版 speed=(屏宽+字宽)/时长 让长弹幕更快、后发长弹幕追上前面短弹幕→统一速度(屏宽/时长),同轨间隔恒定不追尾。④两京十五日匹配不出:v217 剧名双向包含校验过严误杀别名/后缀剧→放宽为只拦集号明确矛盾(官方 isMatched 已做精确匹配),search 兜底无剧名一致时也退回全部候选按集号选,全链路加 9999 诊断日志。"
+    static let changes = "v221:修复 v220 弹幕完全不显示的致命 bug——v220 把弹幕 cell 直接 addSubview 到宿主视图自身,而 UIKit 中 addSubview 会触发宿主 setNeedsLayout→layoutSubviews→layoutChanged()→clearAll(),形成「发射即清屏」死循环,弹幕刚加上就被删,屏幕永远空白(v219 用 addSublayer 加到普通 CALayer 上无此坑,v220 改 UIView 时踩了)。修复:①弹幕 cell 移入独立普通 UIView 容器 danmakuContainer(无 layoutSubviews 重载);②宿主 layoutSubviews 只在尺寸真正变化时重建轨道,控制条显隐/焦点变化不再清屏;③setRate 值不变时跳过,避免 4Hz 反复重映射 layer 时间轴;④新增 9999 渲染诊断日志(2s 节流:在屏数/发射点/速度),不显示时可直接定位是没发射、被清屏还是 speed=0 冻结。CAAnimation 丝滑机制原样保留。"
 }

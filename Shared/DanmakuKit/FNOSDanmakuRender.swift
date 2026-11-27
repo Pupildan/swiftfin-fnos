@@ -82,12 +82,14 @@ struct FNOSDanmakuStyle: Equatable {
 
 // MARK: - 时钟协议（由 FNOSDanmuEngine 的 anchor 外推实现）
 
+@MainActor
 protocol FNOSDanmakuClock: AnyObject {
     var danmakuTime: TimeInterval { get }
 }
 
 // MARK: - 渲染引擎
 
+@MainActor
 final class FNOSDanmakuRenderEngine {
 
     weak var clock: FNOSDanmakuClock?
@@ -136,7 +138,10 @@ final class FNOSDanmakuRenderEngine {
         startDisplayLink()
     }
 
-    deinit { displayLink?.invalidate() }
+    deinit {
+        // deinit 非隔离：直接取底层对象避免 actor 隔离检查（CADisplayLink 在主线程创建）
+        displayLink?.invalidate()
+    }
 
     // MARK: 生命周期
 
@@ -385,7 +390,10 @@ private final class WeakProxy: NSObject {
         self.target = target
         super.init()
     }
-    @objc func tick() { target?.tick() }
+    @objc func tick() {
+        // CADisplayLink 回调本就在主线程；显式派发满足 @MainActor 隔离检查
+        MainActor.assumeIsolated { target?.tick() }
+    }
 }
 
 // MARK: - 宿主 UIView + SwiftUI 桥接

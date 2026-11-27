@@ -73,6 +73,7 @@ private struct FNOSDanmuRawComment: Decodable {
 
 /// 把 FNOSDanmuEngine 的 anchor 外推时间暴露给图层引擎。
 /// 每帧读同一个外推值 → 播放/暂停/倍速/seek 全部自然生效。
+@MainActor
 final class FNOSDanmuRenderClock: FNOSDanmakuClock {
     weak var engine: FNOSDanmuEngine?
     init(engine: FNOSDanmuEngine) { self.engine = engine }

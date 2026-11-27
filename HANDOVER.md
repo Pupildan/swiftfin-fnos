@@ -2,7 +2,9 @@
 
 > 仓库：`Pupildan/swiftfin-fnos`（GitHub 私有仓，CI 构建 unsigned ipa）
 > 本地工作区：`C:\Users\Admin\WorkBuddy\fndanmu-tvos\build-package\swiftfin-fnos`
-> 当前版本：**v218**（🆕v217 真机回归四修：①骨架字=CATextLayer 不支持负 strokeWidth 填充语义→删描边纯实心 ②显示区域滑块失效=轨道分配永远从 lane0 找起→改轮转分配(nextLane)，area/字号/偏移变化清屏重建即时可见 ③弹幕重叠=旧版长弹幕速度更快追尾→统一速度(屏宽/时长) ④「两京十五日」匹配不出=v217 剧名双向包含校验过严误杀别名剧→只拦集号矛盾+search 兜底退回全部候选+全链路 9999 诊断）。v217=弹幕三改（匹配官方化/CATextLayer 渲染/倍速锚点），v216=图标重编。版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
+> 当前版本：**v219**（🆕两京十五日弹幕双路径兜底：服务端直探实锤匹配成功 epId=12104 但 danmu_api 国际版 decode 端点超时→comment/{epId} 首取 0 条；comment?url=<源站URL> 绕过 decode 实测 16384 条。修=EpisodeRef 加 url + fetchComments 双路径。另渲染帧率从请求120改锁60。**不动 sync/anchor 铁律——v130 渐进校正灾难教训**）。v218=骨架字/区域/重叠/匹配四修。v217=弹幕三改。版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
+>
+> 旧版本说明：**v218**（①骨架字=CATextLayer 不支持负 strokeWidth 填充语义→删描边纯实心 ②显示区域滑块失效=轨道分配永远从 lane0 找起→改轮转分配(nextLane)，area/字号/偏移变化清屏重建即时可见 ③弹幕重叠=旧版长弹幕速度更快追尾→统一速度(屏宽/时长) ④「两京十五日」匹配不出=v217 剧名双向包含校验过严误杀别名剧→只拦集号矛盾+search 兜底退回全部候选+全链路 9999 诊断）。v217=弹幕三改（匹配官方化/CATextLayer 渲染/倍速锚点），v216=图标重编。版本标识在 `Shared/Services/FNOSAdapterBuild.swift`
 >
 > ⚠️ **仓库已转公开**（2026-11-27）：私有仓 Actions 分钟数耗尽→CI 秒失败（job 零 step、runner_id=0）。转公开后免费无限额度，CI 正常。交付脚本读 token 仍从 `.git/config` 的 remote URL 取。
 > 交付物命名规则：`output/Swiftfin-FNOS-tvos-unsigned-vXX.ipa`（32MB 左右）
@@ -52,6 +54,15 @@ v130 我为了修「KS 轻微左右抖 + mpv 原地抖后重载」，把小漂�
 - **v213：继续播放入口选集失效第二根因（2026-11-13）**。**继续播放条目带 nativePosterURL → openResume 给了 nativeItemGUID → 容器直进 mpvLayer → `mediaRange(itemGUID:)`（换直链专用，`episodes: []` 恒空）→ MPV 选集条 `guard !episodes.isEmpty` 拦死**。修=`mediaRange(itemGUID:)` 用 play/info 的 `parent_guid` 补拉同剧分集（`season/list/{parent}` → `episode/list`）+ 按 guid 反推 episodeNumber。**真机验收（v213）：MPV 选集条能展开了 ✓（补拉生效）但「无信息」、KS 仍展不开 → v214。**
 
 - **v214：继续播放选集第三根因（2026-11-13）**。用户补充现象（MPV 能展开但无信息 / KS 展不开）→ 两根因：①**`fetchResumeItems` 的 Fields 缺 `SeriesId`** → 服务端继续播放条目 SeriesId=nil → `fetchEpisodesIfNeeded` 拿**单集 Id** 查 `Shows/{单集Id}/Episodes` 必失败（KS 展不开+MPV 无封面信息）；修=Fields 加 SeriesId + 自拉时 SeriesId 缺失先补查单集元数据。②**MPV 视图 `compatEpisodes` 是 `@State(initialValue:)` 首建锁死**——容器拉取完成后传入的新值被 State 忽略；修=**改 let**。③继续播放选集链路全景诊断日志（容器快照/分集自拉每步/MPV init/展开动作/换集）落 9999。**通用教训：①兼容层 Episode 的 SeriesId 需要 Fields 显式请求；②`@State(initialValue:)` 是首建快照，父视图后续传入的新值会被忽略——容器异步拉取后才渲染的子视图数据必须用 let 直传。**真机日志实锤（v214）：SeriesId 已有值 ✓、原生分集=12 ✓（v213 补拉生效）、`分集自拉(Shows/Episodes)失败: 未能读取数据，因为数据缺失`、`Items 兜底: 0 集`、`KS选集条展不开: allEpisodes 为空` → v215。**
+
+- **v219：两京十五日弹幕双路径兜底 + 帧率保守化（2026-11-27 深夜）**。用户质疑「热剧不可能没弹幕」+「别的剧能出弹幕说明不是网络问题」——两个质疑都对，我先前「NAS 网络不通」结论错误，撤回。逐条查证：
+  - **服务端直探**：`POST /api/v2/match {fileName:"两京十五日.S01E01..."}` → `isMatched=true, epId=12104, animeTitle=两京十五日(2026)...from iqiyi, url=https://www.iqiyi.com/v_1ewmjgivkm4.html`。匹配完全正确。
+  - **tvOS 日志**（监听器此前停了，21:16 重启后回传）：`21:22:34 弹幕诊断: 开始加载 title=虎硫药 series=两京十五日 S1E1 year=2026` → `21:22:48 加载完成 episodeId=12104 共0条`。匹配成功但弹幕 0 条，耗时 13.5s。
+  - **danmu_api 官方日志**（`/199780jjj/api/logs`）：`[iqiyi] 成功获取 18 个分集`（走国内 base_info 接口成功）→ 但抓弹幕时 `GET pcw-api.iq.com/api/decode/1ewmjgivkm4?platformId=3&modeCode=intl&langCode=sg` **超时 10s** → `[iqiyi] 请求解码信息失败` → 直接返回空（官方源码 `sources/iqiyi.js:923`，catch 后无回退）。备用源 `api.danmu.icu` DNS 失败。
+  - **决定性实测**：`GET /api/v2/comment?url=https://www.iqiyi.com/v_1ewmjgivkm4.html&format=json` → **count=16384 条**（绕开 episodeId→URL 解析，直接用源站 URL 抓）；随后 `comment/12104` 也变 16384（缓存填充）。**结论：剧有弹幕、NAS 网络正常、匹配正确，是 danmu_api 的 episodeId 反查路径踩了国际版 decode 超时 bug。**
+  - **修法（客户端可解，不用动 NAS）**：`FNOSDanmuEpisodeRef` 加 `url` 字段（服务端 match/search 返回里有），`fetchComments(episodeID, sourceURL)` 双路径——`comment/{epId}` 取到 0 条时用 `url` 调 `/api/v2/comment?url=<encoded>&format=json` 兜底；新增 `fetchCommentEnvelope` 辅助函数，timeout 40s。
+  - **卡顿**：用户问是否用「平滑时钟」，**明确否决**——v130 铁律：渐进校正让 anchor 不精确等于播放器时间→KS 严重抖动+崩溃、MPV 完全不渲染（真机暴怒后 v131 回滚）。不碰 sync/anchor。改为渲染层参数保守化：CADisplayLink preferredFrameRateRange 从请求 120 改锁 60（电视支持 120Hz ≠ tvOS 输出 120Hz，在 60Hz 设备上请求 120 可能回调不规则）。若真机确认仍卡，下一步从 CATextLayer contentsScale/光栅化入手，仍不动时间轴。
+  - **交付**：commit f2b75f4（含 build-fix），CI run 46011864840 success，`output/Swiftfin-FNOS-tvos-unsigned-v219.ipa`（37.8MB），待真机验收。
 
 - **v218：v217 真机回归四修（2026-11-27 用户实测反馈）**。用户测 v217 报：弹幕变骨架字、显示区域滑块失效、部分剧集（两京十五日）匹配不出、弹幕重叠。逐条根因与修法：
   - **骨架字**：`FNOSDanmakuRender.swift` 的 `attributedString` 用了 `.strokeWidth = -2.5` + `.strokeColor`（想实现「填充+描边」），但 **CATextLayer 渲染 NSAttributedString 时不认负 strokeWidth 的填充语义，只画轮廓**→空心骨架字（截图实锤）。与 v186 内嵌字幕踩过的坑同源。**修=删掉描边属性，纯实心字**；`measureWidth` 同步去掉 `+ strokeWidth`。

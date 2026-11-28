@@ -141,6 +141,10 @@ final class FNOSDanmakuRenderEngine {
     private var diagTick = 0
     /// v223: 当前倍速（0=暂停）；变速用「定格+重挂动画」而不是 layer.speed
     private var currentRate: Double = 1
+    /// v225: 发射诊断（每 2s 随诊断行清零）
+    private var diagSpawned = 0
+    private var diagDroppedLate = 0
+    private var diagMaxLateness: Double = 0
 
     init(container: UIView, style: FNOSDanmakuStyle = FNOSDanmakuStyle()) {
         self.container = container
@@ -157,7 +161,7 @@ final class FNOSDanmakuRenderEngine {
         spawnIndex = timeline.map { $0.lowerBound(currentTime() + 0.001) } ?? 0
         lastTime = currentTime()
         // 换集/seek 时把「此刻应在屏上」的一批弹幕补发射出去（带 progress 偏移）
-        emitFrom(currentTime(), backfill: true)
+        emitFrom(currentTime())
     }
 
     /// 播放器周期回调调用（100/250ms）——只负责到点发射，不算位置
@@ -166,16 +170,17 @@ final class FNOSDanmakuRenderEngine {
         // 渲染诊断（4Hz 泵 × 8 ≈ 2s 节流）
         diagTick += 1
         if diagTick % 8 == 0 {
-            FNOSDiagLog.send("弹幕渲染: 在屏\(active.count) 发射点\(spawnIndex)/\(timeline.items.count) t=\(Int(mediaTime)) lanes=\(laneReadyAt.count) rate=\(currentRate) size=\(Int(container.bounds.width))x\(Int(container.bounds.height))")
+            FNOSDiagLog.send("弹幕渲染: 在屏\(active.count) 发射点\(spawnIndex)/\(timeline.items.count) t=\(Int(mediaTime)) lanes=\(laneReadyAt.count) rate=\(currentRate) size=\(Int(container.bounds.width))x\(Int(container.bounds.height)) 发=\(diagSpawned) 迟丢=\(diagDroppedLate) 最大迟=\(String(format: "%.1f", diagMaxLateness))s")
+            diagSpawned = 0; diagDroppedLate = 0; diagMaxLateness = 0
         }
-        if abs(mediaTime - lastTime) > max(0.8, 0.5 * currentRate) {
-            // seek / 跳集：跳变阈值随倍速放大（4x 时 emitTick 间隔=1s 媒体时间，不能误判成 seek）
+        if abs(mediaTime - lastTime) > max(1.2, 0.6 * currentRate) {
+            // seek / 跳集：阈值随倍速放大；倍速下播放器 position 偶发抖动不再误判清屏
             clearAll()
             spawnIndex = timeline.lowerBound(mediaTime)
-            emitFrom(mediaTime, backfill: true)
+            emitFrom(mediaTime)
         }
         lastTime = mediaTime
-        emitFrom(mediaTime, backfill: false)
+        emitFrom(mediaTime)
         // v223 回收：按「动画走完的媒体时刻」判——旧版固定 12s 寿命比动画实际时长
         // （屏宽+文本宽）/速度 短，弹幕还没滚出左边缘就被删 = 「左边突然消失」
         let expired = active.filter { mediaTime > $0.expireAt + 0.5 }
@@ -260,7 +265,7 @@ final class FNOSDanmakuRenderEngine {
         }
         if layoutKey {
             clearAll()
-            emitFrom(currentTime(), backfill: true)
+            emitFrom(currentTime())
         } else {
             rebuildLanes()
         }
@@ -268,12 +273,12 @@ final class FNOSDanmakuRenderEngine {
 
     func layoutChanged() {
         clearAll()
-        emitFrom(currentTime(), backfill: true)
+        emitFrom(currentTime())
     }
 
     // MARK: 发射逻辑
 
-    private func emitFrom(_ t: Double, backfill: Bool) {
+    private func emitFrom(_ t: Double) {
         guard let timeline else { return }
         guard container.bounds.width > 100 else { return }   // 布局未就绪，防退化几何
         var budget = 50   // 单帧发射上限，防尖峰
@@ -284,13 +289,20 @@ final class FNOSDanmakuRenderEngine {
             spawnIndex += 1
             budget -= 1
             let lateness = t - item.time
-            if lateness > style.scrollDuration { continue }   // 太旧，跳过
+            // v225: 迟到弹幕一律丢弃——弹幕只会从屏幕右边缘外滑入，绝不屏内闪现。
+            // seek/跳变/主线程卡顿后的积压弹幕若照常发射，起点已算到屏内 = 「凭空冒出一批」
+            if lateness > 0.5 {
+                diagDroppedLate += 1
+                diagMaxLateness = max(diagMaxLateness, lateness)
+                continue
+            }
+            diagSpawned += 1
+            diagMaxLateness = max(diagMaxLateness, lateness)
             switch item.kind {
             case .scroll: shootScroll(item, at: t, lateness: lateness, screenWidth: screenWidth)
             case .top, .bottom: shootFixed(item, at: t, lateness: lateness)
             }
         }
-        _ = backfill  // 两种模式共用（背填靠 lateness 决定初始位置）
     }
 
     private func shootScroll(_ item: FNOSDanmakuItem, at t: Double, lateness: Double, screenWidth: CGFloat) {

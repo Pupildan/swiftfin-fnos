@@ -1,27 +1,28 @@
 //
 //  FNOSDanmakuRender.swift
-//  飞牛影视 tvOS —— 弹幕渲染引擎（v222：CATextLayer 内容 + CAAnimation 移动）
+//  飞牛影视 tvOS —— 弹幕渲染引擎（v223：倍速/回收/显示区域/行距四项实测修复）
 //
 //  来源：ATV-Bilibili-demo (yichengchen) 内置 DanmakuKit 的成熟方案 + 本机 FNOSKit。
 //
 //  版本历史教训：
 //  - v217-v219：CADisplayLink 主线程每帧改 position.x → 主线程被占用就掉帧卡顿。
-//  - v220：改 UIView cell + 自定义异步光栅化 layer + CABasicAnimation，
-//    但 addSubview 到宿主自身触发 layoutSubviews→clearAll 死循环 → 全不显示（v221 修复）。
-//  - v221：修复死循环后日志证明发射/回收/速度全部正常（在屏16 发射点推进 speed=1.0），
-//    但屏幕仍无像素 → 嫌疑锁定自定义 FNOSDanmakuAsyncLayer 的异步光栅化不上屏。
-//  - v222（本版）：**内容回退到 v219 验证过可见的 CATextLayer**（同步渲染，
-//    v218 教训=纯实心字不加描边），**移动保留 CABasicAnimation**（v220 的丝滑机制）。
-//    弹幕 layer 用 addSublayer 加到独立普通 UIView 容器（不触发布局回调，v219 同款）。
+//  - v220：addSubview 到宿主自身 → layoutSubviews 清屏死循环 → 全不显示（v221 修复）。
+//  - v221：诊断证明发射正常但无像素 → 自定义异步光栅化 layer 不上屏。
+//  - v222：内容回退 CATextLayer（可见），移动保留 CABasicAnimation。实测弹幕出来了。
+//  - v222 实测四 bug → v223（本版）：
+//    1. 倍速弹幕消失：layer.speed 变化重映射动画时间轴（进度跳变到终点，
+//       fillMode forwards 定格在出屏）→ 改为「定格视觉位置+按新倍速重挂动画」，
+//       layer.speed 恒为 1 不再动。暂停=定格无动画；恢复=从定格位置重挂。
+//    2. 左边突然消失：回收寿命 12s < 动画实际时长（屏宽+文本宽）/速度≈14s，
+//       弹幕没滚出左边缘就被删 → 回收改为按「动画走完的媒体时刻」(expireAt)。
+//    3. 显示区域滑块 75% 封顶 → 放开到 100%（用户指令，解除 260pt 字幕保护）。
+//    4. 行距 1.4→1.6；默认顶部 110→60（更靠屏幕上方）。
+//    附：seek 跳变阈值随倍速放大 max(0.8, 0.5×rate)，4x 时不再误判清屏。
 //
-//  丝滑机制（v220/v221 继承）：
-//  1. 每条弹幕发射时挂一个 CABasicAnimation(position.x)，动画由 render server
-//     进程独立插值，主线程零逐帧位置计算 → 不受主线程负载影响。
-//  2. 播放器周期回调（100/250ms）只负责「到点发射新弹幕」，不管位置。
-//  3. 播放/暂停/倍速用容器 layer.speed（Core Animation 原生时间缩放）。
+//  丝滑机制（不变）：CABasicAnimation(position.x) 由 render server 独立插值，
+//  主线程零逐帧位置计算；周期回调只管到点发射。
 //
 //  ⚠️ 不碰 FNOSDanmuEngine.sync/anchor 铁律（v130 教训）——那套只决定「何时发射」。
-//  轨道几何保留项目死规则：顶部 110pt + offsetY，底部 260pt 字幕保护区。
 //
 
 import AVFoundation
@@ -65,11 +66,13 @@ struct FNOSDanmakuStyle: Equatable {
     var fixedDuration: Double = 5
     var areaRatio: CGFloat = 0.3
     var offsetY: CGFloat = 0
-    var lineHeightFactor: CGFloat = 1.4
+    /// v223: 1.4→1.6 行距加大（用户实测太挤）
+    var lineHeightFactor: CGFloat = 1.6
     var laneMargin: CGFloat = 16
     var maxOnScreen: Int = 300
     var hideBottom: Bool = false
-    var laneTop: CGFloat { 110 + offsetY }
+    /// v223: 110→60 默认位置更靠屏幕上方（用户要求）
+    var laneTop: CGFloat { 60 + offsetY }
 }
 
 @MainActor
@@ -122,11 +125,12 @@ final class FNOSDanmakuRenderEngine {
     var contentsScale: CGFloat = 2
     private var timeline: FNOSDanmakuTimeline?
     private var spawnIndex = 0
-    /// v222: 在屏弹幕（CATextLayer + 媒体时间轴发射时刻，用于按寿命回收）
+    /// v222: 在屏弹幕（CATextLayer + 媒体时间轴上的动画终点，用于回收）
     private struct ActiveCell {
         let layer: CATextLayer
         let kind: FNOSDanmakuLaneKind
-        let bornAt: Double
+        /// 动画走完的媒体时刻（=发射媒体时刻 + 剩余路程/几何速度，与倍速无关）
+        var expireAt: Double
     }
     private var active: [ActiveCell] = []
     private var laneReadyAt: [Double] = []
@@ -135,6 +139,8 @@ final class FNOSDanmakuRenderEngine {
     private var lastTime: Double = 0
     private var isVisible = true
     private var diagTick = 0
+    /// v223: 当前倍速（0=暂停）；变速用「定格+重挂动画」而不是 layer.speed
+    private var currentRate: Double = 1
 
     init(container: UIView, style: FNOSDanmakuStyle = FNOSDanmakuStyle()) {
         self.container = container
@@ -160,30 +166,75 @@ final class FNOSDanmakuRenderEngine {
         // 渲染诊断（4Hz 泵 × 8 ≈ 2s 节流）
         diagTick += 1
         if diagTick % 8 == 0 {
-            FNOSDiagLog.send("弹幕渲染: 在屏\(active.count) 发射点\(spawnIndex)/\(timeline.items.count) t=\(Int(mediaTime)) lanes=\(laneReadyAt.count) speed=\(container.layer.speed) size=\(Int(container.bounds.width))x\(Int(container.bounds.height))")
+            FNOSDiagLog.send("弹幕渲染: 在屏\(active.count) 发射点\(spawnIndex)/\(timeline.items.count) t=\(Int(mediaTime)) lanes=\(laneReadyAt.count) rate=\(currentRate) size=\(Int(container.bounds.width))x\(Int(container.bounds.height))")
         }
-        if abs(mediaTime - lastTime) > 0.8 {
+        if abs(mediaTime - lastTime) > max(0.8, 0.5 * currentRate) {
+            // seek / 跳集：跳变阈值随倍速放大（4x 时 emitTick 间隔=1s 媒体时间，不能误判成 seek）
             clearAll()
             spawnIndex = timeline.lowerBound(mediaTime)
             emitFrom(mediaTime, backfill: true)
         }
         lastTime = mediaTime
         emitFrom(mediaTime, backfill: false)
-        // 回收：滚动弹幕跑完时长 / 固定弹幕超过停留时长
-        let expired = active.filter { cell in
-            let lifespan = cell.kind == .scroll ? style.scrollDuration : style.fixedDuration
-            return mediaTime - cell.bornAt > lifespan + 0.5
-        }
+        // v223 回收：按「动画走完的媒体时刻」判——旧版固定 12s 寿命比动画实际时长
+        // （屏宽+文本宽）/速度 短，弹幕还没滚出左边缘就被删 = 「左边突然消失」
+        let expired = active.filter { mediaTime > $0.expireAt + 0.5 }
         for cell in expired { remove(cell) }
     }
 
-    /// 播放/暂停/倍速——改容器 layer.speed，Core Animation 原生时间缩放，
-    /// 不用重新计算任何位置，也不会打断正在跑的动画。
-    /// 值不变时跳过——4Hz 泵反复设 speed 会不断重映射 layer 时间轴。
+    /// 播放/暂停/倍速——v223 全部用「定格视觉位置 + 重挂动画」实现，不再动 layer.speed。
+    /// 原因（v222 实测 bug1）：layer.speed 变化会重映射动画时间轴（进度瞬间跳变），
+    /// 切倍速时在飞弹幕直接跳到终点（fillMode forwards 定格在出屏位置）→ 弹幕全消失。
     func setRate(_ rate: Double) {
-        let s = Float(max(0, rate))
-        guard container.layer.speed != s else { return }
-        container.layer.speed = s
+        let r = max(0, rate)
+        guard r != currentRate else { return }
+        currentRate = r
+        // 1) 把所有在飞弹幕的当前视觉位置定格为模型位置，撤掉旧动画
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for cell in active {
+            if let p = cell.layer.presentation() {
+                cell.layer.position = p.position
+                cell.layer.opacity = p.opacity
+            }
+            cell.layer.removeAllAnimations()
+        }
+        CATransaction.commit()
+        // 2) 暂停：停在这里（无动画；媒体时钟冻结，既不发射也不回收）
+        guard r > 0 else { return }
+        // 3) 恢复/变速：从定格位置按新倍速重挂动画
+        let nowM = currentTime()
+        let geo = geoSpeed
+        for i in active.indices {
+            let layer = active[i].layer
+            let width = layer.bounds.width
+            if active[i].kind == .scroll {
+                let x = layer.position.x
+                let remaining = x + width / 2
+                guard remaining > 1 else { continue }   // 已出屏，等回收
+                let anim = CABasicAnimation(keyPath: "position.x")
+                anim.fromValue = x
+                anim.toValue = -width / 2
+                // 墙钟时长 = 剩余路程/(几何速度×倍速)；媒体时长恒= 剩余路程/几何速度
+                anim.duration = max(0.1, Double(remaining) / (geo * r))
+                anim.beginTime = CACurrentMediaTime()
+                anim.isRemovedOnCompletion = false
+                anim.fillMode = .forwards
+                layer.add(anim, forKey: "fnos.scroll")
+                active[i].expireAt = nowM + Double(remaining) / geo
+            } else {
+                let remainM = active[i].expireAt - nowM
+                guard remainM > 0.1 else { continue }
+                let anim = CAKeyframeAnimation(keyPath: "opacity")
+                anim.values = [1, 1, 0]
+                anim.keyTimes = [0, 0.8, 1]
+                anim.duration = remainM / r
+                anim.beginTime = CACurrentMediaTime()
+                anim.isRemovedOnCompletion = false
+                anim.fillMode = .forwards
+                layer.add(anim, forKey: "fnos.fixed")
+            }
+        }
     }
 
     func setVisible(_ visible: Bool) {
@@ -244,27 +295,27 @@ final class FNOSDanmakuRenderEngine {
         guard active.count < style.maxOnScreen else { return }
         let width = measureTextWidth(item: item, fontSize: style.fontSize)
         guard let lane = availableLane(at: t) else { return }
-        laneReadyAt[lane] = t + Double((width + style.laneMargin) / speed)
+        laneReadyAt[lane] = t + Double((width + style.laneMargin) / geoSpeed)
 
         let layer = makeDanmakuTextLayer(item: item, fontSize: style.fontSize,
                                          width: width, height: laneHeight,
                                          contentsScale: contentsScale)
         let y = laneCenterY(lane)
-        let startX = screenWidth + width / 2 - speed * CGFloat(lateness)
+        let startX = screenWidth + width / 2 - geoSpeed * CGFloat(lateness)
         layer.position = CGPoint(x: startX, y: y)
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         container.layer.addSublayer(layer)
         CATransaction.commit()
-        active.append(ActiveCell(layer: layer, kind: item.kind, bornAt: item.time))
-
         // 剩余路程 = 从 startX 到完全出屏 (x = -width/2)
         let remaining = Double(startX + width / 2)
-        let duration = max(0.1, remaining / speed)
+        active.append(ActiveCell(layer: layer, kind: item.kind,
+                                 expireAt: t + remaining / geoSpeed))
+        // 墙钟时长 = 剩余路程/(几何速度×当前倍速)；媒体时长恒= 剩余路程/几何速度
+        let duration = max(0.1, remaining / (geoSpeed * max(0.1, currentRate)))
         let anim = CABasicAnimation(keyPath: "position.x")
         anim.fromValue = startX
         anim.toValue = -width / 2
-        // duration 不除 layer.speed——Core Animation 会按 layer 时间缩放自动变速
         anim.duration = duration
         anim.beginTime = CACurrentMediaTime()
         anim.isRemovedOnCompletion = false
@@ -287,13 +338,14 @@ final class FNOSDanmakuRenderEngine {
         CATransaction.setDisableActions(true)
         container.layer.addSublayer(layer)
         CATransaction.commit()
-        active.append(ActiveCell(layer: layer, kind: item.kind, bornAt: item.time))
-
         let remain = max(0.1, style.fixedDuration - lateness)
+        active.append(ActiveCell(layer: layer, kind: item.kind, expireAt: t + remain))
+
         let anim = CAKeyframeAnimation(keyPath: "opacity")
         anim.values = [1, 1, 0]
         anim.keyTimes = [0, 0.8, 1]
-        anim.duration = remain
+        anim.duration = remain / max(0.1, currentRate)
+        anim.beginTime = CACurrentMediaTime()
         anim.isRemovedOnCompletion = false
         anim.fillMode = .forwards
         layer.add(anim, forKey: "fnos.fixed")
@@ -319,11 +371,13 @@ final class FNOSDanmakuRenderEngine {
 
     // MARK: 轨道 / 几何
 
-    private var speed: Double { Double(container.bounds.width) / style.scrollDuration }
+    /// 几何速度（pt/媒体秒）——横穿屏宽耗时 scrollDuration，与播放倍速无关
+    private var geoSpeed: Double { Double(container.bounds.width) / style.scrollDuration }
 
     private var laneHeight: CGFloat { style.fontSize * style.lineHeightFactor }
+    /// v223: 显示区上限=屏高×areaRatio（用户要求滑块可到 100%，解除原 260pt 字幕保护区）
     private var laneBottom: CGFloat {
-        min(container.bounds.height * style.areaRatio, container.bounds.height - 260)
+        container.bounds.height * style.areaRatio
     }
 
     private func rebuildLanes() {
@@ -352,8 +406,8 @@ final class FNOSDanmakuRenderEngine {
 
     private func fixedCenterY(_ kind: FNOSDanmakuLaneKind) -> CGFloat {
         if kind == .top { return style.laneTop + laneHeight / 2 }
-        return min(max(container.bounds.height - 290 + style.offsetY, style.laneTop),
-                   container.bounds.height - 260)
+        // v223: 底部固定弹幕贴底显示（原 290/260 字幕保护区已按用户要求解除）
+        return max(style.laneTop + laneHeight / 2, container.bounds.height - 100 + style.offsetY)
     }
 
     private func currentTime() -> TimeInterval { clock?.danmakuTime ?? lastTime }
@@ -452,8 +506,8 @@ struct FNOSDanmakuOverlay: UIViewRepresentable {
         if c.lastStyle != style {
             c.lastStyle = style
             uiView.engine.updateStyle(style)
-            // 弹幕速度设置通过 scrollDuration 影响新发射弹幕的 duration；
-            // 容器 layer.speed 只由播放器倍速控制（emitTick），两者不冲突。
+            // 弹幕速度设置通过 scrollDuration 影响发射节奏与动画时长；
+            // 播放倍速由 setRate「定格+重挂动画」处理，两者不冲突。
         }
         if c.lastVisible != isVisible {
             c.lastVisible = isVisible

@@ -1916,8 +1916,8 @@ struct FNOSDanmuSettingsSheet: View {
             sliderRow(id: "speed", title: "速度", value: $speed, range: 0.5...2.5, step: 0.05) {
                 String(format: "%.2fx", $0)
             }
-            // v190: 显示区域上限 75%——底部 260pt 是字幕保护区（不准显示弹幕，用户死规则）
-            sliderRow(id: "area", title: "显示区域", value: $area, range: 0.25...0.75, step: 0.025) {
+            // v223: 用户要求上限放开到 100%（解除 v190 的 75% 封顶/260pt 字幕保护死规则）
+            sliderRow(id: "area", title: "显示区域", value: $area, range: 0.2...1.0, step: 0.025) {
                 "\(Int(($0 * 100).rounded())) % 屏"
             }
 
@@ -1955,7 +1955,7 @@ struct FNOSDanmuSettingsSheet: View {
                     case "size":    fontSize = clamp(fontSize + d * 0.15, 16, 44)
                     case "opacity": opacity = clamp(opacity + d * 0.003, 0.2, 1.0)
                     case "speed":   speed = clamp(speed + d * 0.0025, 0.5, 2.5)
-                    case "area":    area = clamp(area + d * 0.0015, 0.25, 0.75)
+                    case "area":    area = clamp(area + d * 0.0015, 0.2, 1.0)
                     default: break
                     }
                 }

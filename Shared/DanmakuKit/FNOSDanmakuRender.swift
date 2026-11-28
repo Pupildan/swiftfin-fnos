@@ -216,6 +216,7 @@ final class FNOSDanmakuRenderEngine {
                 anim.fromValue = x
                 anim.toValue = -width / 2
                 // 墙钟时长 = 剩余路程/(几何速度×倍速)；媒体时长恒= 剩余路程/几何速度
+                anim.timingFunction = CAMediaTimingFunction(name: .linear)   // v224 匀速
                 anim.duration = max(0.1, Double(remaining) / (geo * r))
                 anim.beginTime = CACurrentMediaTime()
                 anim.isRemovedOnCompletion = false
@@ -228,6 +229,7 @@ final class FNOSDanmakuRenderEngine {
                 let anim = CAKeyframeAnimation(keyPath: "opacity")
                 anim.values = [1, 1, 0]
                 anim.keyTimes = [0, 0.8, 1]
+                anim.timingFunction = CAMediaTimingFunction(name: .linear)
                 anim.duration = remainM / r
                 anim.beginTime = CACurrentMediaTime()
                 anim.isRemovedOnCompletion = false
@@ -316,6 +318,10 @@ final class FNOSDanmakuRenderEngine {
         let anim = CABasicAnimation(keyPath: "position.x")
         anim.fromValue = startX
         anim.toValue = -width / 2
+        // ⚠️ v224 关键修复：CABasicAnimation 默认 timing function 是 ease-in-ease-out，
+        // 不是匀速！弹幕启动贴着右边缘几乎不动→加速划过→左边减速——
+        // 用户感知=「从右边闪现出来，没有滚动的过程」。弹幕必须 linear 匀速。
+        anim.timingFunction = CAMediaTimingFunction(name: .linear)
         anim.duration = duration
         anim.beginTime = CACurrentMediaTime()
         anim.isRemovedOnCompletion = false
@@ -344,6 +350,7 @@ final class FNOSDanmakuRenderEngine {
         let anim = CAKeyframeAnimation(keyPath: "opacity")
         anim.values = [1, 1, 0]
         anim.keyTimes = [0, 0.8, 1]
+        anim.timingFunction = CAMediaTimingFunction(name: .linear)
         anim.duration = remain / max(0.1, currentRate)
         anim.beginTime = CACurrentMediaTime()
         anim.isRemovedOnCompletion = false

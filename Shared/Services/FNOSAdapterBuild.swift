@@ -15,8 +15,8 @@ import Foundation
 enum FNOSAdapterBuild {
 
     /// 适配版本号（递增）
-    static let version = "v223"
+    static let version = "v224"
 
     /// 本版主要变更摘要
-    static let changes = "v223:v222 实测四项修复。①倍速弹幕消失:layer.speed 变化会重映射 CA 动画时间轴(进度瞬间跳变到终点,fillMode forwards 定格在出屏位置)→改「定格视觉位置+按新倍速重挂动画」,layer.speed 恒为1;暂停=定格无动画,恢复=从定格位置重挂;seek 跳变阈值随倍速放大(4x 不再误判清屏)。②弹幕左侧突然消失:回收寿命固定12s<动画实际时长(屏宽+文本宽)/速度≈14s,弹幕没滚出左边缘就被删→回收改按「动画走完的媒体时刻」expireAt,与倍速无关。③显示区域滑块 75% 封顶→放开到 100%(用户指令,解除 260pt 字幕保护死规则),引擎 laneBottom=屏高×area。④行距 1.4→1.6;默认顶部 110→60(更靠屏幕上方)。"
+    static let changes = "v224:修复弹幕「从右边闪现出来、没有滚动出来的感觉」——根因:CABasicAnimation 默认 timingFunction 是 ease-in-ease-out(缓入缓出)不是匀速,弹幕启动贴着右边缘几乎不动→加速划过中间→左侧减速,用户感知就是右边闪现+左边爬行。v219 逐帧改位置时代码算出的位置天然匀速,换 CAAnimation 后漏设 timingFunction。修复:所有弹幕动画(滚动/重挂/固定淡出)显式 timingFunction=linear 匀速。"
 }
